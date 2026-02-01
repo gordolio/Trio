@@ -14,15 +14,19 @@ struct AIFoodItem: Codable, Identifiable, Equatable {
     /// Emoji representation of the food (optional)
     let emoji: String?
 
-    /// Absorption time category for this specific item
-    let absorptionTime: AbsorptionTimeCategory
+    /// Estimated fat in grams
+    let fat: Double
 
-    init(id: UUID = UUID(), name: String, carbs: Double, emoji: String? = nil, absorptionTime: AbsorptionTimeCategory = .medium) {
+    /// Estimated protein in grams
+    let protein: Double
+
+    init(id: UUID = UUID(), name: String, carbs: Double, emoji: String? = nil, fat: Double = 0, protein: Double = 0) {
         self.id = id
         self.name = name
         self.carbs = carbs
         self.emoji = emoji
-        self.absorptionTime = absorptionTime
+        self.fat = fat
+        self.protein = protein
     }
 }
 
@@ -39,31 +43,14 @@ struct AIFoodItemsResponse: Codable, Equatable {
         foodItems.reduce(0) { $0 + $1.carbs }
     }
 
-    /// Returns the dominant absorption time based on carb-weighted average
-    var dominantAbsorptionTime: AbsorptionTimeCategory {
-        guard !foodItems.isEmpty else { return .medium }
+    /// Total fat across all items
+    var totalFat: Double {
+        foodItems.reduce(0) { $0 + $1.fat }
+    }
 
-        // Weight absorption times by carb content
-        var fastCarbs: Double = 0
-        var mediumCarbs: Double = 0
-        var slowCarbs: Double = 0
-        var otherCarbs: Double = 0
-
-        for item in foodItems {
-            switch item.absorptionTime {
-            case .fast: fastCarbs += item.carbs
-            case .medium: mediumCarbs += item.carbs
-            case .slow: slowCarbs += item.carbs
-            case .other: otherCarbs += item.carbs
-            }
-        }
-
-        let maxCarbs = max(fastCarbs, mediumCarbs, slowCarbs, otherCarbs)
-
-        if maxCarbs == slowCarbs { return .slow }
-        if maxCarbs == fastCarbs { return .fast }
-        if maxCarbs == otherCarbs { return .other }
-        return .medium
+    /// Total protein across all items
+    var totalProtein: Double {
+        foodItems.reduce(0) { $0 + $1.protein }
     }
 }
 
@@ -91,30 +78,14 @@ struct FoodItemSelection: Equatable {
         selectedItems.reduce(0) { $0 + $1.carbs }
     }
 
-    /// Returns the dominant absorption time for selected items only
-    var selectedAbsorptionTime: AbsorptionTimeCategory {
-        guard !selectedItems.isEmpty else { return .medium }
+    /// Total fat for selected items only
+    var selectedFat: Double {
+        selectedItems.reduce(0) { $0 + $1.fat }
+    }
 
-        var fastCarbs: Double = 0
-        var mediumCarbs: Double = 0
-        var slowCarbs: Double = 0
-        var otherCarbs: Double = 0
-
-        for item in selectedItems {
-            switch item.absorptionTime {
-            case .fast: fastCarbs += item.carbs
-            case .medium: mediumCarbs += item.carbs
-            case .slow: slowCarbs += item.carbs
-            case .other: otherCarbs += item.carbs
-            }
-        }
-
-        let maxCarbs = max(fastCarbs, mediumCarbs, slowCarbs, otherCarbs)
-
-        if maxCarbs == slowCarbs { return .slow }
-        if maxCarbs == fastCarbs { return .fast }
-        if maxCarbs == otherCarbs { return .other }
-        return .medium
+    /// Total protein for selected items only
+    var selectedProtein: Double {
+        selectedItems.reduce(0) { $0 + $1.protein }
     }
 
     /// Number of selected items
@@ -206,8 +177,11 @@ struct AISingleItemUpdateResponse: Codable, Equatable {
     /// Brief reasoning for the update
     let reasoning: String
 
-    /// Optional: new absorption time if it changed
-    let updatedAbsorptionTime: AbsorptionTimeCategory?
+    /// Updated fat estimate
+    let updatedFat: Double?
+
+    /// Updated protein estimate
+    let updatedProtein: Double?
 }
 
 /// Response from OpenAI for a conversation turn

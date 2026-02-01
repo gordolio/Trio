@@ -36,33 +36,6 @@ enum OpenAIServiceError: LocalizedError {
     }
 }
 
-// MARK: - Domain Types
-
-/// Absorption time category for carbohydrate absorption
-enum AbsorptionTimeCategory: String, Codable, CaseIterable {
-    /// Fast absorption (30 min) - Simple sugars, fruits, juices, candy, soft drinks
-    case fast
-
-    /// Medium absorption (3 hours) - Starches, bread, rice, pasta, mixed meals, vegetables
-    case medium
-
-    /// Slow absorption (5 hours) - High-fat/protein foods: pizza, burgers, cheese, nuts, fatty meals
-    case slow
-
-    /// Other (3 hours default) - Alcoholic beverages, coffee, tea, or items where absorption is variable
-    case other
-
-    /// Returns the typical absorption duration in hours
-    var typicalHours: Double {
-        switch self {
-        case .fast: return 0.5 // 30 minutes
-        case .medium: return 3.0 // 3 hours
-        case .slow: return 5.0 // 5 hours
-        case .other: return 3.0 // 3 hours (default)
-        }
-    }
-}
-
 // MARK: - OpenAI API Request Types (Codable)
 
 /// Root request body for OpenAI Chat Completions API
@@ -288,7 +261,8 @@ struct AIFoodAnalysisWithReasoningResponse: Decodable {
 struct AISingleItemUpdateAPIResponse: Decodable {
     let updatedCarbs: Double
     let reasoning: String
-    let updatedAbsorptionTime: String?
+    let updatedFat: Double?
+    let updatedProtein: Double?
 }
 
 /// Response structure for conversation turn
@@ -304,7 +278,8 @@ struct AIFoodItemResponse: Decodable {
     let name: String
     let carbs: Double
     let emoji: String
-    let absorptionTime: String
+    let fat: Double
+    let protein: Double
 }
 
 /// Individual food item in conversation response (includes ID)
@@ -313,7 +288,8 @@ struct AIFoodItemWithIdResponse: Decodable {
     let name: String
     let carbs: Double
     let emoji: String
-    let absorptionTime: String
+    let fat: Double
+    let protein: Double
 }
 
 /// Response from OpenAI Vision API containing carb estimate and food description (legacy single-item)
@@ -322,9 +298,9 @@ struct OpenAICarbEstimateResponse {
     let foodDescription: String
     let emoji: String
     let detailedDescription: String
-    let absorptionTime: AbsorptionTimeCategory
+    let fat: Double
+    let protein: Double
     let carbConfidence: Double
-    let absorptionConfidence: Double
     let emojiConfidence: Double
 }
 
@@ -374,13 +350,7 @@ final class OpenAIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let prompt = """
-        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate content for each.
-
-        ABSORPTION TIME CATEGORIES (assign to each item based on its composition):
-        - "fast" (30 min): Simple sugars, fruits, juices, candy, soft drinks, honey, ice cream
-        - "medium" (3 hours): Starches, bread, rice, pasta, mixed meals, vegetables, sandwiches, tacos
-        - "slow" (5 hours): High-fat/protein foods - pizza, burgers, cheese, bacon, nuts, steak, avocado
-        - "other" (3 hours): Alcoholic beverages, coffee, tea, or items where absorption is variable
+        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate, fat, and protein content for each.
 
         IMPORTANT GUIDELINES:
         - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
@@ -388,6 +358,7 @@ final class OpenAIService {
         - For composite items like sandwiches, list as one item but note components in the name
         - Estimate portion sizes based on visual cues
         - Choose 1-2 emojis per item that best represent it
+        - Estimate fat and protein in grams for each item
         """
 
         // Build the request with structured output schema
@@ -439,12 +410,10 @@ final class OpenAIService {
                 "name": .string(description: "Concise item description, max 30 chars"),
                 "carbs": .number(description: "Estimated carbohydrates in grams"),
                 "emoji": .string(description: "1-2 food emojis representing the item"),
-                "absorptionTime": .enum(
-                    values: AbsorptionTimeCategory.allCases.map(\.rawValue),
-                    description: "Absorption speed category"
-                )
+                "fat": .number(description: "Estimated fat in grams"),
+                "protein": .number(description: "Estimated protein in grams")
             ],
-            required: ["name", "carbs", "emoji", "absorptionTime"],
+            required: ["name", "carbs", "emoji", "fat", "protein"],
             description: "A single food item detected in the image"
         )
 
@@ -500,7 +469,8 @@ final class OpenAIService {
                 name: item.name,
                 carbs: item.carbs,
                 emoji: item.emoji,
-                absorptionTime: AbsorptionTimeCategory(rawValue: item.absorptionTime) ?? .medium
+                fat: item.fat,
+                protein: item.protein
             )
         }
 
@@ -544,13 +514,7 @@ final class OpenAIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let prompt = """
-        Analyze this food image for a diabetes insulin dosing app. Estimate carbohydrate content and absorption characteristics.
-
-        ABSORPTION TIME CATEGORIES:
-        - "fast" (30 min): Simple sugars, fruits, juices, candy, soft drinks, honey, ice cream
-        - "medium" (3 hours): Starches, bread, rice, pasta, mixed meals, vegetables, sandwiches, tacos
-        - "slow" (5 hours): High-fat/protein foods - pizza, burgers, cheese, bacon, nuts, steak, avocado
-        - "other" (3 hours): Alcoholic beverages, coffee, tea, or items where absorption is variable
+        Analyze this food image for a diabetes insulin dosing app. Estimate carbohydrate, fat, and protein content.
 
         EMOJI SELECTION:
         Choose 1-3 food emojis that best represent the meal. Use only standard food/drink emojis.
@@ -566,9 +530,9 @@ final class OpenAIService {
             "foodDescription": "<emoji-only OR emoji+text OR text, max 25 chars>",
             "emoji": "<1-3 food emojis>",
             "detailedDescription": "<detailed description of food items and portions observed>",
-            "absorptionTime": "<fast|medium|slow|other>",
+            "fat": <number in grams>,
+            "protein": <number in grams>,
             "carbConfidence": <0.0-1.0>,
-            "absorptionConfidence": <0.0-1.0>,
             "emojiConfidence": <0.0-1.0>
         }
         """
@@ -656,9 +620,9 @@ final class OpenAIService {
             foodDescription: result.foodDescription,
             emoji: result.emoji,
             detailedDescription: result.detailedDescription,
-            absorptionTime: AbsorptionTimeCategory(rawValue: result.absorptionTime) ?? .medium,
+            fat: result.fat,
+            protein: result.protein,
             carbConfidence: result.carbConfidence,
-            absorptionConfidence: result.absorptionConfidence,
             emojiConfidence: result.emojiConfidence
         )
     }
@@ -710,13 +674,7 @@ final class OpenAIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         var prompt = """
-        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate content for each.
-
-        ABSORPTION TIME CATEGORIES (assign to each item based on its composition):
-        - "fast" (30 min): Simple sugars, fruits, juices, candy, soft drinks, honey, ice cream
-        - "medium" (3 hours): Starches, bread, rice, pasta, mixed meals, vegetables, sandwiches, tacos
-        - "slow" (5 hours): High-fat/protein foods - pizza, burgers, cheese, bacon, nuts, steak, avocado
-        - "other" (3 hours): Alcoholic beverages, coffee, tea, or items where absorption is variable
+        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate, fat, and protein content for each.
 
         IMPORTANT GUIDELINES:
         - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
@@ -724,6 +682,7 @@ final class OpenAIService {
         - For composite items like sandwiches, list as one item but note components in the name
         - Estimate portion sizes based on visual cues
         - Choose 1-2 emojis per item that best represent it
+        - Estimate fat and protein in grams for each item
         - Provide a brief reasoning explaining your carb estimates
         """
 
@@ -780,12 +739,10 @@ final class OpenAIService {
                 "name": .string(description: "Concise item description, max 30 chars"),
                 "carbs": .number(description: "Estimated carbohydrates in grams"),
                 "emoji": .string(description: "1-2 food emojis representing the item"),
-                "absorptionTime": .enum(
-                    values: AbsorptionTimeCategory.allCases.map(\.rawValue),
-                    description: "Absorption speed category"
-                )
+                "fat": .number(description: "Estimated fat in grams"),
+                "protein": .number(description: "Estimated protein in grams")
             ],
-            required: ["name", "carbs", "emoji", "absorptionTime"],
+            required: ["name", "carbs", "emoji", "fat", "protein"],
             description: "A single food item detected in the image"
         )
 
@@ -846,7 +803,8 @@ final class OpenAIService {
                 name: item.name,
                 carbs: item.carbs,
                 emoji: item.emoji,
-                absorptionTime: AbsorptionTimeCategory(rawValue: item.absorptionTime) ?? .medium
+                fat: item.fat,
+                protein: item.protein
             )
         }
 
@@ -901,25 +859,20 @@ final class OpenAIService {
         // Build context of other items
         let otherItemsContext = currentItems
             .filter { $0.id != editedItemId }
-            .map { "\($0.emoji ?? "") \($0.name): \(Int($0.carbs))g" }
+            .map { "\($0.emoji ?? "") \($0.name): \(Int($0.carbs))g carbs, \(Int($0.fat))g fat, \(Int($0.protein))g protein" }
             .joined(separator: ", ")
 
         let prompt = """
         I previously analyzed this food image and identified these items: \(otherItemsContext
             .isEmpty ? "none" : otherItemsContext)
 
-        I also identified an item as "\(editedItem.name)" with \(Int(editedItem.carbs))g carbs.
+        I also identified an item as "\(editedItem
+            .name)" with \(Int(editedItem.carbs))g carbs, \(Int(editedItem.fat))g fat, \(Int(editedItem.protein))g protein.
 
         The user has corrected this item's description to: "\(newDescription)"
 
-        Please re-estimate the carbohydrates for this corrected item based on the image and new description.
+        Please re-estimate the carbohydrates, fat, and protein for this corrected item based on the image and new description.
         Consider the visual portion size and the specific food type indicated by the user.
-
-        ABSORPTION TIME CATEGORIES:
-        - "fast": Simple sugars, fruits, juices
-        - "medium": Starches, bread, rice, pasta
-        - "slow": High-fat/protein foods
-        - "other": Variable absorption
         """
 
         let chatRequest = OpenAIChatRequest(
@@ -967,12 +920,10 @@ final class OpenAIService {
             properties: [
                 "updatedCarbs": .number(description: "Updated carbohydrate estimate in grams"),
                 "reasoning": .string(description: "Brief explanation of the updated estimate"),
-                "updatedAbsorptionTime": .enum(
-                    values: AbsorptionTimeCategory.allCases.map(\.rawValue),
-                    description: "Updated absorption time if it changed"
-                )
+                "updatedFat": .number(description: "Updated fat estimate in grams"),
+                "updatedProtein": .number(description: "Updated protein estimate in grams")
             ],
-            required: ["updatedCarbs", "reasoning", "updatedAbsorptionTime"],
+            required: ["updatedCarbs", "reasoning", "updatedFat", "updatedProtein"],
             additionalProperties: false
         )
     }
@@ -1012,7 +963,8 @@ final class OpenAIService {
             itemId: itemId,
             updatedCarbs: apiResponse.updatedCarbs,
             reasoning: apiResponse.reasoning,
-            updatedAbsorptionTime: apiResponse.updatedAbsorptionTime.flatMap { AbsorptionTimeCategory(rawValue: $0) }
+            updatedFat: apiResponse.updatedFat,
+            updatedProtein: apiResponse.updatedProtein
         )
     }
 
@@ -1043,7 +995,7 @@ final class OpenAIService {
 
         // Build current items context
         let itemsContext = currentItems.enumerated().map { index, item in
-            "[\(index + 1)] \(item.emoji ?? "") \(item.name): \(Int(item.carbs))g (\(item.absorptionTime.rawValue))"
+            "[\(index + 1)] \(item.emoji ?? "") \(item.name): \(Int(item.carbs))g carbs, \(Int(item.fat))g fat, \(Int(item.protein))g protein"
         }.joined(separator: "\n")
 
         // Build conversation history (text only, skip carb summaries)
@@ -1059,7 +1011,7 @@ final class OpenAIService {
         }.joined(separator: "\n")
 
         let systemPrompt = """
-        You are helping a person with diabetes refine their carbohydrate estimates for insulin dosing.
+        You are helping a person with diabetes refine their carbohydrate, fat, and protein estimates for insulin dosing.
 
         CURRENT FOOD ITEMS:
         \(itemsContext)
@@ -1077,19 +1029,14 @@ final class OpenAIService {
         For each item, return:
         - id: The original UUID if updating, or generate a new one for new items
         - name: Food description (max 30 chars)
-        - carbs: Estimated grams
+        - carbs: Estimated carbohydrate grams
         - emoji: 1-2 relevant emojis
-        - absorptionTime: fast/medium/slow/other
-
-        ABSORPTION TIME CATEGORIES:
-        - "fast": Simple sugars, fruits, juices
-        - "medium": Starches, bread, rice, pasta
-        - "slow": High-fat/protein foods
-        - "other": Variable absorption
+        - fat: Estimated fat grams
+        - protein: Estimated protein grams
         """
 
         // Build messages array for multi-turn conversation
-        var messages: [OpenAIMessage] = [
+        let messages: [OpenAIMessage] = [
             OpenAIMessage(
                 role: "system",
                 content: [.text(systemPrompt)]
@@ -1145,12 +1092,10 @@ final class OpenAIService {
                 "name": .string(description: "Concise item description, max 30 chars"),
                 "carbs": .number(description: "Estimated carbohydrates in grams"),
                 "emoji": .string(description: "1-2 food emojis representing the item"),
-                "absorptionTime": .enum(
-                    values: AbsorptionTimeCategory.allCases.map(\.rawValue),
-                    description: "Absorption speed category"
-                )
+                "fat": .number(description: "Estimated fat in grams"),
+                "protein": .number(description: "Estimated protein in grams")
             ],
-            required: ["id", "name", "carbs", "emoji", "absorptionTime"],
+            required: ["id", "name", "carbs", "emoji", "fat", "protein"],
             description: "A food item"
         )
 
@@ -1203,7 +1148,8 @@ final class OpenAIService {
                 name: item.name,
                 carbs: item.carbs,
                 emoji: item.emoji,
-                absorptionTime: AbsorptionTimeCategory(rawValue: item.absorptionTime) ?? .medium
+                fat: item.fat,
+                protein: item.protein
             )
         }
 
@@ -1228,8 +1174,8 @@ private struct LegacySingleItemResponse: Decodable {
     let foodDescription: String
     let emoji: String
     let detailedDescription: String
-    let absorptionTime: String
+    let fat: Double
+    let protein: Double
     let carbConfidence: Double
-    let absorptionConfidence: Double
     let emojiConfidence: Double
 }

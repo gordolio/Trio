@@ -11,14 +11,14 @@ struct AIAssistedCarbEntryMetadata: Codable, Equatable {
     /// Emoji representation of the food (1-3 emojis)
     let emoji: String
 
-    /// AI's recommended absorption time category
-    let absorptionTime: AbsorptionTimeCategory
+    /// AI's estimated fat in grams
+    let fat: Double
+
+    /// AI's estimated protein in grams
+    let protein: Double
 
     /// Confidence level for the carb estimate (0.0-1.0)
     let carbConfidence: Double
-
-    /// Confidence level for the absorption time estimate (0.0-1.0)
-    let absorptionConfidence: Double
 
     /// Confidence level for the emoji selection (0.0-1.0)
     let emojiConfidence: Double
@@ -39,9 +39,9 @@ struct AIAssistedCarbEntryMetadata: Codable, Equatable {
         detailedDescription: String,
         estimatedCarbs: Double,
         emoji: String,
-        absorptionTime: AbsorptionTimeCategory,
+        fat: Double,
+        protein: Double,
         carbConfidence: Double,
-        absorptionConfidence: Double,
         emojiConfidence: Double,
         userModified: Bool = false,
         analyzedAt: Date = Date(),
@@ -51,9 +51,9 @@ struct AIAssistedCarbEntryMetadata: Codable, Equatable {
         self.detailedDescription = detailedDescription
         self.estimatedCarbs = estimatedCarbs
         self.emoji = emoji
-        self.absorptionTime = absorptionTime
+        self.fat = fat
+        self.protein = protein
         self.carbConfidence = carbConfidence
-        self.absorptionConfidence = absorptionConfidence
         self.emojiConfidence = emojiConfidence
         self.userModified = userModified
         self.analyzedAt = analyzedAt
@@ -79,7 +79,8 @@ struct AIAssistedCarbEntryMetadata: Codable, Equatable {
         if !emoji.isEmpty {
             notes += " \(emoji)"
         }
-        notes += " | Est: \(Int(estimatedCarbs))g (conf: \(Int(carbConfidence * 100))%)"
+        notes +=
+            " | Est: \(Int(estimatedCarbs))g carbs, \(Int(fat))g fat, \(Int(protein))g protein (conf: \(Int(carbConfidence * 100))%)"
 
         // Add multi-item breakdown if present
         if let items = foodItems, items.count > 1 {
@@ -92,7 +93,6 @@ struct AIAssistedCarbEntryMetadata: Codable, Equatable {
             }
         }
 
-        notes += " | Absorption: \(absorptionTime.rawValue) (conf: \(Int(absorptionConfidence * 100))%)"
         if userModified {
             notes += " | User modified"
         }
@@ -108,10 +108,9 @@ struct LoggableMetadata: Codable {
     let detailedDescription: String
     let estimatedCarbs: Double
     let emoji: String
-    let absorptionTime: String
-    let absorptionTimeHours: Double
+    let fat: Double
+    let protein: Double
     let carbConfidence: Double
-    let absorptionConfidence: Double
     let emojiConfidence: Double
     let userModified: Bool
     let analyzedAt: String
@@ -124,10 +123,9 @@ struct LoggableMetadata: Codable {
         detailedDescription = metadata.detailedDescription
         estimatedCarbs = metadata.estimatedCarbs
         emoji = metadata.emoji
-        absorptionTime = metadata.absorptionTime.rawValue
-        absorptionTimeHours = metadata.absorptionTime.typicalHours
+        fat = metadata.fat
+        protein = metadata.protein
         carbConfidence = metadata.carbConfidence
-        absorptionConfidence = metadata.absorptionConfidence
         emojiConfidence = metadata.emojiConfidence
         userModified = metadata.userModified
         analyzedAt = ISO8601DateFormatter().string(from: metadata.analyzedAt)
@@ -157,12 +155,14 @@ struct LoggableFoodItem: Codable {
     let name: String
     let carbs: Double
     let emoji: String
-    let absorptionTime: String
+    let fat: Double
+    let protein: Double
 
     init(from item: AIFoodItem) {
         name = item.name
         carbs = item.carbs
         emoji = item.emoji ?? ""
-        absorptionTime = item.absorptionTime.rawValue
+        fat = item.fat
+        protein = item.protein
     }
 }

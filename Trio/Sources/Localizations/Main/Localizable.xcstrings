@@ -61148,6 +61148,9 @@
         }
       }
     },
+    "carbs" : {
+      "comment" : "Nutrient label for carbohydrates"
+    },
     "Carbs" : {
       "comment" : "Treatment type",
       "localizations" : {
@@ -110224,6 +110227,9 @@
     },
     "Failed to write export file: %@" : {
 
+    },
+    "fat" : {
+      "comment" : "Nutrient label for fat"
     },
     "Fat" : {
       "comment" : "Add Fat",
@@ -186483,6 +186489,9 @@
           }
         }
       }
+    },
+    "protein" : {
+      "comment" : "Nutrient label for protein"
     },
     "Protein" : {
       "comment" : "Add Protein",
