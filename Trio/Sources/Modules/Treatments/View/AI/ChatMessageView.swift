@@ -102,8 +102,8 @@ struct ChatMessageList: View {
     struct ChatMessageView_Previews: PreviewProvider {
         static var previews: some View {
             let sampleItems = [
-                AIFoodItem(name: "Sandwich", carbs: 32, emoji: "🥪", absorptionTime: .medium),
-                AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎", absorptionTime: .fast)
+                AIFoodItem(name: "Sandwich", carbs: 32, emoji: "🥪", fat: 12, protein: 18),
+                AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎", fat: 0, protein: 0)
             ]
 
             let sampleMessages: [AIConversationMessage] = [

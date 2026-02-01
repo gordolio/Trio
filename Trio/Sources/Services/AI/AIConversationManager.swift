@@ -116,7 +116,8 @@ final class AIConversationManager: ObservableObject {
             name: newDescription,
             carbs: oldItem.carbs,
             emoji: oldItem.emoji,
-            absorptionTime: oldItem.absorptionTime
+            fat: oldItem.fat,
+            protein: oldItem.protein
         )
 
         // Add system event to conversation history
@@ -151,7 +152,8 @@ final class AIConversationManager: ObservableObject {
                 name: newDescription,
                 carbs: response.updatedCarbs,
                 emoji: updatedItem.emoji,
-                absorptionTime: response.updatedAbsorptionTime ?? updatedItem.absorptionTime
+                fat: response.updatedFat ?? updatedItem.fat,
+                protein: response.updatedProtein ?? updatedItem.protein
             )
             currentItems[itemIndex] = updatedItem
 

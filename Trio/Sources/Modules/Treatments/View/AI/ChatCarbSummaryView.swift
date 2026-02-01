@@ -202,9 +202,9 @@ struct CompactCarbSummaryView: View {
     struct ChatCarbSummaryView_Previews: PreviewProvider {
         static var previews: some View {
             let sampleItems = [
-                AIFoodItem(name: "Sandwich (turkey, cheese)", carbs: 32, emoji: "🥪", absorptionTime: .medium),
-                AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎", absorptionTime: .fast),
-                AIFoodItem(name: "Diet Soda", carbs: 0, emoji: "🥤", absorptionTime: .fast)
+                AIFoodItem(name: "Sandwich (turkey, cheese)", carbs: 32, emoji: "🥪", fat: 14, protein: 22),
+                AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎", fat: 0, protein: 0),
+                AIFoodItem(name: "Diet Soda", carbs: 0, emoji: "🥤", fat: 0, protein: 0)
             ]
 
             ScrollView {

@@ -749,13 +749,16 @@ extension Treatments {
                 return "\(emoji) \(item.name): \(Int(item.carbs))g"
             }.joined(separator: ", ")
 
+            fat = Decimal(selection.selectedFat)
+            protein = Decimal(selection.selectedProtein)
+
             aiAssistedMetadata = AIAssistedCarbEntryMetadata(
                 detailedDescription: itemDescriptions,
                 estimatedCarbs: selection.response.totalCarbs,
                 emoji: selection.mainItem?.emoji ?? "",
-                absorptionTime: selection.selectedAbsorptionTime,
+                fat: selection.selectedFat,
+                protein: selection.selectedProtein,
                 carbConfidence: selection.response.overallConfidence,
-                absorptionConfidence: selection.response.overallConfidence,
                 emojiConfidence: selection.response.overallConfidence,
                 userModified: userModified,
                 foodItems: selection.response.foodItems,
@@ -819,7 +822,8 @@ extension Treatments {
                         name: newDescription,
                         carbs: oldItem.carbs,
                         emoji: oldItem.emoji,
-                        absorptionTime: oldItem.absorptionTime
+                        fat: oldItem.fat,
+                        protein: oldItem.protein
                     )
                     let updatedResponse = AIFoodItemsResponse(
                         foodItems: updatedItems,

@@ -1,6 +1,29 @@
 import LoopKitUI
 import SwiftUI
 
+// MARK: - Nutrient Display Mode
+
+/// Which nutrient value to show in the food items list
+private enum NutrientDisplayMode: CaseIterable {
+    case carbs
+    case fat
+    case protein
+
+    var label: String {
+        switch self {
+        case .carbs: return String(localized: "carbs", comment: "Nutrient label for carbohydrates")
+        case .fat: return String(localized: "fat", comment: "Nutrient label for fat")
+        case .protein: return String(localized: "protein", comment: "Nutrient label for protein")
+        }
+    }
+
+    var next: NutrientDisplayMode {
+        let all = Self.allCases
+        let idx = all.firstIndex(of: self)!
+        return all[(idx + 1) % all.count]
+    }
+}
+
 /// A collapsible view for displaying and selecting individual food items from AI analysis
 /// Now supports inline editing of item descriptions and shimmer animations during recalculation
 struct FoodItemsSelectionView: View {
@@ -23,6 +46,9 @@ struct FoodItemsSelectionView: View {
     @State private var editingItemId: UUID?
     @State private var editText: String = ""
     @FocusState private var isEditingFocused: Bool
+
+    // State for nutrient display cycling
+    @State private var nutrientDisplay: NutrientDisplayMode = .carbs
 
     // Check if any item is pending (for total shimmer)
     private var isAnyItemPending: Bool {
@@ -64,6 +90,59 @@ struct FoodItemsSelectionView: View {
         }
     }
 
+    // MARK: - Nutrient Helpers
+
+    private func nutrientValue(for item: AIFoodItem) -> Double {
+        switch nutrientDisplay {
+        case .carbs: return item.carbs
+        case .fat: return item.fat
+        case .protein: return item.protein
+        }
+    }
+
+    private func selectedNutrientTotal(_ selection: FoodItemSelection) -> Double {
+        switch nutrientDisplay {
+        case .carbs: return selection.selectedCarbs
+        case .fat: return selection.selectedFat
+        case .protein: return selection.selectedProtein
+        }
+    }
+
+    private func cycleNutrient() {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            nutrientDisplay = nutrientDisplay.next
+        }
+    }
+
+    // MARK: - Nutrient Value View
+
+    /// Displays a nutrient value with an inline label, tappable to cycle
+    private func nutrientValueView(value: Double, isSelected: Bool, isPending: Bool, isHeader _: Bool = false) -> some View {
+        Button(action: cycleNutrient) {
+            HStack(spacing: 4) {
+                if isPending {
+                    AnimatedSparkleIcon(isAnimating: true)
+                }
+                if nutrientDisplay == .carbs {
+                    Text(formatValue(value))
+                        .font(.body.monospacedDigit())
+                        .foregroundColor(isSelected ? .primary : .secondary)
+                } else {
+                    Text(formatValue(value))
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(isSelected ? .primary : .secondary)
+                    Text(nutrientDisplay.label)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Header
+
     private func collapsedHeader(selection: FoodItemSelection) -> some View {
         Button(action: {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -84,16 +163,13 @@ struct FoodItemsSelectionView: View {
 
                 Spacer(minLength: 8)
 
-                // Total carbs with shimmer when any item is pending
-                HStack(spacing: 4) {
-                    if isAnyItemPending {
-                        AnimatedSparkleIcon(isAnimating: true)
-                    }
-                    Text(formatCarbs(selection.selectedCarbs))
-                        .font(.body.monospacedDigit())
-                        .foregroundColor(.primary)
-                        .fixedSize()
-                }
+                // Total nutrient value with shimmer when any item is pending
+                nutrientValueView(
+                    value: selectedNutrientTotal(selection),
+                    isSelected: true,
+                    isPending: isAnyItemPending,
+                    isHeader: true
+                )
                 .padding(.horizontal, isAnyItemPending ? 12 : 0)
                 .padding(.vertical, isAnyItemPending ? 6 : 0)
                 .background(
@@ -111,6 +187,8 @@ struct FoodItemsSelectionView: View {
         }
         .buttonStyle(.plain)
     }
+
+    // MARK: - Expanded Content
 
     private func expandedContent(selection: FoodItemSelection) -> some View {
         VStack(spacing: 0) {
@@ -187,16 +265,12 @@ struct FoodItemsSelectionView: View {
 
             Spacer(minLength: 8)
 
-            // Carbs with shimmer when pending
-            HStack(spacing: 4) {
-                if isPending {
-                    AnimatedSparkleIcon(isAnimating: true)
-                }
-                Text(formatCarbs(item.carbs))
-                    .font(.body.monospacedDigit())
-                    .foregroundColor(isSelected ? .primary : .secondary)
-                    .fixedSize()
-            }
+            // Nutrient value - tappable to cycle between carbs/fat/protein
+            nutrientValueView(
+                value: nutrientValue(for: item),
+                isSelected: isSelected,
+                isPending: isPending
+            )
             .padding(.horizontal, isPending ? 10 : 0)
             .padding(.vertical, isPending ? 4 : 0)
             .background(
@@ -278,11 +352,11 @@ struct FoodItemsSelectionView: View {
         isEditingFocused = false
     }
 
-    private func formatCarbs(_ carbs: Double) -> String {
-        if carbs == floor(carbs) {
-            return "\(Int(carbs))g"
+    private func formatValue(_ value: Double) -> String {
+        if value == floor(value) {
+            return "\(Int(value))g"
         } else {
-            return String(format: "%.1fg", carbs)
+            return String(format: "%.1fg", value)
         }
     }
 }
@@ -291,9 +365,9 @@ struct FoodItemsSelectionView: View {
     struct FoodItemsSelectionView_Previews: PreviewProvider {
         static var previews: some View {
             let sampleItems = [
-                AIFoodItem(name: "Sandwich (turkey, cheese)", carbs: 32, emoji: "🥪", absorptionTime: .medium),
-                AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎", absorptionTime: .fast),
-                AIFoodItem(name: "Diet Soda", carbs: 0, emoji: "🥤", absorptionTime: .fast)
+                AIFoodItem(name: "Sandwich (turkey, cheese)", carbs: 32, emoji: "🥪", fat: 14, protein: 22),
+                AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎", fat: 0, protein: 0),
+                AIFoodItem(name: "Diet Soda", carbs: 0, emoji: "🥤", fat: 0, protein: 0)
             ]
             let response = AIFoodItemsResponse(foodItems: sampleItems, overallConfidence: 0.85)
             let pendingIds: Set<UUID> = [sampleItems[1].id]
