@@ -5573,6 +5573,9 @@
         }
       }
     },
+    "(%lld items)" : {
+      "comment" : "Item count in compact view"
+    },
     "(50% current basal rate)" : {
       "localizations" : {
         "bg" : {
@@ -9438,6 +9441,17 @@
         }
       }
     },
+    "%@%@ +%d" : {
+      "comment" : "Summary showing main food item and count of others (1: emoji, 2: item name, 3: count of other items)",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@%2$@ +%3$d"
+          }
+        }
+      }
+    },
     "%@%% Insulin" : {
       "localizations" : {
         "bg" : {
@@ -10037,7 +10051,6 @@
       }
     },
     "%lld h" : {
-      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -10272,6 +10285,9 @@
           }
         }
       }
+    },
+    "%lld items" : {
+      "comment" : "Multiple item count"
     },
     "%lld min" : {
       "localizations" : {
@@ -19845,6 +19861,9 @@
         }
       }
     },
+    "1 item" : {
+      "comment" : "Single item count"
+    },
     "1. Open the Settings app on your iOS device." : {
       "localizations" : {
         "bg" : {
@@ -25207,6 +25226,9 @@
         }
       }
     },
+    "Accept These Values" : {
+      "comment" : "Button to accept AI carb estimates"
+    },
     "Acknowledge all alerts" : {
       "localizations" : {
         "bg" : {
@@ -27832,6 +27854,9 @@
           }
         }
       }
+    },
+    "Add context (optional)" : {
+      "comment" : "Label for food description text field"
     },
     "Add Device" : {
       "localizations" : {
@@ -34103,6 +34128,12 @@
           }
         }
       }
+    },
+    "AI Analysis Error" : {
+
+    },
+    "AI Estimate" : {
+      "comment" : "Label for AI-generated carb estimate"
     },
     "Alarms" : {
       "extractionState" : "manual",
@@ -42745,6 +42776,15 @@
           }
         }
       }
+    },
+    "Analyze" : {
+      "comment" : "Button to analyze food with AI"
+    },
+    "Analyze Food with AI" : {
+      "comment" : "Button label for AI-assisted food analysis"
+    },
+    "Analyzing…" : {
+
     },
     "Animated Background" : {
       "extractionState" : "manual",
@@ -59062,6 +59102,9 @@
         }
       }
     },
+    "Camera" : {
+
+    },
     "Can't find the default Nightscout Profile." : {
       "comment" : "Import ErrorImport Error",
       "extractionState" : "manual",
@@ -59189,7 +59232,7 @@
       }
     },
     "Cancel" : {
-      "comment" : "Cancel preset name",
+      "comment" : "Cancel button\nCancel description input",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -69748,6 +69791,7 @@
       }
     },
     "Confirm" : {
+      "comment" : "Confirm button",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -95314,6 +95358,9 @@
         }
       }
     },
+    "e.g., sugar-free, homemade…" : {
+      "comment" : "Placeholder for food description"
+    },
     "eA1c" : {
       "localizations" : {
         "bg" : {
@@ -104899,7 +104946,7 @@
       }
     },
     "Error" : {
-      "comment" : "Error title",
+      "comment" : "Error alert title\nError title",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -123850,6 +123897,9 @@
           }
         }
       }
+    },
+    "Hide items" : {
+
     },
     "High" : {
       "comment" : "High Glucose Threshold in Statistics settings",
@@ -162746,6 +162796,9 @@
         }
       }
     },
+    "Network error: %@" : {
+      "comment" : "Network error with description"
+    },
     "New Basal Profile =\n(Current Basal Profile) × (Autosens Ratio)" : {
       "localizations" : {
         "bg" : {
@@ -164778,6 +164831,9 @@
         }
       }
     },
+    "No content returned from AI" : {
+      "comment" : "Error when AI returns empty response"
+    },
     "No Data" : {
       "localizations" : {
         "bg" : {
@@ -165847,6 +165903,9 @@
           }
         }
       }
+    },
+    "No items selected" : {
+      "comment" : "Text shown when no food items are selected"
     },
     "No Libre Transmitter Selected" : {
       "comment" : "No Libre Transmitter Selected",
@@ -176271,6 +176330,9 @@
         }
       }
     },
+    "OpenAI API key is not configured" : {
+      "comment" : "Error when OpenAI API key is missing"
+    },
     "OpenAPS main settings" : {
       "comment" : "Headers for settings -----------------------",
       "extractionState" : "manual",
@@ -182446,6 +182508,9 @@
           }
         }
       }
+    },
+    "Photo Library" : {
+
     },
     "Pick Treatment" : {
       "localizations" : {
@@ -193221,6 +193286,12 @@
         }
       }
     },
+    "Refine Food Analysis" : {
+      "comment" : "Title for AI chat view"
+    },
+    "Refine with AI" : {
+      "comment" : "Button to open AI chat for refining food analysis"
+    },
     "Remaining Carbs Cap" : {
       "comment" : "Remaining Carbs Cap",
       "localizations" : {
@@ -200901,6 +200972,9 @@
         }
       }
     },
+    "Select Photo Source" : {
+
+    },
     "Select Pump Model" : {
       "localizations" : {
         "bg" : {
@@ -204201,6 +204275,9 @@
           }
         }
       }
+    },
+    "Server returned error (status %d)" : {
+      "comment" : "Server error with status code"
     },
     "Services" : {
       "comment" : "Services menu item in the Settings main view.",
@@ -208516,6 +208593,9 @@
           }
         }
       }
+    },
+    "Show items" : {
+
     },
     "Show live activity" : {
       "comment" : "Notification option",
@@ -251860,6 +251940,9 @@
         }
       }
     },
+    "Type a message..." : {
+      "comment" : "Placeholder for chat input"
+    },
     "U" : {
       "comment" : "Insulin unit\nInsulin unit abbreviation\nThe short unit display string for international units of insulin\nUnits for bolus amount",
       "localizations" : {
@@ -252937,6 +253020,12 @@
           }
         }
       }
+    },
+    "Unable to parse the AI response" : {
+      "comment" : "Error when response parsing fails"
+    },
+    "Unable to process the selected image" : {
+      "comment" : "Error when image data is invalid"
     },
     "Unable to Save" : {
       "localizations" : {
