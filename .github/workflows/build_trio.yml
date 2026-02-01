@@ -214,6 +214,11 @@ jobs:
           # Several patches may be added per submodule.
           # Adding comments (#) is strongly recommended to easily tell the individual patches apart.
 
+      # Inject OpenAI API key into ConfigOverride.xcconfig for AI carb estimation
+      - name: Configure OpenAI API Key
+        if: ${{ secrets.OPENAI_API_KEY != '' }}
+        run: echo "OPENAI_API_KEY = ${{ secrets.OPENAI_API_KEY }}" >> ConfigOverride.xcconfig
+
       # Patch Fastlane Match to not print tables
       - name: Patch Match Tables
         run: |
