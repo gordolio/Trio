@@ -209,14 +209,21 @@ final class AIConversationManager: ObservableObject {
                 userMessage: text
             )
 
+            // Build a map of old item name -> selected state before replacing
+            let oldSelectionByName = Dictionary(
+                currentItems.map { ($0.name.lowercased(), selectedItemIds.contains($0.id)) },
+                uniquingKeysWith: { first, _ in first }
+            )
+
             // Update items
             currentItems = response.foodItems
             overallConfidence = response.overallConfidence
 
-            // Update selected IDs to include any new items
-            let newItemIds = Set(response.foodItems.map(\.id))
-            selectedItemIds = selectedItemIds.intersection(newItemIds).union(
-                newItemIds.subtracting(Set(currentItems.map(\.id)))
+            // Reconcile selection by name: preserve deselected state, default new items to selected
+            selectedItemIds = Set(
+                response.foodItems
+                    .filter { oldSelectionByName[$0.name.lowercased()] ?? true }
+                    .map(\.id)
             )
 
             // Add assistant response
