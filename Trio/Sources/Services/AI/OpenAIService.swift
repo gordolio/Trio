@@ -44,12 +44,28 @@ struct OpenAIChatRequest: Encodable {
     let messages: [OpenAIMessage]
     let maxTokens: Int
     let responseFormat: OpenAIResponseFormat?
+    let stream: Bool?
+
+    init(
+        model: String,
+        messages: [OpenAIMessage],
+        maxTokens: Int,
+        responseFormat: OpenAIResponseFormat?,
+        stream: Bool? = nil
+    ) {
+        self.model = model
+        self.messages = messages
+        self.maxTokens = maxTokens
+        self.responseFormat = responseFormat
+        self.stream = stream
+    }
 
     enum CodingKeys: String, CodingKey {
         case model
         case messages
         case maxTokens = "max_tokens"
         case responseFormat = "response_format"
+        case stream
     }
 }
 
@@ -239,6 +255,29 @@ struct OpenAIUsage: Decodable {
         case completionTokens = "completion_tokens"
         case totalTokens = "total_tokens"
     }
+}
+
+// MARK: - OpenAI Streaming Response Types
+
+/// A single chunk from the OpenAI streaming API (SSE)
+struct OpenAIStreamChunk: Decodable {
+    let choices: [OpenAIStreamChoice]
+}
+
+/// A choice within a streaming chunk
+struct OpenAIStreamChoice: Decodable {
+    let delta: OpenAIStreamDelta
+    let finishReason: String?
+
+    enum CodingKeys: String, CodingKey {
+        case delta
+        case finishReason = "finish_reason"
+    }
+}
+
+/// Delta content in a streaming chunk
+struct OpenAIStreamDelta: Decodable {
+    let content: String?
 }
 
 // MARK: - AI Response Content Types (what we parse from the content field)
@@ -824,6 +863,121 @@ final class OpenAIService {
             overallConfidence: analysisResponse.overallConfidence,
             reasoning: analysisResponse.reasoning
         )
+    }
+
+    // MARK: - Streaming Food Analysis
+
+    /// Analyzes a food image with streaming, yielding partial results as they arrive.
+    /// Food items appear progressively in the UI as each one is parsed from the stream.
+    /// - Parameters:
+    ///   - imageData: JPEG image data of the food to analyze
+    ///   - userDescription: Optional context from user
+    /// - Returns: An AsyncStream of partial results, culminating in a complete result
+    func analyzeFoodStreaming(
+        imageData: Data,
+        userDescription: String?
+    ) -> AsyncThrowingStream<PartialFoodAnalysisResult, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let apiKey = try self.getAPIKey()
+                    let base64Image = imageData.base64EncodedString()
+
+                    os_log(
+                        "Sending food image for streaming AI analysis (%d bytes)",
+                        log: self.log,
+                        type: .info,
+                        imageData.count
+                    )
+
+                    var request = URLRequest(url: self.endpoint)
+                    request.httpMethod = "POST"
+                    request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+                    var prompt = """
+                    Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate, fat, and protein content for each.
+
+                    IMPORTANT GUIDELINES:
+                    - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
+                    - Include sides, drinks, sauces, and condiments as separate items
+                    - For composite items like sandwiches, list as one item but note components in the name
+                    - Estimate portion sizes based on visual cues
+                    - Choose 1-2 emojis per item that best represent it
+                    - Estimate fat and protein in grams for each item
+                    - Provide a brief reasoning explaining your carb estimates
+                    """
+
+                    if let description = userDescription, !description.isEmpty {
+                        prompt += "\n\nUSER CONTEXT: \(description)\nPlease factor this information into your analysis."
+                    }
+
+                    let chatRequest = OpenAIChatRequest(
+                        model: "gpt-4o",
+                        messages: [
+                            OpenAIMessage(
+                                role: "user",
+                                content: [
+                                    .text(prompt),
+                                    .imageUrl(OpenAIImageUrl(url: "data:image/jpeg;base64,\(base64Image)"))
+                                ]
+                            )
+                        ],
+                        maxTokens: 1500,
+                        responseFormat: OpenAIResponseFormat(
+                            type: "json_schema",
+                            jsonSchema: OpenAIJSONSchema(
+                                name: "food_analysis_with_reasoning",
+                                strict: true,
+                                schema: self.buildFoodAnalysisWithReasoningSchema()
+                            )
+                        ),
+                        stream: true
+                    )
+
+                    request.httpBody = try self.encoder.encode(chatRequest)
+
+                    let (bytes, response) = try await self.session.bytes(for: request)
+
+                    guard let httpResponse = response as? HTTPURLResponse else {
+                        throw OpenAIServiceError.invalidResponse(statusCode: 0)
+                    }
+
+                    guard (200 ... 299).contains(httpResponse.statusCode) else {
+                        os_log(
+                            "OpenAI streaming API error: status %d",
+                            log: self.log,
+                            type: .error,
+                            httpResponse.statusCode
+                        )
+                        throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+                    }
+
+                    let parser = OpenAIStreamingParser()
+
+                    for try await line in bytes.lines {
+                        if let partialResult = parser.parseLine(line) {
+                            continuation.yield(partialResult)
+
+                            if partialResult.isComplete {
+                                break
+                            }
+                        }
+                    }
+
+                    continuation.finish()
+
+                } catch {
+                    os_log(
+                        "Streaming analysis failed: %{public}@",
+                        log: self.log,
+                        type: .error,
+                        error.localizedDescription
+                    )
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
     }
 
     // MARK: - Single Item Update (Inline Editing)

@@ -90,6 +90,103 @@ final class AIConversationManager: ObservableObject {
         )
     }
 
+    // MARK: - Streaming Initialization
+
+    /// Initialize the conversation by consuming a stream of partial food analysis results.
+    /// Food items appear progressively in the UI as they are parsed from the stream.
+    /// - Parameters:
+    ///   - stream: AsyncThrowingStream of partial results from the streaming API
+    ///   - imageData: The original image data
+    ///   - userDescription: Optional user context
+    @MainActor func initializeStreaming(
+        stream: AsyncThrowingStream<PartialFoodAnalysisResult, Error>,
+        imageData: Data,
+        userDescription: String?,
+        onItemsUpdated: ((_ items: [AIFoodItem]) -> Void)? = nil
+    ) async throws -> AIFoodItemsResponseWithReasoning {
+        self.imageData = imageData
+        self.userDescription = userDescription
+        currentItems = []
+        selectedItemIds = []
+        messages = []
+
+        var finalResult: PartialFoodAnalysisResult?
+
+        for try await partial in stream {
+            os_log(
+                "Stream update: %d items (current: %d), complete: %{public}@",
+                log: log,
+                type: .info,
+                partial.foodItems.count,
+                currentItems.count,
+                partial.isComplete ? "YES" : "NO"
+            )
+
+            // Update items incrementally — new items appear as they stream in
+            if partial.foodItems.count > currentItems.count {
+                let newItems = partial.foodItems.suffix(from: currentItems.count)
+                for item in newItems {
+                    currentItems.append(item)
+                    selectedItemIds.insert(item.id)
+                }
+            }
+
+            // Update existing items if their values changed (e.g., partial number completed)
+            for (index, item) in partial.foodItems.enumerated() where index < currentItems.count {
+                if currentItems[index] != item {
+                    let existingId = currentItems[index].id
+                    currentItems[index] = AIFoodItem(
+                        id: existingId,
+                        name: item.name,
+                        carbs: item.carbs,
+                        emoji: item.emoji,
+                        fat: item.fat,
+                        protein: item.protein
+                    )
+                }
+            }
+
+            // Notify caller so the view can update
+            if !currentItems.isEmpty {
+                onItemsUpdated?(currentItems)
+            }
+
+            if partial.isComplete {
+                finalResult = partial
+            }
+        }
+
+        guard let final_ = finalResult, !final_.foodItems.isEmpty else {
+            throw OpenAIServiceError.noContentInResponse
+        }
+
+        // Build the final response using our stable IDs
+        let response = AIFoodItemsResponseWithReasoning(
+            foodItems: currentItems,
+            overallConfidence: final_.overallConfidence,
+            reasoning: final_.reasoning
+        )
+
+        // Finalize conversation state
+        initialReasoning = response.reasoning
+        overallConfidence = response.overallConfidence
+
+        messages = [
+            .assistantMessage(response.reasoning),
+            .carbSummary(items: currentItems, canAccept: true)
+        ]
+
+        os_log(
+            "Streaming initialization complete: %d items, total %.1fg carbs",
+            log: log,
+            type: .info,
+            currentItems.count,
+            currentItems.reduce(0) { $0 + $1.carbs }
+        )
+
+        return response
+    }
+
     // MARK: - Inline Item Editing
 
     /// Update a single item's description and recalculate its carbs

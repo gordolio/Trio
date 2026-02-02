@@ -708,9 +708,29 @@ extension Treatments {
             }
 
             do {
-                let response = try await OpenAIService.shared.analyzeFood(
+                let stream = OpenAIService.shared.analyzeFoodStreaming(
                     imageData: imageData,
                     userDescription: description
+                )
+
+                let manager = AIConversationManager()
+                await MainActor.run {
+                    conversationManager = manager
+                }
+
+                let response = try await manager.initializeStreaming(
+                    stream: stream,
+                    imageData: imageData,
+                    userDescription: description,
+                    onItemsUpdated: { [weak self] items in
+                        guard let self else { return }
+                        let response = AIFoodItemsResponse(
+                            foodItems: items,
+                            overallConfidence: 0
+                        )
+                        let selection = FoodItemSelection(response: response)
+                        self.foodItemSelection = selection
+                    }
                 )
 
                 await MainActor.run {
@@ -719,14 +739,6 @@ extension Treatments {
                     withAnimation(.easeInOut(duration: 0.35)) {
                         foodItemSelection = selection
                     }
-
-                    let manager = AIConversationManager()
-                    manager.initialize(
-                        with: response,
-                        imageData: imageData,
-                        userDescription: description
-                    )
-                    conversationManager = manager
 
                     updateFormFromSelection()
                     isAnalyzingFood = false

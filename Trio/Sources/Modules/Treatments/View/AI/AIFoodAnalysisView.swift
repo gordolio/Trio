@@ -25,9 +25,9 @@ struct AIFoodAnalysisView: View {
                 )
                 .padding(.bottom, 4)
             } else if let imageData = state.capturedImageData,
-                      state.foodItemSelection == nil || state.isAnalyzingFood
+                      state.foodItemSelection == nil, state.isAnalyzingFood
             {
-                // Description input + analyzing overlay
+                // Description input + analyzing overlay (before any items have streamed in)
                 ZStack {
                     FoodDescriptionInputView(
                         description: Binding(
@@ -59,23 +59,70 @@ struct AIFoodAnalysisView: View {
                         analysisOverlay
                     }
                 }
-            } else if state.foodItemSelection != nil {
-                // Food items selection tree
-                FoodItemsSelectionView(
-                    selection: $state.foodItemSelection,
-                    isExpanded: $isFoodItemsExpanded,
-                    pendingItemIds: state.pendingItemIds,
-                    onToggleItem: { itemId in
-                        state.toggleFoodItem(itemId)
-                    },
-                    onEditItem: { itemId, newDescription in
+            } else if let imageData = state.capturedImageData,
+                      state.foodItemSelection == nil, !state.isAnalyzingFood
+            {
+                // Description input (not yet analyzing, no results)
+                FoodDescriptionInputView(
+                    description: Binding(
+                        get: { state.foodDescription },
+                        set: { state.foodDescription = $0 }
+                    ),
+                    imageData: imageData,
+                    onAnalyze: {
+                        state.isAnalyzingFood = true
                         Task {
-                            await state.editFoodItemDescription(itemId, newDescription: newDescription)
+                            await state.analyzeFood(
+                                imageData: imageData,
+                                description: state.foodDescription.isEmpty ? nil : state.foodDescription
+                            )
                         }
                     },
-                    onOpenChat: onOpenChat
+                    onCancel: {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            state.capturedImageData = nil
+                            state.foodDescription = ""
+                        }
+                    }
                 )
+            } else if state.foodItemSelection != nil {
+                // Food items selection tree (shown during streaming and after completion)
+                VStack(spacing: 0) {
+                    FoodItemsSelectionView(
+                        selection: $state.foodItemSelection,
+                        isExpanded: $isFoodItemsExpanded,
+                        pendingItemIds: state.pendingItemIds,
+                        onToggleItem: { itemId in
+                            state.toggleFoodItem(itemId)
+                        },
+                        onEditItem: state.isAnalyzingFood ? nil : { itemId, newDescription in
+                            Task {
+                                await state.editFoodItemDescription(itemId, newDescription: newDescription)
+                            }
+                        },
+                        onOpenChat: state.isAnalyzingFood ? nil : onOpenChat
+                    )
+
+                    if state.isAnalyzingFood {
+                        HStack(spacing: 6) {
+                            AnimatedSparkleIcon(isAnimating: true)
+                            Text("Analyzing\u{2026}")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                        .transition(.opacity)
+                    }
+                }
                 .transition(.opacity)
+                .onChange(of: state.foodItemSelection?.response.foodItems.count) { _, _ in
+                    // Auto-expand when first items stream in
+                    if state.isAnalyzingFood, !isFoodItemsExpanded {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isFoodItemsExpanded = true
+                        }
+                    }
+                }
             }
         }
         .actionSheet(isPresented: $showPhotoSourcePicker) {
