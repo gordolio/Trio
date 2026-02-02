@@ -77,6 +77,7 @@ extension Treatments {
                 Task {
                     await state.updateForecasts()
                     state.insulinCalculated = await state.calculateInsulin()
+                    state.amount = state.insulinCalculated
                 }
             }
             if let debounce = debounce {
@@ -240,6 +241,7 @@ extension Treatments {
                                                 // `updateForecasts()` does update the `simulatedDetermination` of type `Determination?` var on the main thread, so I can use this to pass its cob value into the bolus calc manager
                                                 await state.updateForecasts()
                                                 state.insulinCalculated = await state.calculateInsulin()
+                                                state.amount = state.insulinCalculated
                                             }
                                         }
                                     Button {
@@ -272,6 +274,7 @@ extension Treatments {
                                         .onChange(of: state.useFattyMealCorrectionFactor) {
                                             Task {
                                                 state.insulinCalculated = await state.calculateInsulin()
+                                                state.amount = state.insulinCalculated
                                                 if state.useFattyMealCorrectionFactor {
                                                     state.useSuperBolus = false
                                                 }
@@ -287,6 +290,7 @@ extension Treatments {
                                         .onChange(of: state.useSuperBolus) {
                                             Task {
                                                 state.insulinCalculated = await state.calculateInsulin()
+                                                state.amount = state.insulinCalculated
                                                 if state.useSuperBolus {
                                                     state.useFattyMealCorrectionFactor = false
                                                 }
@@ -400,6 +404,7 @@ extension Treatments {
                     state.isActive = true
                     Task { @MainActor in
                         state.insulinCalculated = await state.calculateInsulin()
+                        state.amount = state.insulinCalculated
                     }
                 }
             }
