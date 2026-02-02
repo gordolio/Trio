@@ -50,10 +50,16 @@ final class OpenAIStreamingParser {
 
         // Check for stream end
         if trimmed == "data: [DONE]" {
-            os_log("SSE stream: [DONE]", log: log, type: .debug)
             var result = lastResult
             result.isComplete = true
             lastResult = result
+            os_log(
+                "SSE stream complete: %d items, confidence: %.2f",
+                log: log,
+                type: .info,
+                result.foodItems.count,
+                result.overallConfidence
+            )
             return result
         }
 
@@ -76,45 +82,10 @@ final class OpenAIStreamingParser {
         }
         accumulatedContent += content
 
-        os_log(
-            "SSE chunk delta: '%{public}@' | accumulated content: %{public}@",
-            log: log,
-            type: .debug,
-            content,
-            accumulatedContent
-        )
-
         // Attempt partial JSON parse
         if let result = attemptPartialParse() {
-            os_log(
-                "SSE partial parse: %d items, reasoning length: %d, confidence: %.2f",
-                log: log,
-                type: .info,
-                result.foodItems.count,
-                result.reasoning.count,
-                result.overallConfidence
-            )
-            for (i, item) in result.foodItems.enumerated() {
-                os_log(
-                    "  item[%d]: %{public}@ %{public}@ — carbs: %.1f, fat: %.1f, protein: %.1f",
-                    log: log,
-                    type: .info,
-                    i,
-                    item.emoji ?? "",
-                    item.name,
-                    item.carbs,
-                    item.fat,
-                    item.protein
-                )
-            }
             lastResult = result
             return result
-        } else {
-            os_log(
-                "SSE partial parse: no new result",
-                log: log,
-                type: .debug
-            )
         }
 
         return nil
