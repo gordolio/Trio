@@ -1,18 +1,13 @@
 import SwiftUI
 import UIKit
 
-/// An animated button with a purple/blue AI-themed gradient border,
-/// designed for AI-related features with a modern, magical appearance.
+/// An animated button with a rotating purple/blue AI-themed gradient border.
 struct AnimatedRainbowButton: View {
     let title: String
     let icon: String
     let isLoading: Bool
     let action: () -> Void
 
-    @State private var rotation: Double = 0
-    @State private var isAnimating = false
-    @State private var introGlow: Double = 1.0
-    @State private var glowOpacity: Double = 0.5
     @State private var effectsOpacity: Double = 1.0
 
     // Purple/blue AI-themed gradient colors
@@ -40,37 +35,11 @@ struct AnimatedRainbowButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                // Animated gradient border
+                // Background fill
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(
-                        AngularGradient(
-                            colors: glowColors,
-                            center: .center,
-                            angle: .degrees(rotation)
-                        ),
-                        lineWidth: 2.5
-                    )
-                    .blur(radius: 0.5)
-                    .opacity(effectsOpacity)
+                    .fill(Color(UIColor.systemBackground))
 
-                // Glow effect behind the border
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(
-                        AngularGradient(
-                            colors: glowColors,
-                            center: .center,
-                            angle: .degrees(rotation)
-                        ),
-                        lineWidth: 4 + (introGlow * 4)
-                    )
-                    .blur(radius: 6 + (introGlow * 6))
-                    .opacity((glowOpacity + (introGlow * 0.4)) * effectsOpacity)
-
-                // Clear background with slight tint
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(UIColor.systemBackground).opacity(0.95))
-
-                // Static border that shows when effects fade
+                // Static border that appears as glow fades
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(Color.primary.opacity(1.0 - effectsOpacity), lineWidth: 1.0)
 
@@ -87,46 +56,81 @@ struct AnimatedRainbowButton: View {
                     Text(title)
                         .bold()
                 }
-                .foregroundColor(effectsOpacity > 0.01 && introGlow > 0.01 ? Color(
-                    hue: 0.70,
-                    saturation: 0.6 * introGlow * effectsOpacity,
-                    brightness: 0.5 + (0.3 * introGlow * effectsOpacity)
-                ) : .primary)
+                .foregroundColor(.primary)
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
             }
             .frame(maxWidth: .infinity)
             .frame(height: 48)
+            .overlay(
+                RotatingGradientBorder(colors: glowColors)
+                    .padding(-12) // expand canvas so blur extends outside button
+                    .opacity(effectsOpacity)
+                    .allowsHitTesting(false)
+            )
         }
         .disabled(isLoading)
         .opacity(isLoading ? 0.7 : 1.0)
         .onAppear {
-            startAnimation()
-            // Fade out all rainbow/glow effects after 4 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
                 withAnimation(.easeOut(duration: 1.5)) {
-                    introGlow = 0
                     effectsOpacity = 0
                 }
             }
         }
     }
+}
 
-    private func startAnimation() {
-        guard !isAnimating else { return }
-        isAnimating = true
+/// Draws a rotating conic gradient masked to a rounded rect stroke,
+/// with a soft glow rendered via a second blurred pass.
+private struct RotatingGradientBorder: View {
+    let colors: [Color]
+    private let cornerRadius: CGFloat = 12
+    private let borderWidth: CGFloat = 1.5
+    private let glowRadius: CGFloat = 6
+    private let padding: CGFloat = 12
+    private let rotationDuration: Double = 3.0
 
-        withAnimation(
-            .linear(duration: 3)
-                .repeatForever(autoreverses: false)
-        ) {
-            rotation = 360
-        }
-        withAnimation(
-            .easeInOut(duration: 0.8)
-                .repeatForever(autoreverses: true)
-        ) {
-            glowOpacity = 0.7
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let angle = Angle.degrees(
+                timeline.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: rotationDuration) / rotationDuration * 360
+            )
+            Canvas { context, size in
+                // Inset the stroke path so it lines up with the button edge
+                let rect = CGRect(origin: .zero, size: size).insetBy(dx: padding, dy: padding)
+                let path = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .path(in: rect)
+
+                let gradient = Gradient(colors: colors)
+                let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                let shading = GraphicsContext.Shading.conicGradient(
+                    gradient,
+                    center: center,
+                    angle: angle
+                )
+
+                // Glow pass — clip interior so glow only extends outward
+                context.drawLayer { glowCtx in
+                    glowCtx.addFilter(.blur(radius: glowRadius))
+                    glowCtx.stroke(
+                        path,
+                        with: shading,
+                        style: StrokeStyle(lineWidth: borderWidth + 4)
+                    )
+                    // Punch out the interior
+                    glowCtx.blendMode = .destinationOut
+                    glowCtx.fill(path, with: .color(.white))
+                }
+
+                // Crisp border pass
+                context.stroke(
+                    path,
+                    with: shading,
+                    style: StrokeStyle(lineWidth: borderWidth)
+                )
+            }
         }
     }
 }
