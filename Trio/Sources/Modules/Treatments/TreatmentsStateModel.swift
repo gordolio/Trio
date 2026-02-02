@@ -780,6 +780,7 @@ extension Treatments {
             Task { @MainActor in
                 await updateForecasts()
                 insulinCalculated = await calculateInsulin()
+                amount = insulinCalculated
             }
         }
 
@@ -1137,6 +1138,7 @@ extension Treatments.StateModel {
             basal = (mostRecentDetermination.tempBasal ?? 0) as Decimal
             carbRatio = (mostRecentDetermination.carbRatio ?? currentCarbRatio as NSDecimalNumber) as Decimal
             insulinCalculated = await calculateInsulin()
+            amount = insulinCalculated
         }
     }
 }
