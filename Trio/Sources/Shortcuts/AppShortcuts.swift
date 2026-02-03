@@ -75,5 +75,14 @@ struct AppShortcuts: AppShortcutsProvider {
             shortTitle: "Restart Live Activity",
             systemImageName: "arrow.clockwise.circle.fill"
         )
+        AppShortcut(
+            intent: OpenTreatmentIntent(),
+            phrases: [
+                "Open \(.applicationName) treatment",
+                "Open \(.applicationName) bolus calculator"
+            ],
+            shortTitle: "Open Treatment",
+            systemImageName: "plus.circle.fill"
+        )
     }
 }
