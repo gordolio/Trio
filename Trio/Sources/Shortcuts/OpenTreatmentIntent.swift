@@ -2,8 +2,7 @@ import AppIntents
 import Foundation
 import Swinject
 
-@available(iOS 16.0, *)
-struct OpenTreatmentIntent: AppIntent {
+@available(iOS 16.0, *) struct OpenTreatmentIntent: AppIntent {
     static var title = LocalizedStringResource("Open Treatment")
     static var description = IntentDescription(.init("Opens the Treatment panel in Trio"))
     static var openAppWhenRun: Bool = true
