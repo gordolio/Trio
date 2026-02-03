@@ -176336,6 +176336,16 @@
         }
       }
     },
+    "Open Treatment" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Treatment"
+          }
+        }
+      }
+    },
     "OpenAI API key is not configured" : {
       "comment" : "Error when OpenAI API key is missing"
     },
@@ -176836,6 +176846,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "開啟 OpenAPS 目標設定"
+          }
+        }
+      }
+    },
+    "Opens the Treatment panel in Trio" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens the Treatment panel in Trio"
           }
         }
       }
