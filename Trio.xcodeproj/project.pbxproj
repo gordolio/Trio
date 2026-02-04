@@ -57,6 +57,7 @@
 		19F95FFA29F1102A00314DDC /* StatRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19F95FF929F1102A00314DDC /* StatRootView.swift */; };
 		1BBB001DAD60F3B8CEA4B1C7 /* ISFEditorStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 505E09DC17A0C3D0AF4B66FE /* ISFEditorStateModel.swift */; };
 		1D845DF2E3324130E1D95E67 /* HistoryProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60744C3E9BB3652895C908CC /* HistoryProvider.swift */; };
+		1FE9DDEA4241B6767CFB5850 /* ScanFoodIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE64D6C6E38DDE8C69942019 /* ScanFoodIntent.swift */; };
 		209E2A74CF8986BC64BB2B7D /* PhotoPickerWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */; };
 		23888883D4EA091C88480FF2 /* TreatmentsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C19984D62EFC0035A9E9644D /* TreatmentsProvider.swift */; };
 		3171D2818C7C72CD1584BB5E /* GlucoseNotificationSettingsStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC2C6489D29ECCCAD78E0721 /* GlucoseNotificationSettingsStateModel.swift */; };
@@ -350,6 +351,7 @@
 		9CBE52B8A814E5100B01A5D8 /* AIAssistedCarbEntryMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69E86DCEB88BD4A8749F152B /* AIAssistedCarbEntryMetadata.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* OpenAIStreamingParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E7F8091A2B3C4D5E6F7081 /* OpenAIStreamingParser.swift */; };
 		A33352ED40476125EBAC6EE0 /* CarbRatioEditorDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E22146D3DF4853786C78132 /* CarbRatioEditorDataFlow.swift */; };
+		A5A628CBDC1C3E917D22FED7 /* FoodScannerOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5D0DB25016E279F8F74BE58 /* FoodScannerOverlayView.swift */; };
 		AD3D2CD42CD01B9EB8F26522 /* PumpConfigDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF65DA88F972B56090AD6AC3 /* PumpConfigDataFlow.swift */; };
 		B2C3D4E5F607182930415263 /* OpenAIStreamingParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6071829304152637A /* OpenAIStreamingParserTests.swift */; };
 		B5EF10978C29C8DEBA0BC034 /* ShimmerModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */; };
@@ -1202,6 +1204,7 @@
 		A8630D58BDAD6D9C650B9B39 /* PumpConfigProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PumpConfigProvider.swift; sourceTree = "<group>"; };
 		AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShimmerModifier.swift; sourceTree = "<group>"; };
 		AAFF91130F2FCCC7EBBA11AD /* BasalProfileEditorStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalProfileEditorStateModel.swift; sourceTree = "<group>"; };
+		AE64D6C6E38DDE8C69942019 /* ScanFoodIntent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScanFoodIntent.swift; sourceTree = "<group>"; };
 		AF65DA88F972B56090AD6AC3 /* PumpConfigDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PumpConfigDataFlow.swift; sourceTree = "<group>"; };
 		B3AD49EC5007797FF5BA635C /* AIFoodAnalysisView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIFoodAnalysisView.swift; sourceTree = "<group>"; };
 		B5822B15939E719628E9FF7C /* SnoozeRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SnoozeRootView.swift; sourceTree = "<group>"; };
@@ -1388,6 +1391,7 @@
 		CFCFE0781F9074C2917890E8 /* ManualTempBasalStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ManualTempBasalStateModel.swift; sourceTree = "<group>"; };
 		D0BDC6993C1087310EDFC428 /* CarbRatioEditorRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CarbRatioEditorRootView.swift; sourceTree = "<group>"; };
 		D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhotoPickerWrapper.swift; sourceTree = "<group>"; };
+		D5D0DB25016E279F8F74BE58 /* FoodScannerOverlayView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FoodScannerOverlayView.swift; sourceTree = "<group>"; };
 		D6B14D1F451E2514B16C24C2 /* AIChatView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIChatView.swift; sourceTree = "<group>"; };
 		D6E7F8091A2B3C4D5E6F7081 /* OpenAIStreamingParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenAIStreamingParser.swift; sourceTree = "<group>"; };
 		DC2C6489D29ECCCAD78E0721 /* GlucoseNotificationSettingsStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GlucoseNotificationSettingsStateModel.swift; sourceTree = "<group>"; };
@@ -2716,6 +2720,7 @@
 				D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */,
 				AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */,
 				B3AD49EC5007797FF5BA635C /* AIFoodAnalysisView.swift */,
+				D5D0DB25016E279F8F74BE58 /* FoodScannerOverlayView.swift */,
 			);
 			path = AI;
 			sourceTree = "<group>";
@@ -3208,6 +3213,7 @@
 				CE7CA3452A064973004BE681 /* TempPresets */,
 				CE7CA34B2A064973004BE681 /* State */,
 				4797697E4FED0E86A8A64713 /* OpenTreatmentIntent.swift */,
+				AE64D6C6E38DDE8C69942019 /* ScanFoodIntent.swift */,
 			);
 			path = Shortcuts;
 			sourceTree = "<group>";
@@ -4838,6 +4844,8 @@
 				B5EF10978C29C8DEBA0BC034 /* ShimmerModifier.swift in Sources */,
 				E9FBCE100D261468CBF9829D /* AIFoodAnalysisView.swift in Sources */,
 				4B0241911913C56C42CB08E4 /* OpenTreatmentIntent.swift in Sources */,
+				1FE9DDEA4241B6767CFB5850 /* ScanFoodIntent.swift in Sources */,
+				A5A628CBDC1C3E917D22FED7 /* FoodScannerOverlayView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

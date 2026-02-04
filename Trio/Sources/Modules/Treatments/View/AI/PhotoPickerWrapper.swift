@@ -12,6 +12,7 @@ struct PhotoPickerWrapper: UIViewControllerRepresentable {
     @Binding var selectedImage: UIImage?
     @Binding var isPresented: Bool
     let sourceType: PhotoSourceType
+    var overlayBottomInset: CGFloat = 210
 
     func makeUIViewController(context: Context) -> UIViewController {
         switch sourceType {
@@ -19,6 +20,21 @@ struct PhotoPickerWrapper: UIViewControllerRepresentable {
             let picker = UIImagePickerController()
             picker.sourceType = .camera
             picker.delegate = context.coordinator
+
+            // Scale the camera preview to fill the screen (eliminates the black bar)
+            let screenBounds = UIScreen.main.bounds
+            let cameraAspectRatio: CGFloat = 4.0 / 3.0
+            let previewHeight = screenBounds.width * cameraAspectRatio
+            let scale = screenBounds.height / previewHeight
+            picker.cameraViewTransform = CGAffineTransform(scaleX: scale, y: scale)
+
+            // Add the food scanner overlay on top of the camera
+            let overlayHost = UIHostingController(rootView: FoodScannerOverlayView(bottomInset: overlayBottomInset))
+            overlayHost.view.backgroundColor = .clear
+            overlayHost.view.isUserInteractionEnabled = false
+            overlayHost.view.frame = screenBounds
+            picker.cameraOverlayView = overlayHost.view
+
             return picker
 
         case .photoLibrary:

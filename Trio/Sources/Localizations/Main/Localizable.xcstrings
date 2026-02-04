@@ -176850,6 +176850,16 @@
         }
       }
     },
+    "Opens the camera to scan food in Trio" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens the camera to scan food in Trio"
+          }
+        }
+      }
+    },
     "Opens the Treatment panel in Trio" : {
       "localizations" : {
         "en" : {
@@ -184106,6 +184116,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "埠"
+          }
+        }
+      }
+    },
+    "Position food or label within the frame" : {
+      "comment" : "Camera overlay subtitle for AI food scanning",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Position food or label within the frame"
           }
         }
       }
@@ -198958,6 +198979,30 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在此值下將你的基礎率縮減至 50%。"
+          }
+        }
+      }
+    },
+    "Scan Food" : {
+
+    },
+    "Scan Food or Nutrition Facts" : {
+      "comment" : "Camera overlay instruction for AI food scanning",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan Food or Nutrition Facts"
+          }
+        }
+      }
+    },
+    "Scan Food with AI" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan Food with AI"
           }
         }
       }

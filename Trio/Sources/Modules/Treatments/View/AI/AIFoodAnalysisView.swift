@@ -159,6 +159,16 @@ struct AIFoodAnalysisView: View {
                 selectedImage = nil
             }
         }
+        .onAppear {
+            // Check if the ScanFood shortcut captured an image for us
+            if let imageData = ScanFoodImageRelay.shared.pendingImageData {
+                ScanFoodImageRelay.shared.pendingImageData = nil
+                withAnimation(.easeInOut(duration: 0.35)) {
+                    state.capturedImageData = imageData
+                    state.foodDescription = ""
+                }
+            }
+        }
         .alert(
             Text("AI Analysis Error"),
             isPresented: Binding(

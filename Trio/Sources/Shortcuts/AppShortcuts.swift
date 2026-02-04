@@ -84,5 +84,14 @@ struct AppShortcuts: AppShortcutsProvider {
             shortTitle: "Open Treatment",
             systemImageName: "plus.circle.fill"
         )
+        AppShortcut(
+            intent: ScanFoodIntent(),
+            phrases: [
+                "Scan food with \(.applicationName)",
+                "\(.applicationName) scan food"
+            ],
+            shortTitle: "Scan Food",
+            systemImageName: "camera.fill"
+        )
     }
 }

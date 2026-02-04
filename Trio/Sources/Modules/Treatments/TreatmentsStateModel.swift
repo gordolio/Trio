@@ -138,6 +138,8 @@ extension Treatments {
             return true
         }
 
+        var autoOpenCamera: Bool = false
+
         var externalInsulin: Bool = false
         var showInfo: Bool = false
         var glucoseFromPersistence: [GlucoseStored] = []
