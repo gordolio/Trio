@@ -19,6 +19,7 @@ extension Treatments {
         @ObservationIgnored @Injected() var glucoseStorage: GlucoseStorage!
         @ObservationIgnored @Injected() var determinationStorage: DeterminationStorage!
         @ObservationIgnored @Injected() var bolusCalculationManager: BolusCalculationManager!
+        @ObservationIgnored @Injected() var calibrationService: CalibrationModeService!
 
         var lowGlucose: Decimal = 70
         var highGlucose: Decimal = 180
@@ -48,6 +49,26 @@ extension Treatments {
         var carbRatio: Decimal = 0
 
         var addButtonPressed: Bool = false
+
+        /// Whether a carb ratio calibration test is currently in an active phase
+        var isCalibrationActive: Bool {
+            guard let phase = calibrationService?.currentTest?.phase else { return false }
+            switch phase {
+            case .awaitingTabletConfirmation,
+                 .bolusDelivered,
+                 .observing,
+                 .prepping,
+                 .readyToTest:
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// Description of the current calibration phase for display
+        var calibrationPhaseDescription: String {
+            calibrationService?.currentTest?.phase.displayName ?? ""
+        }
 
         var target: Decimal = 0
         var cob: Int16 = 0

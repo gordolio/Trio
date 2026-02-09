@@ -36,6 +36,14 @@ struct TherapySettingsView: BaseView {
                 }
             )
             .listRowBackground(Color.chart)
+
+            Section(
+                header: Text("Calibration"),
+                content: {
+                    Text("Carb Ratio Calibration").navigationLink(to: .carbRatioCalibration, from: self)
+                }
+            )
+            .listRowBackground(Color.chart)
         }
         .scrollContentBackground(.hidden)
         .background(appState.trioBackgroundColor(for: colorScheme))
