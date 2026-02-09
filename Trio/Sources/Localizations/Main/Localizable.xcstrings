@@ -8719,6 +8719,9 @@
         }
       }
     },
+    "%@ g/U" : {
+
+    },
     "%@ is running" : {
       "localizations" : {
         "bg" : {
@@ -9569,6 +9572,15 @@
           }
         }
       }
+    },
+    "%@g" : {
+
+    },
+    "%@g carbs per tablet" : {
+
+    },
+    "%@U" : {
+
     },
     "%1$@ for %2$@" : {
       "comment" : "Summary string for temporary basal rate configuration page",
@@ -10521,6 +10533,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld x"
+          }
+        }
+      }
+    },
+    "%lld/%lld conditions met" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld/%2$lld conditions met"
           }
         }
       }
@@ -19861,6 +19883,9 @@
         }
       }
     },
+    "1 unit of insulin covers %@g of carbs" : {
+
+    },
     "1 item" : {
       "comment" : "Single item count"
     },
@@ -23557,6 +23582,9 @@
           }
         }
       }
+    },
+    "A calibration override is active. We're monitoring until conditions are stable enough to begin the test." : {
+
     },
     "A display of On/On indicates both Dynamic ISF and CR are enabled. On/Off indicates only Dynamic ISF is enabled. Dynamic CR cannot be enabled when Dynamic ISF is disabled." : {
       "localizations" : {
@@ -31346,6 +31374,9 @@
         }
       }
     },
+    "Adding carbs or bolusing now will invalidate the calibration test. Status: %@" : {
+
+    },
     "Additional notification types" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -35834,6 +35865,12 @@
           }
         }
       }
+    },
+    "All time slots" : {
+
+    },
+    "All time slots (adjust proportionally)" : {
+
     },
     "Allow" : {
       "localizations" : {
@@ -44568,6 +44605,15 @@
         }
       }
     },
+    "Apply Quiet Settings" : {
+
+    },
+    "Apply Ratio Change" : {
+
+    },
+    "Apply Suggested Ratio" : {
+
+    },
     "Applying ${bolusQuantity} U" : {
       "localizations" : {
         "bg" : {
@@ -53197,6 +53243,12 @@
         }
       }
     },
+    "Begin Calibration Prep?" : {
+
+    },
+    "Begin Prep" : {
+
+    },
     "Beta (TestFlight) Expires" : {
       "localizations" : {
         "bg" : {
@@ -53314,6 +53366,9 @@
           }
         }
       }
+    },
+    "BG Preview" : {
+
     },
     "BGI" : {
       "localizations" : {
@@ -55353,6 +55408,9 @@
           }
         }
       }
+    },
+    "Bolus Delivered" : {
+
     },
     "Bolus Distribution" : {
       "localizations" : {
@@ -58859,6 +58917,18 @@
         }
       }
     },
+    "Calibration" : {
+
+    },
+    "Calibration In Progress" : {
+
+    },
+    "Calibration Info" : {
+
+    },
+    "Calibration test timed out. Conditions did not stabilize within %lld minutes." : {
+
+    },
     "Calibrationinfo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -59586,6 +59656,9 @@
         }
       }
     },
+    "Cancel Calibration Test?" : {
+
+    },
     "Cancel override" : {
       "localizations" : {
         "bg" : {
@@ -60310,6 +60383,12 @@
         }
       }
     },
+    "Cancel Test" : {
+
+    },
+    "Cancelled" : {
+
+    },
     "Cannot Enable This Setting" : {
       "localizations" : {
         "bg" : {
@@ -60789,7 +60868,13 @@
         }
       }
     },
+    "Carb Ratio" : {
+
+    },
     "Carb Ratio (%@)" : {
+
+    },
+    "Carb Ratio Calibration" : {
 
     },
     "Carb Ratios" : {
@@ -64764,6 +64849,16 @@
         }
       }
     },
+    "Change: %@%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Change: %1$@%2$@ %3$@"
+          }
+        }
+      }
+    },
     "Chart" : {
       "localizations" : {
         "bg" : {
@@ -65117,6 +65212,9 @@
           }
         }
       }
+    },
+    "Check" : {
+
     },
     "Check Cannula" : {
       "extractionState" : "manual",
@@ -65478,6 +65576,12 @@
           }
         }
       }
+    },
+    "Checking Conditions" : {
+
+    },
+    "Checking if conditions are right for calibration" : {
+
     },
     "Choose a value that covers your highest insulin needs — think about a correction for a very high glucose reading plus your biggest meal bolus. This gives Trio room to work while keeping you safe." : {
       "localizations" : {
@@ -68095,6 +68199,18 @@
           }
         }
       }
+    },
+    "Completed" : {
+
+    },
+    "Conditions are stable. Open Trio to start your carb ratio test." : {
+
+    },
+    "Conditions Not Met" : {
+
+    },
+    "Conditions Required" : {
+
     },
     "Cone" : {
       "localizations" : {
@@ -72902,6 +73018,9 @@
         }
       }
     },
+    "Correct (0)" : {
+
+    },
     "Could not access documents directory" : {
 
     },
@@ -73622,6 +73741,9 @@
         }
       }
     },
+    "Current Carb Ratio" : {
+
+    },
     "Current CGM Models Supported:" : {
       "localizations" : {
         "bg" : {
@@ -74225,6 +74347,12 @@
           }
         }
       }
+    },
+    "Current time slot only" : {
+
+    },
+    "Current time slot only (%@)" : {
+
     },
     "CurrentBG" : {
       "extractionState" : "manual",
@@ -85976,6 +86104,12 @@
         }
       }
     },
+    "Deliver %@U Bolus" : {
+
+    },
+    "Deliver Bolus" : {
+
+    },
     "Delivery limits" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -93935,6 +94069,12 @@
           }
         }
       }
+    },
+    "During prep, a 'Calibration Mode' override will be activated to disable Super Micro Boluses (SMB). Your basal rate will continue normally. The override will be removed when the test completes or is cancelled. Any currently active override will be replaced." : {
+
+    },
+    "During the Test" : {
+
     },
     "Dynamic" : {
       "localizations" : {
@@ -108999,6 +109139,9 @@
         }
       }
     },
+    "Failed to deliver bolus. Please try again or cancel the test." : {
+
+    },
     "Failed to execute a batch delete request in %@ from %@." : {
       "localizations" : {
         "bg" : {
@@ -109849,6 +109992,9 @@
         }
       }
     },
+    "Failed to log carbs. Please try again." : {
+
+    },
     "Failed to Suspend Insulin Delivery" : {
       "comment" : "Alert title for suspend error",
       "extractionState" : "manual",
@@ -110226,6 +110372,9 @@
       }
     },
     "Failed to write export file: %@" : {
+
+    },
+    "Fast-acting glucose tablets, 4g carbs each" : {
 
     },
     "fat" : {
@@ -113217,6 +113366,9 @@
           }
         }
       }
+    },
+    "For calibration testing, use a quiet glucose trace so preflight checks pass. Reduce amplitude to ≤10 and noise to 0." : {
+
     },
     "For example, at a temp target of %@ %@, your basal is reduced to 50%%, but this scales depending on the target (e.g., 75%% at %@ %@, 60%% at %@ %@)." : {
       "localizations" : {
@@ -118603,6 +118755,9 @@
         }
       }
     },
+    "Glucose During Test" : {
+
+    },
     "Glucose forecast is very low." : {
       "localizations" : {
         "bg" : {
@@ -119799,6 +119954,12 @@
         }
       }
     },
+    "Glucose Tablet Simulation" : {
+
+    },
+    "Glucose Tablets" : {
+
+    },
     "Glucose Target" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -120756,6 +120917,15 @@
           }
         }
       }
+    },
+    "Glucose will rise from carbs then return to baseline by 90 min. Calibration will confirm your CR is correct." : {
+
+    },
+    "Glucose will rise from carbs, then insulin pulls it below baseline to %lld mg/dL after 90 min. Calibration will suggest raising your CR (ratio too strong)." : {
+
+    },
+    "Glucose will rise, then partially come back down, settling at +%lld mg/dL after 90 min. Calibration will suggest lowering your CR (ratio too weak)." : {
+
     },
     "Glucose, " : {
       "extractionState" : "manual",
@@ -126690,6 +126860,9 @@
         }
       }
     },
+    "How it works" : {
+
+    },
     "How it Works" : {
       "localizations" : {
         "bg" : {
@@ -127398,6 +127571,9 @@
         }
       }
     },
+    "How would you like to apply the new ratio?" : {
+
+    },
     "hr" : {
       "comment" : "Hours abbreviation",
       "localizations" : {
@@ -127870,6 +128046,9 @@
           }
         }
       }
+    },
+    "I've Taken the Tablets" : {
+
     },
     "If \"Display IOB and COB\" is also enabled, \"IOB\" and \"COB\" will be replaced with the following emojis:" : {
       "localizations" : {
@@ -134223,6 +134402,9 @@
         }
       }
     },
+    "Instructions" : {
+
+    },
     "Insulin" : {
       "comment" : "Title for insulin-related statistics",
       "localizations" : {
@@ -139041,6 +139223,9 @@
         }
       }
     },
+    "Keep Current Ratio" : {
+
+    },
     "Keep these turned ON in your phone’s settings to ensure you receive Trio Notifications, Critical Alerts, and Time Sensitive Notifications." : {
       "localizations" : {
         "bg" : {
@@ -139158,6 +139343,9 @@
           }
         }
       }
+    },
+    "Key details" : {
+
     },
     "Largest basal rate allowed." : {
       "localizations" : {
@@ -141068,6 +141256,9 @@
           }
         }
       }
+    },
+    "Let's make sure conditions are right for an accurate test." : {
+
     },
     "Libre 2 Direct" : {
       "comment" : "Libre 2 Direct",
@@ -162068,6 +162259,12 @@
         }
       }
     },
+    "Monitoring glucose response" : {
+
+    },
+    "Monitoring your glucose response. You'll be notified when results are ready." : {
+
+    },
     "Monochrome" : {
 
     },
@@ -163402,6 +163599,9 @@
           }
         }
       }
+    },
+    "Next (5 min)" : {
+
     },
     "Nightscout" : {
       "localizations" : {
@@ -169425,6 +169625,9 @@
         }
       }
     },
+    "Not Started" : {
+
+    },
     "Note" : {
       "comment" : "Food Type / Meal Note",
       "extractionState" : "manual",
@@ -173602,6 +173805,9 @@
         }
       }
     },
+    "Number of tablets:" : {
+
+    },
     "ø" : {
       "localizations" : {
         "bg" : {
@@ -173719,6 +173925,9 @@
           }
         }
       }
+    },
+    "Observing" : {
+
     },
     "of" : {
       "comment" : "Bolus progress view",
@@ -184131,6 +184340,9 @@
         }
       }
     },
+    "Pre-flight Checks" : {
+
+    },
     "Prediction Type" : {
       "localizations" : {
         "bg" : {
@@ -184492,6 +184704,9 @@
         }
       }
     },
+    "Prep" : {
+
+    },
     "Prepare Trio" : {
       "localizations" : {
         "bg" : {
@@ -184609,6 +184824,12 @@
           }
         }
       }
+    },
+    "Preparing" : {
+
+    },
+    "Preparing for the test" : {
+
     },
     "Preset" : {
       "localizations" : {
@@ -187125,6 +187346,9 @@
           }
         }
       }
+    },
+    "Published" : {
+      "comment" : "Badge indicating nutrition data comes from official published source"
     },
     "Pump" : {
       "extractionState" : "manual",
@@ -190949,6 +191173,12 @@
         }
       }
     },
+    "Ratio too strong (need less insulin per gram)" : {
+
+    },
+    "Ratio too weak (need more insulin per gram)" : {
+
+    },
     "raw: %lf" : {
       "localizations" : {
         "bg" : {
@@ -191429,6 +191659,12 @@
           }
         }
       }
+    },
+    "Ready to Begin" : {
+
+    },
+    "Ready to Test" : {
+
     },
     "Rec. %" : {
       "localizations" : {
@@ -192745,6 +192981,9 @@
         }
       }
     },
+    "Recommended: Reduce Simulator Noise" : {
+
+    },
     "Red = Below Range" : {
       "localizations" : {
         "bg" : {
@@ -193335,6 +193574,9 @@
           }
         }
       }
+    },
+    "ReliOn glucose tablets, 4g carbs each" : {
+
     },
     "Refine Food Analysis" : {
       "comment" : "Title for AI chat view"
@@ -195235,6 +195477,12 @@
         }
       }
     },
+    "Result" : {
+
+    },
+    "Results Ready" : {
+
+    },
     "Resume" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -196093,6 +196341,9 @@
           }
         }
       }
+    },
+    "Review your results" : {
+
     },
     "Rewind Resets Autosens" : {
       "comment" : "Rewind Resets Autosens",
@@ -201285,6 +201536,9 @@
         }
       }
     },
+    "Select specific slots..." : {
+
+    },
     "Select Temporary Target" : {
       "localizations" : {
         "bg" : {
@@ -201645,6 +201899,9 @@
           }
         }
       }
+    },
+    "Select your glucose tablets and confirm consumption to start the test." : {
+
     },
     "Selected Date" : {
       "localizations" : {
@@ -210685,6 +210942,9 @@
         }
       }
     },
+    "Simulate Glucose Tablet" : {
+
+    },
     "Simulator Build has no expiry" : {
       "localizations" : {
         "bg" : {
@@ -219068,6 +219328,9 @@
         }
       }
     },
+    "Strong (-25)" : {
+
+    },
     "Style" : {
       "localizations" : {
         "bg" : {
@@ -219657,6 +219920,9 @@
           }
         }
       }
+    },
+    "Suggested" : {
+
     },
     "Suggested at" : {
       "comment" : "Headline in suggested pop up (at: at what time)",
@@ -222167,6 +222433,12 @@
         }
       }
     },
+    "Tablet Active" : {
+
+    },
+    "Tablet Effect" : {
+
+    },
     "Take a deep breath — you've got this." : {
       "localizations" : {
         "bg" : {
@@ -222284,6 +222556,12 @@
           }
         }
       }
+    },
+    "Take glucose tablets and deliver bolus" : {
+
+    },
+    "Take Tablets" : {
+
     },
     "Tap a percentile or tap and hold a bar to reveal more details. Swipe to scroll through time." : {
       "localizations" : {
@@ -223712,6 +223990,9 @@
         }
       }
     },
+    "Target Delta at 90 min:" : {
+
+    },
     "Target Glucose" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -224196,6 +224477,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目標預設"
+          }
+        }
+      }
+    },
+    "Target range: ±%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Target range: ±%1$@ %2$@"
           }
         }
       }
@@ -226253,6 +226544,21 @@
           }
         }
       }
+    },
+    "Test" : {
+
+    },
+    "Test Complete" : {
+
+    },
+    "Test Details" : {
+
+    },
+    "Test in Progress" : {
+
+    },
+    "Test Summary" : {
+
     },
     "The Adjustment Factor (AF) allows you to control how quickly and effectively Dynamic ISF responds to changes in glucose levels." : {
       "localizations" : {
@@ -231368,6 +231674,9 @@
           }
         }
       }
+    },
+    "The tablet starts a glucose response curve that peaks at ~24 min and reaches the target delta at 90 min. The effect clears automatically after 120 min." : {
+
     },
     "The time it takes to complete one full cycle from high to low and back to high." : {
       "localizations" : {
@@ -239406,6 +239715,9 @@
         }
       }
     },
+    "This test checks whether your Carb Ratio (CR) setting is accurate by measuring how your glucose responds to a known amount of carbs and insulin." : {
+
+    },
     "This will add your current glucose on the top right of your Trio icon as a red notification badge. Changing setting takes effect on next Glucose reading." : {
       "localizations" : {
         "bg" : {
@@ -239642,6 +239954,9 @@
         }
       }
     },
+    "This will cancel the calibration test, deactivate the calibration override, and restore your previous settings. Any progress will be lost." : {
+
+    },
     "This will change settings back to your normal profile." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -239763,6 +240078,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "這將將設定恢復為您的正常個人設置。"
+          }
+        }
+      }
+    },
+    "This will log %@g carbs and deliver a %@U bolus. The 90-minute observation will begin immediately." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This will log %1$@g carbs and deliver a %2$@U bolus. The 90-minute observation will begin immediately."
           }
         }
       }
@@ -241317,6 +241642,15 @@
           }
         }
       }
+    },
+    "Time Remaining" : {
+
+    },
+    "Time to Test" : {
+
+    },
+    "Timed Out" : {
+
     },
     "Tip: Decreasing this value allows automatic adjustments of basal rates to be lower and ISF to be higher." : {
       "localizations" : {
@@ -244520,6 +244854,9 @@
           }
         }
       }
+    },
+    "Total Carbs" : {
+
     },
     "Total Daily Dose" : {
       "localizations" : {
@@ -251421,6 +251758,9 @@
       }
     },
     "Trio's Simple Watch/Carplay Widget displays current glucose reading, trend arrow, delta and the timestamp of the current reading." : {
+
+    },
+    "TruePlus glucose tablets, 3.75g carbs each" : {
 
     },
     "Try again in a moment, or configure your Therapy Settings manually instead." : {
@@ -259956,6 +260296,9 @@
         }
       }
     },
+    "View Results" : {
+
+    },
     "W" : {
       "comment" : "Abbreviation for week",
       "localizations" : {
@@ -260199,6 +260542,9 @@
           }
         }
       }
+    },
+    "Waiting for Conditions" : {
+
     },
     "Want a hand? You can open our full Startup Guide here:" : {
       "localizations" : {
@@ -262107,6 +262453,9 @@
         }
       }
     },
+    "Weak (+25)" : {
+
+    },
     "Week" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -262829,6 +263178,9 @@
           }
         }
       }
+    },
+    "What is this?" : {
+
     },
     "What it Adjusts" : {
       "localizations" : {
@@ -265925,6 +266277,9 @@
           }
         }
       }
+    },
+    "While you wait:" : {
+
     },
     "Why does Trio collect this data?" : {
       "localizations" : {
@@ -269260,6 +269615,21 @@
           }
         }
       }
+    },
+    "Your blood glucose dropped more than expected. Consider raising your carb ratio (g/U) to deliver less insulin per gram of carbs." : {
+
+    },
+    "Your blood glucose rose more than expected. Consider lowering your carb ratio (g/U) to deliver more insulin per gram of carbs." : {
+
+    },
+    "Your blood glucose stayed within the expected range. No adjustment needed." : {
+
+    },
+    "Your carb ratio calibration results are ready." : {
+
+    },
+    "Your carb ratio is correct!" : {
+
     },
     "Your carb ratio tells how many grams of carbohydrates one unit of insulin will cover. This is essential for accurate meal bolus calculations." : {
       "localizations" : {

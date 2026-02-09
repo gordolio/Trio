@@ -90,6 +90,29 @@ final class AIConversationManager: ObservableObject {
         )
     }
 
+    /// Replace current items with merged items (e.g., after published nutrition merge).
+    /// Preserves conversation state while updating item data.
+    @MainActor func replaceItems(_ newItems: [AIFoodItem]) {
+        currentItems = newItems
+        selectedItemIds = Set(newItems.map(\.id))
+
+        // Rebuild messages with updated items
+        if let reasoning = initialReasoning {
+            messages = [
+                .assistantMessage(reasoning),
+                .carbSummary(items: newItems, canAccept: true)
+            ]
+        }
+
+        os_log(
+            "Replaced items with %d merged items, total %.1fg carbs",
+            log: log,
+            type: .info,
+            currentItems.count,
+            totalCarbs
+        )
+    }
+
     // MARK: - Streaming Initialization
 
     /// Initialize the conversation by consuming a stream of partial food analysis results.

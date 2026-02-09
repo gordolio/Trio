@@ -61,6 +61,9 @@ struct FoodDescriptionInputView: View {
                     exampleChip("Homemade")
                     exampleChip("Large portion")
                     exampleChip("Low carb")
+                    exampleChip("McDonald's")
+                    exampleChip("Starbucks")
+                    exampleChip("Chipotle")
                 }
             }
 
@@ -71,6 +74,7 @@ struct FoodDescriptionInputView: View {
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
+                .buttonStyle(.borderless)
 
                 Spacer()
 
@@ -87,6 +91,7 @@ struct FoodDescriptionInputView: View {
                     .background(Color.accentColor)
                     .cornerRadius(8)
                 }
+                .buttonStyle(.borderless)
             }
         }
         .padding(.vertical, 8)

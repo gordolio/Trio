@@ -1,0 +1,428 @@
+import Foundation
+import os.log
+
+// MARK: - Classifier Response Model
+
+/// Response from the restaurant classifier agent
+struct RestaurantClassifierResponse: Codable {
+    /// Whether the description mentions a restaurant/chain/brand food item
+    let isRestaurantItem: Bool
+    /// Name of the restaurant or brand (e.g., "McDonald's")
+    let restaurantName: String
+    /// Specific menu item name (e.g., "Big Mac")
+    let menuItemName: String
+    /// Confidence in the classification (0.0 - 1.0)
+    let confidence: Double
+}
+
+// MARK: - Published Nutrition Result Model
+
+/// Nutrition facts retrieved from published sources via web search
+struct PublishedNutritionResult: Codable {
+    /// Name of the restaurant or brand
+    let restaurantName: String
+    /// Name of the menu item
+    let menuItemName: String
+    /// Carbohydrates in grams
+    let carbs: Double
+    /// Fat in grams
+    let fat: Double
+    /// Protein in grams
+    let protein: Double
+    /// Calories
+    let calories: Double
+    /// Serving size description (e.g., "1 sandwich (245g)")
+    let servingSize: String
+    /// URL of the source where nutrition facts were found
+    let sourceURL: String
+    /// Confidence that the result matches the query (0.0 - 1.0)
+    let confidence: Double
+}
+
+// MARK: - Responses API Request/Response Types
+
+/// Request body for the OpenAI Responses API
+private struct ResponsesAPIRequest: Encodable {
+    let model: String
+    let tools: [ResponsesAPITool]
+    let input: String
+    let text: ResponsesAPITextFormat?
+
+    init(model: String, tools: [ResponsesAPITool], input: String, text: ResponsesAPITextFormat? = nil) {
+        self.model = model
+        self.tools = tools
+        self.input = input
+        self.text = text
+    }
+}
+
+/// Tool definition for the Responses API
+private struct ResponsesAPITool: Encodable {
+    let type: String
+}
+
+/// Text format specification for the Responses API
+private struct ResponsesAPITextFormat: Encodable {
+    let format: ResponsesAPIFormat
+}
+
+/// Format within the text specification
+private struct ResponsesAPIFormat: Encodable {
+    let type: String
+    let name: String
+    let strict: Bool
+    let schema: JSONSchemaDefinition
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case name
+        case strict
+        case schema
+    }
+}
+
+/// Root response from the Responses API
+private struct ResponsesAPIResponse: Decodable {
+    let id: String
+    let output: [ResponsesAPIOutputItem]
+    let status: String
+}
+
+/// An output item in the Responses API response
+private struct ResponsesAPIOutputItem: Decodable {
+    let type: String
+    let content: [ResponsesAPIContent]?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case content
+    }
+}
+
+/// Content within a Responses API output item
+private struct ResponsesAPIContent: Decodable {
+    let type: String
+    let text: String?
+    let annotations: [ResponsesAPIAnnotation]?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case annotations
+    }
+}
+
+/// An annotation (citation) in the Responses API response
+private struct ResponsesAPIAnnotation: Decodable {
+    let type: String
+    let url: String?
+    let title: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case url
+        case title
+    }
+}
+
+/// Internal response structure for parsing the nutrition search result
+private struct NutritionSearchResponse: Decodable {
+    let restaurantName: String
+    let menuItemName: String
+    let carbs: Double
+    let fat: Double
+    let protein: Double
+    let calories: Double
+    let servingSize: String
+    let confidence: Double
+}
+
+// MARK: - OpenAI Responses Service
+
+/// Service for restaurant food detection and published nutrition lookup.
+/// Uses the OpenAI Chat Completions API (classifier) and Responses API (web search).
+final class OpenAIResponsesService {
+    static let shared = OpenAIResponsesService()
+
+    private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenAIResponsesService")
+    private let session: URLSession
+    private let chatEndpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+    private let responsesEndpoint = URL(string: "https://api.openai.com/v1/responses")!
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init(session: URLSession = .shared) {
+        self.session = session
+    }
+
+    private func getAPIKey() throws -> String {
+        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenAIAPIKey") as? String,
+              !apiKey.isEmpty,
+              apiKey != "$(OPENAI_API_KEY)"
+        else {
+            os_log("OpenAI API key not configured", log: log, type: .error)
+            throw OpenAIServiceError.missingAPIKey
+        }
+        return apiKey
+    }
+
+    // MARK: - Agent 1: Restaurant Classifier
+
+    /// Classifies whether a user description mentions a restaurant/chain/brand food item.
+    /// Uses gpt-4o-mini for speed and cost efficiency. Text-only, no image.
+    func classifyRestaurantItem(description: String) async throws -> RestaurantClassifierResponse {
+        let apiKey = try getAPIKey()
+
+        os_log("Classifying description for restaurant item: %{public}@", log: log, type: .info, description)
+
+        var request = URLRequest(url: chatEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let systemPrompt = """
+        You are a food classifier. Determine if the user's text describes a menu item \
+        from a restaurant, fast food chain, coffee shop, or branded food product that \
+        would have officially published nutrition information available online.
+
+        Examples of YES: "Big Mac from McDonald's", "Starbucks caramel latte", \
+        "Chipotle burrito bowl", "Subway footlong Italian BMT", "Whopper from Burger King", \
+        "Chick-fil-A sandwich", "Domino's pepperoni pizza medium"
+
+        Examples of NO: "homemade pasta", "rice and chicken", "some fruit", \
+        "sandwich" (generic, no brand), "salad", "my mom's lasagna"
+
+        If yes, extract the restaurant/brand name and the specific menu item name. \
+        If the text is ambiguous but leans toward a known chain, classify as yes with lower confidence.
+        """
+
+        let chatRequest = OpenAIChatRequest(
+            model: "gpt-4o-mini",
+            messages: [
+                OpenAIMessage(role: "system", content: [.text(systemPrompt)]),
+                OpenAIMessage(role: "user", content: [.text(description)])
+            ],
+            maxTokens: 200,
+            responseFormat: OpenAIResponseFormat(
+                type: "json_schema",
+                jsonSchema: OpenAIJSONSchema(
+                    name: "restaurant_classifier",
+                    strict: true,
+                    schema: buildClassifierSchema()
+                )
+            )
+        )
+
+        request.httpBody = try encoder.encode(chatRequest)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenAIServiceError.invalidResponse(statusCode: 0)
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            os_log("Classifier API error: status %d", log: log, type: .error, httpResponse.statusCode)
+            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+        }
+
+        let chatResponse = try decoder.decode(OpenAIChatResponse.self, from: data)
+
+        guard let content = chatResponse.choices.first?.message.content,
+              let contentData = content.data(using: .utf8)
+        else {
+            throw OpenAIServiceError.noContentInResponse
+        }
+
+        let result = try decoder.decode(RestaurantClassifierResponse.self, from: contentData)
+
+        os_log(
+            "Classification result: isRestaurant=%{public}@, restaurant=%{public}@, item=%{public}@, confidence=%.2f",
+            log: log, type: .info,
+            result.isRestaurantItem ? "yes" : "no",
+            result.restaurantName,
+            result.menuItemName,
+            result.confidence
+        )
+
+        return result
+    }
+
+    // MARK: - Agent 2: Published Nutrition Searcher
+
+    /// Searches for published nutrition facts using the OpenAI Responses API with web_search tool.
+    func searchPublishedNutrition(
+        restaurantName: String,
+        menuItemName: String
+    ) async throws -> PublishedNutritionResult {
+        let apiKey = try getAPIKey()
+
+        os_log(
+            "Searching published nutrition for %{public}@ - %{public}@",
+            log: log, type: .info,
+            restaurantName, menuItemName
+        )
+
+        var request = URLRequest(url: responsesEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let inputPrompt = """
+        Look up the official published nutrition facts for "\(menuItemName)" from "\(restaurantName)".
+
+        Search the restaurant's official website or a trusted nutrition database for the standard \
+        menu item's nutrition information.
+
+        I need:
+        - Total carbohydrates in grams
+        - Total fat in grams
+        - Protein in grams
+        - Calories
+        - Serving size
+
+        Return the data from the official/published source. If you cannot find the exact item, \
+        return your best match with a lower confidence score.
+        """
+
+        let responsesRequest = ResponsesAPIRequest(
+            model: "gpt-4o",
+            tools: [ResponsesAPITool(type: "web_search")],
+            input: inputPrompt,
+            text: ResponsesAPITextFormat(
+                format: ResponsesAPIFormat(
+                    type: "json_schema",
+                    name: "published_nutrition",
+                    strict: true,
+                    schema: buildNutritionSearchSchema()
+                )
+            )
+        )
+
+        request.httpBody = try encoder.encode(responsesRequest)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenAIServiceError.invalidResponse(statusCode: 0)
+        }
+
+        guard (200 ... 299).contains(httpResponse.statusCode) else {
+            os_log("Nutrition search API error: status %d", log: log, type: .error, httpResponse.statusCode)
+            if let errorBody = String(data: data, encoding: .utf8) {
+                os_log("Error body: %{public}@", log: log, type: .error, errorBody)
+            }
+            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+        }
+
+        return try parseNutritionSearchResponse(data)
+    }
+
+    // MARK: - Schema Builders
+
+    private func buildClassifierSchema() -> JSONSchemaDefinition {
+        JSONSchemaDefinition(
+            type: "object",
+            properties: [
+                "isRestaurantItem": .boolean(
+                    description: "Whether the text describes a restaurant/chain/brand menu item with published nutrition"
+                ),
+                "restaurantName": .string(
+                    description: "Name of the restaurant or brand, or empty string if not a restaurant item"
+                ),
+                "menuItemName": .string(
+                    description: "Specific menu item name, or empty string if not a restaurant item"
+                ),
+                "confidence": .number(
+                    description: "Confidence in the classification (0.0-1.0)"
+                )
+            ],
+            required: ["isRestaurantItem", "restaurantName", "menuItemName", "confidence"],
+            additionalProperties: false
+        )
+    }
+
+    private func buildNutritionSearchSchema() -> JSONSchemaDefinition {
+        JSONSchemaDefinition(
+            type: "object",
+            properties: [
+                "restaurantName": .string(description: "Name of the restaurant or brand"),
+                "menuItemName": .string(description: "Name of the menu item"),
+                "carbs": .number(description: "Total carbohydrates in grams"),
+                "fat": .number(description: "Total fat in grams"),
+                "protein": .number(description: "Protein in grams"),
+                "calories": .number(description: "Total calories"),
+                "servingSize": .string(description: "Serving size description (e.g., '1 sandwich (245g)')"),
+                "confidence": .number(
+                    description: "Confidence that the result matches the query (0.0-1.0). Use lower values if the exact item wasn't found."
+                )
+            ],
+            required: ["restaurantName", "menuItemName", "carbs", "fat", "protein", "calories", "servingSize", "confidence"],
+            additionalProperties: false
+        )
+    }
+
+    // MARK: - Response Parsing
+
+    private func parseNutritionSearchResponse(_ data: Data) throws -> PublishedNutritionResult {
+        let responsesResponse: ResponsesAPIResponse
+        do {
+            responsesResponse = try decoder.decode(ResponsesAPIResponse.self, from: data)
+        } catch {
+            os_log("Failed to decode Responses API response: %{public}@", log: log, type: .error, error.localizedDescription)
+            throw OpenAIServiceError.decodingError(error)
+        }
+
+        // Find the message output with text content
+        var textContent: String?
+        var citationURL: String?
+
+        for outputItem in responsesResponse.output {
+            guard outputItem.type == "message", let contents = outputItem.content else { continue }
+            for content in contents {
+                if content.type == "output_text", let text = content.text {
+                    textContent = text
+                }
+                // Extract first citation URL
+                if let annotations = content.annotations {
+                    for annotation in annotations where annotation.type == "url_citation" {
+                        if citationURL == nil {
+                            citationURL = annotation.url
+                        }
+                    }
+                }
+            }
+        }
+
+        guard let content = textContent, let contentData = content.data(using: .utf8) else {
+            throw OpenAIServiceError.noContentInResponse
+        }
+
+        let nutrition: NutritionSearchResponse
+        do {
+            nutrition = try decoder.decode(NutritionSearchResponse.self, from: contentData)
+        } catch {
+            os_log("Failed to decode nutrition search content: %{public}@", log: log, type: .error, error.localizedDescription)
+            throw OpenAIServiceError.decodingError(error)
+        }
+
+        os_log(
+            "Found published nutrition: %{public}@ %{public}@ - carbs: %.0fg, fat: %.0fg, protein: %.0fg, cal: %.0f",
+            log: log, type: .info,
+            nutrition.restaurantName, nutrition.menuItemName,
+            nutrition.carbs, nutrition.fat, nutrition.protein, nutrition.calories
+        )
+
+        return PublishedNutritionResult(
+            restaurantName: nutrition.restaurantName,
+            menuItemName: nutrition.menuItemName,
+            carbs: nutrition.carbs,
+            fat: nutrition.fat,
+            protein: nutrition.protein,
+            calories: nutrition.calories,
+            servingSize: nutrition.servingSize,
+            sourceURL: citationURL ?? "",
+            confidence: nutrition.confidence
+        )
+    }
+}
