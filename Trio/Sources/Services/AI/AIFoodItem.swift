@@ -1,5 +1,13 @@
 import Foundation
 
+/// The source of a food item's nutritional data
+enum AIFoodItemSource: String, Codable {
+    /// AI vision estimate from image analysis
+    case estimated
+    /// Published nutrition facts from restaurant/brand website
+    case published
+}
+
 /// Represents a single food item detected by AI in a food image
 struct AIFoodItem: Codable, Identifiable, Equatable {
     /// Unique identifier for this food item
@@ -20,13 +28,40 @@ struct AIFoodItem: Codable, Identifiable, Equatable {
     /// Estimated protein in grams
     let protein: Double
 
-    init(id: UUID = UUID(), name: String, carbs: Double, emoji: String? = nil, fat: Double = 0, protein: Double = 0) {
+    /// Source of the nutritional data (estimated by AI vision or published by restaurant)
+    let source: AIFoodItemSource
+
+    /// Citation URL for published nutrition items
+    let sourceURL: String?
+
+    /// Serving size description (e.g., "1 sandwich (245g)")
+    let servingSize: String?
+
+    /// Calories (typically available for published items)
+    let calories: Double?
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        carbs: Double,
+        emoji: String? = nil,
+        fat: Double = 0,
+        protein: Double = 0,
+        source: AIFoodItemSource = .estimated,
+        sourceURL: String? = nil,
+        servingSize: String? = nil,
+        calories: Double? = nil
+    ) {
         self.id = id
         self.name = name
         self.carbs = carbs
         self.emoji = emoji
         self.fat = fat
         self.protein = protein
+        self.source = source
+        self.sourceURL = sourceURL
+        self.servingSize = servingSize
+        self.calories = calories
     }
 }
 

@@ -187105,6 +187105,9 @@
         }
       }
     },
+    "Published" : {
+      "comment" : "Badge indicating nutrition data comes from official published source"
+    },
     "Pump" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -696,7 +696,9 @@ extension Treatments {
 
         // MARK: - AI-Assisted Food Analysis
 
-        /// Analyzes a food image using AI and pre-fills the carb entry form with multi-item support
+        /// Analyzes a food image using AI and pre-fills the carb entry form with multi-item support.
+        /// Runs a restaurant classifier in parallel with vision analysis. If the description mentions
+        /// a restaurant/chain item, published nutrition facts are searched and merged with vision results.
         func analyzeFood(imageData: Data, description: String? = nil) async {
             await MainActor.run {
                 isAnalyzingFood = true
@@ -708,6 +710,59 @@ extension Treatments {
             }
 
             do {
+                // Launch restaurant classifier + nutrition search concurrently with vision analysis.
+                // The classifier is fast (~300ms with gpt-4o-mini, text-only) and runs in parallel.
+                // If it fails or finds no restaurant item, we silently fall back to vision-only.
+                print("🍽️ [NutritionLookup] Starting food analysis. Description: \(description ?? "<none>")")
+
+                let publishedNutritionTask: Task<PublishedNutritionResult?, Never> = Task {
+                    guard let desc = description, !desc.isEmpty else {
+                        print("🍽️ [NutritionLookup] Classifier skipped — no description provided")
+                        return nil
+                    }
+                    do {
+                        print("🍽️ [NutritionLookup] Classifier starting for: \"\(desc)\"")
+                        let classification = try await OpenAIResponsesService.shared
+                            .classifyRestaurantItem(description: desc)
+                        print(
+                            "🍽️ [NutritionLookup] Classifier result: isRestaurant=\(classification.isRestaurantItem), " +
+                                "restaurant=\"\(classification.restaurantName)\", " +
+                                "item=\"\(classification.menuItemName)\", " +
+                                "confidence=\(String(format: "%.2f", classification.confidence))"
+                        )
+                        guard classification.isRestaurantItem,
+                              !classification.restaurantName.isEmpty,
+                              !classification.menuItemName.isEmpty
+                        else {
+                            print("🍽️ [NutritionLookup] Classifier: not a restaurant item — using vision only")
+                            return nil
+                        }
+                        print(
+                            "🍽️ [NutritionLookup] Searching published nutrition for " +
+                                "\(classification.restaurantName) — \(classification.menuItemName)..."
+                        )
+                        let result = try await OpenAIResponsesService.shared
+                            .searchPublishedNutrition(
+                                restaurantName: classification.restaurantName,
+                                menuItemName: classification.menuItemName
+                            )
+                        print(
+                            "🍽️ [NutritionLookup] Published nutrition found: " +
+                                "carbs=\(Int(result.carbs))g, fat=\(Int(result.fat))g, " +
+                                "protein=\(Int(result.protein))g, calories=\(Int(result.calories)), " +
+                                "serving=\"\(result.servingSize)\", " +
+                                "confidence=\(String(format: "%.2f", result.confidence)), " +
+                                "source=\"\(result.sourceURL)\""
+                        )
+                        return result
+                    } catch {
+                        print("🍽️ [NutritionLookup] Classifier/search failed (non-fatal): \(error.localizedDescription)")
+                        return nil
+                    }
+                }
+
+                // Vision analysis (existing streaming path, runs concurrently)
+                print("🍽️ [NutritionLookup] Vision analysis starting (concurrent with classifier)")
                 let stream = OpenAIService.shared.analyzeFoodStreaming(
                     imageData: imageData,
                     userDescription: description
@@ -718,7 +773,7 @@ extension Treatments {
                     conversationManager = manager
                 }
 
-                let response = try await manager.initializeStreaming(
+                let visionResponse = try await manager.initializeStreaming(
                     stream: stream,
                     imageData: imageData,
                     userDescription: description,
@@ -732,16 +787,58 @@ extension Treatments {
                         self.foodItemSelection = selection
                     }
                 )
+                print(
+                    "🍽️ [NutritionLookup] Vision analysis complete: \(visionResponse.foodItems.count) items detected"
+                )
+                for item in visionResponse.foodItems {
+                    print(
+                        "🍽️ [NutritionLookup]   Vision item: \(item.emoji ?? "") \(item.name) — " +
+                            "carbs=\(Int(item.carbs))g, fat=\(Int(item.fat))g, protein=\(Int(item.protein))g"
+                    )
+                }
+
+                // Wait for the published nutrition result (already running concurrently)
+                print("🍽️ [NutritionLookup] Waiting for classifier/search result...")
+                let publishedResult = await publishedNutritionTask.value
+
+                // Merge published facts with vision items
+                let mergedItems = NutritionFactsMerger.merge(
+                    publishedResult: publishedResult,
+                    visionItems: visionResponse.foodItems
+                )
+                if publishedResult != nil {
+                    print("🍽️ [NutritionLookup] Merge complete: \(mergedItems.count) items after merge")
+                    for item in mergedItems {
+                        let sourceTag = item.source == .published ? "📋 PUBLISHED" : "👁 estimated"
+                        print(
+                            "🍽️ [NutritionLookup]   [\(sourceTag)] \(item.emoji ?? "") \(item.name) — " +
+                                "carbs=\(Int(item.carbs))g, fat=\(Int(item.fat))g, protein=\(Int(item.protein))g"
+                        )
+                    }
+                } else {
+                    print("🍽️ [NutritionLookup] No published nutrition found — using vision results only")
+                }
 
                 await MainActor.run {
-                    let basicResponse = response.asBasicResponse
-                    let selection = FoodItemSelection(response: basicResponse)
+                    let mergedResponse = AIFoodItemsResponse(
+                        foodItems: mergedItems,
+                        overallConfidence: visionResponse.overallConfidence
+                    )
+
+                    // Update conversation manager with merged items
+                    if mergedItems != visionResponse.foodItems {
+                        print("🍽️ [NutritionLookup] Updating conversation manager with merged items")
+                        manager.replaceItems(mergedItems)
+                    }
+
+                    let selection = FoodItemSelection(response: mergedResponse)
                     withAnimation(.easeInOut(duration: 0.35)) {
                         foodItemSelection = selection
                     }
 
                     updateFormFromSelection()
                     isAnalyzingFood = false
+                    print("🍽️ [NutritionLookup] Analysis complete ✅")
                 }
             } catch {
                 await MainActor.run {

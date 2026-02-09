@@ -261,6 +261,11 @@ struct FoodItemsSelectionView: View {
                             startEditing(item: item)
                         }
                     }
+
+                // Source badge for published nutrition items
+                if item.source == .published {
+                    publishedBadge(for: item)
+                }
             }
 
             Spacer(minLength: 8)
@@ -328,6 +333,32 @@ struct FoodItemsSelectionView: View {
         .buttonStyle(.plain)
         .disabled(isAnyItemPending)
         .opacity(isAnyItemPending ? 0.5 : 1.0)
+    }
+
+    // MARK: - Published Badge
+
+    @ViewBuilder private func publishedBadge(for item: AIFoodItem) -> some View {
+        if let urlString = item.sourceURL, let url = URL(string: urlString), !urlString.isEmpty {
+            SwiftUI.Link(destination: url) {
+                publishedBadgeLabel
+            }
+        } else {
+            publishedBadgeLabel
+        }
+    }
+
+    private var publishedBadgeLabel: some View {
+        HStack(spacing: 2) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.system(size: 8))
+            Text("Published", comment: "Badge indicating nutrition data comes from official published source")
+                .font(.system(size: 9, weight: .medium))
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(Color.green.opacity(0.8))
+        .cornerRadius(4)
     }
 
     // MARK: - Editing Helpers

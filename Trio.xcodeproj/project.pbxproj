@@ -59,6 +59,7 @@
 		1D845DF2E3324130E1D95E67 /* HistoryProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60744C3E9BB3652895C908CC /* HistoryProvider.swift */; };
 		209E2A74CF8986BC64BB2B7D /* PhotoPickerWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */; };
 		23888883D4EA091C88480FF2 /* TreatmentsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C19984D62EFC0035A9E9644D /* TreatmentsProvider.swift */; };
+		2EE9A7A536D5D74E5772041D /* OpenAIResponsesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8304AAD2D3DC6C425B0EC566 /* OpenAIResponsesService.swift */; };
 		3171D2818C7C72CD1584BB5E /* GlucoseNotificationSettingsStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC2C6489D29ECCCAD78E0721 /* GlucoseNotificationSettingsStateModel.swift */; };
 		320D030F724170A637F06D50 /* BuildFile in Sources */ = {isa = PBXBuildFile; };
 		3811DE0B25C9D32F00A708ED /* BaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3811DE0725C9D32E00A708ED /* BaseView.swift */; };
@@ -751,6 +752,7 @@
 		FE41E4D629463EE20047FD55 /* NightscoutPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE41E4D529463EE20047FD55 /* NightscoutPreferences.swift */; };
 		FE66D16B291F74F8005D6F77 /* Bundle+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE66D16A291F74F8005D6F77 /* Bundle+Extensions.swift */; };
 		FEFFA7A22929FE49007B8193 /* UIDevice+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFFA7A12929FE49007B8193 /* UIDevice+Extensions.swift */; };
+		FF5B0C3309F99DD99C52A31C /* NutritionFactsMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1169,6 +1171,7 @@
 		65070A322BFDCB83006F213F /* TidepoolStartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TidepoolStartView.swift; sourceTree = "<group>"; };
 		67F94DD2853CF42BA4E30616 /* BasalProfileEditorDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalProfileEditorDataFlow.swift; sourceTree = "<group>"; };
 		680C4420C9A345D46D90D06C /* ManualTempBasalProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ManualTempBasalProvider.swift; sourceTree = "<group>"; };
+		69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NutritionFactsMerger.swift; sourceTree = "<group>"; };
 		69E86DCEB88BD4A8749F152B /* AIAssistedCarbEntryMetadata.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIAssistedCarbEntryMetadata.swift; sourceTree = "<group>"; };
 		6B036683B506036C4E32D829 /* AnimatedRainbowButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AnimatedRainbowButton.swift; sourceTree = "<group>"; };
 		6B1A8D012B14D88B00E76752 /* UniformTypeIdentifiers.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UniformTypeIdentifiers.framework; path = System/Library/Frameworks/UniformTypeIdentifiers.framework; sourceTree = SDKROOT; };
@@ -1187,6 +1190,7 @@
 		79BDA519C9B890FD9A5DFCF3 /* ISFEditorDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFEditorDataFlow.swift; sourceTree = "<group>"; };
 		7E22146D3DF4853786C78132 /* CarbRatioEditorDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CarbRatioEditorDataFlow.swift; sourceTree = "<group>"; };
 		8138ABAF0E8FF1F359D3EF4B /* OpenAIService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenAIService.swift; sourceTree = "<group>"; };
+		8304AAD2D3DC6C425B0EC566 /* OpenAIResponsesService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenAIResponsesService.swift; sourceTree = "<group>"; };
 		8782B44544F38F2B2D82C38E /* NightscoutConfigRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NightscoutConfigRootView.swift; sourceTree = "<group>"; };
 		881E04BA5E0A003DE8E0A9C6 /* HistoryRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryRootView.swift; sourceTree = "<group>"; };
 		8A9134292D63D9A1007F8874 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
@@ -2877,6 +2881,8 @@
 				E7CD8AAFDC0C1AA493AA6E14 /* AIConversationManager.swift */,
 				1C4CCC5F9597354AF264E8E0 /* AIConversationMessage.swift */,
 				69E86DCEB88BD4A8749F152B /* AIAssistedCarbEntryMetadata.swift */,
+				8304AAD2D3DC6C425B0EC566 /* OpenAIResponsesService.swift */,
+				69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */,
 			);
 			path = AI;
 			sourceTree = "<group>";
@@ -4838,6 +4844,8 @@
 				B5EF10978C29C8DEBA0BC034 /* ShimmerModifier.swift in Sources */,
 				E9FBCE100D261468CBF9829D /* AIFoodAnalysisView.swift in Sources */,
 				4B0241911913C56C42CB08E4 /* OpenTreatmentIntent.swift in Sources */,
+				2EE9A7A536D5D74E5772041D /* OpenAIResponsesService.swift in Sources */,
+				FF5B0C3309F99DD99C52A31C /* NutritionFactsMerger.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
