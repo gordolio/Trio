@@ -191,6 +191,31 @@ extension Treatments {
             ZStack(alignment: .center) {
                 VStack {
                     List {
+                        // Calibration-in-progress banner
+                        if state.isCalibrationActive {
+                            Section {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .font(.title3)
+                                        .foregroundColor(.orange)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Calibration In Progress")
+                                            .font(.subheadline)
+                                            .fontWeight(.semibold)
+
+                                        Text(
+                                            "Adding carbs or bolusing now will invalidate the calibration test. Status: \(state.calibrationPhaseDescription)"
+                                        )
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .listRowBackground(Color.orange.opacity(0.15))
+                        }
+
                         Section {
                             ForecastChart(state: state)
                                 .padding(.vertical)
