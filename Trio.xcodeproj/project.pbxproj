@@ -4925,6 +4925,7 @@
 				B5EF10978C29C8DEBA0BC034 /* ShimmerModifier.swift in Sources */,
 				E9FBCE100D261468CBF9829D /* AIFoodAnalysisView.swift in Sources */,
 				4B0241911913C56C42CB08E4 /* OpenTreatmentIntent.swift in Sources */,
+				1FE9DDEA4241B6767CFB5850 /* ScanFoodIntent.swift in Sources */,
 				2EE9A7A536D5D74E5772041D /* OpenAIResponsesService.swift in Sources */,
 				FF5B0C3309F99DD99C52A31C /* NutritionFactsMerger.swift in Sources */,
 				92F42779FFF0601D3895042D /* CalibrationTestStored+CoreDataClass.swift in Sources */,
