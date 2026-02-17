@@ -321,7 +321,7 @@ struct AIFoodItemResponse: Decodable {
     let protein: Double
 }
 
-/// Individual food item in conversation response (includes ID)
+/// Individual food item in conversation response (includes ID and source)
 struct AIFoodItemWithIdResponse: Decodable {
     let id: String
     let name: String
@@ -329,6 +329,7 @@ struct AIFoodItemWithIdResponse: Decodable {
     let emoji: String
     let fat: Double
     let protein: Double
+    let source: String?
 }
 
 /// Response from OpenAI Vision API containing carb estimate and food description (legacy single-item)
@@ -389,7 +390,7 @@ final class OpenAIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let prompt = """
-        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate, fat, and protein content for each.
+        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
 
         IMPORTANT GUIDELINES:
         - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
@@ -447,7 +448,7 @@ final class OpenAIService {
         let foodItemSchema = JSONSchemaProperty.object(
             properties: [
                 "name": .string(description: "Concise item description, max 30 chars"),
-                "carbs": .number(description: "Estimated carbohydrates in grams"),
+                "carbs": .number(description: "Estimated total carbohydrates in grams (not net carbs)"),
                 "emoji": .string(description: "1-2 food emojis representing the item"),
                 "fat": .number(description: "Estimated fat in grams"),
                 "protein": .number(description: "Estimated protein in grams")
@@ -553,7 +554,7 @@ final class OpenAIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let prompt = """
-        Analyze this food image for a diabetes insulin dosing app. Estimate carbohydrate, fat, and protein content.
+        Analyze this food image for a diabetes insulin dosing app. Estimate total carbohydrate, fat, and protein content.
 
         EMOJI SELECTION:
         Choose 1-3 food emojis that best represent the meal. Use only standard food/drink emojis.
@@ -713,7 +714,7 @@ final class OpenAIService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         var prompt = """
-        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate, fat, and protein content for each.
+        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
 
         IMPORTANT GUIDELINES:
         - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
@@ -776,7 +777,7 @@ final class OpenAIService {
         let foodItemSchema = JSONSchemaProperty.object(
             properties: [
                 "name": .string(description: "Concise item description, max 30 chars"),
-                "carbs": .number(description: "Estimated carbohydrates in grams"),
+                "carbs": .number(description: "Estimated total carbohydrates in grams (not net carbs)"),
                 "emoji": .string(description: "1-2 food emojis representing the item"),
                 "fat": .number(description: "Estimated fat in grams"),
                 "protein": .number(description: "Estimated protein in grams")
@@ -791,7 +792,7 @@ final class OpenAIService {
                 "foodItems": .array(items: foodItemSchema, description: "Array of all food items detected"),
                 "overallConfidence": .number(description: "Overall confidence in the analysis (0.0-1.0)"),
                 "reasoning": .string(
-                    description: "Brief explanation of how carb values were estimated, mentioning portion sizes and assumptions made"
+                    description: "Brief explanation of how total carb values were estimated, mentioning portion sizes and assumptions made"
                 )
             ],
             required: ["foodItems", "overallConfidence", "reasoning"],
@@ -896,7 +897,7 @@ final class OpenAIService {
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
                     var prompt = """
-                    Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate carbohydrate, fat, and protein content for each.
+                    Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
 
                     IMPORTANT GUIDELINES:
                     - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
@@ -1025,7 +1026,7 @@ final class OpenAIService {
 
         The user has corrected this item's description to: "\(newDescription)"
 
-        Please re-estimate the carbohydrates, fat, and protein for this corrected item based on the image and new description.
+        Please re-estimate the total carbohydrates, fat, and protein for this corrected item based on the image and new description.
         Consider the visual portion size and the specific food type indicated by the user.
         """
 
@@ -1072,7 +1073,7 @@ final class OpenAIService {
         JSONSchemaDefinition(
             type: "object",
             properties: [
-                "updatedCarbs": .number(description: "Updated carbohydrate estimate in grams"),
+                "updatedCarbs": .number(description: "Updated total carbohydrate estimate in grams (not net carbs)"),
                 "reasoning": .string(description: "Brief explanation of the updated estimate"),
                 "updatedFat": .number(description: "Updated fat estimate in grams"),
                 "updatedProtein": .number(description: "Updated protein estimate in grams")
@@ -1122,6 +1123,101 @@ final class OpenAIService {
         )
     }
 
+    // MARK: - Nutrition Lookup Intent Classification
+
+    /// Result of classifying whether a user message is requesting a nutrition lookup
+    struct NutritionLookupIntent: Decodable {
+        /// Whether the user is asking to look up/find/search for published nutrition data
+        let isNutritionLookup: Bool
+        /// The menu item name to look up (if applicable)
+        let menuItemName: String
+    }
+
+    /// Classifies whether a user's chat message is requesting a published nutrition lookup.
+    /// Uses a lightweight GPT call to determine intent and extract the item name.
+    func classifyNutritionLookupIntent(
+        userMessage: String,
+        currentItems: [AIFoodItem],
+        restaurantName: String
+    ) async throws -> NutritionLookupIntent {
+        let apiKey = try getAPIKey()
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let itemsList = currentItems.map { "\($0.emoji ?? "") \($0.name)" }.joined(separator: ", ")
+
+        let systemPrompt = """
+        You are classifying a user's message in a food analysis conversation.
+        The user is looking at food from \(restaurantName). Current items: \(itemsList).
+
+        Determine if the user is asking you to LOOK UP or FIND published nutrition facts for a specific menu item \
+        (e.g., "look up the fries", "find nutrition for the nuggets", "can you search for the shake?").
+
+        This does NOT include:
+        - Asking to change/update an existing item's values
+        - Asking general questions about the food
+        - Asking to add a new item with estimated values
+
+        If it IS a nutrition lookup request, extract the menu item name they want to look up.
+        """
+
+        let messages = [
+            OpenAIMessage(role: "system", content: [.text(systemPrompt)]),
+            OpenAIMessage(role: "user", content: [.text(userMessage)])
+        ]
+
+        let intentSchema = JSONSchemaDefinition(
+            type: "object",
+            properties: [
+                "isNutritionLookup": .boolean(
+                    description: "Whether the user is requesting a published nutrition lookup/search"
+                ),
+                "menuItemName": .string(
+                    description: "The menu item name to look up, or empty string if not a lookup request"
+                )
+            ],
+            required: ["isNutritionLookup", "menuItemName"],
+            additionalProperties: false
+        )
+
+        let chatRequest = OpenAIChatRequest(
+            model: "gpt-4o-mini",
+            messages: messages,
+            maxTokens: 200,
+            responseFormat: OpenAIResponseFormat(
+                type: "json_schema",
+                jsonSchema: OpenAIJSONSchema(
+                    name: "nutrition_lookup_intent",
+                    strict: true,
+                    schema: intentSchema
+                )
+            )
+        )
+
+        request.httpBody = try encoder.encode(chatRequest)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ... 299).contains(httpResponse.statusCode)
+        else {
+            throw OpenAIServiceError.invalidResponse(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+
+        let chatResponse = try decoder.decode(OpenAIChatResponse.self, from: data)
+
+        guard let content = chatResponse.choices.first?.message.content,
+              let contentData = content.data(using: .utf8)
+        else {
+            throw OpenAIServiceError.noContentInResponse
+        }
+
+        return try decoder.decode(NutritionLookupIntent.self, from: contentData)
+    }
+
     // MARK: - Conversation Turn
 
     /// Processes a conversation turn with the AI
@@ -1147,12 +1243,13 @@ final class OpenAIService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Build current items context
+        // Build current items context (include source info so AI knows which items are published)
         let itemsContext = currentItems.enumerated().map { index, item in
-            "[\(index + 1)] \(item.emoji ?? "") \(item.name): \(Int(item.carbs))g carbs, \(Int(item.fat))g fat, \(Int(item.protein))g protein"
+            let sourceLabel = item.source == .published ? " [PUBLISHED - verified from restaurant website]" : " [AI ESTIMATE]"
+            return "[\(index + 1)] \(item.emoji ?? "") \(item.name): \(Int(item.carbs))g carbs, \(Int(item.fat))g fat, \(Int(item.protein))g protein\(sourceLabel)"
         }.joined(separator: "\n")
 
-        // Build conversation history (text only, skip carb summaries)
+        // Build conversation history (text + system events + published nutrition context)
         let historyText = conversationHistory.compactMap { msg -> String? in
             switch msg.content {
             case let .text(text):
@@ -1161,14 +1258,20 @@ final class OpenAIService {
                 return "System: \(event)"
             case .carbSummary:
                 return nil
+            case let .publishedNutrition(items, restaurantName, _):
+                let itemsList = items.map { "\($0.emoji ?? "") \($0.name): \(Int($0.carbs))g carbs" }.joined(separator: ", ")
+                return "System: Published nutrition facts from \(restaurantName) were found and verified: \(itemsList)"
             }
         }.joined(separator: "\n")
 
         let systemPrompt = """
-        You are helping a person with diabetes refine their carbohydrate, fat, and protein estimates for insulin dosing.
+        You are helping a person with diabetes refine their total carbohydrate, fat, and protein estimates for insulin dosing.
 
         CURRENT FOOD ITEMS:
         \(itemsContext)
+
+        Items marked [PUBLISHED] have verified nutrition facts from the restaurant's official website.
+        Items marked [AI ESTIMATE] are vision-based estimates that may be less accurate.
 
         CONVERSATION HISTORY:
         \(historyText)
@@ -1179,14 +1282,18 @@ final class OpenAIService {
         3. Provide a helpful response acknowledging their input
         4. If they mention specific items, update those
         5. If they provide new information about the whole meal, adjust accordingly
+        6. For items marked [PUBLISHED], preserve their values unless the user explicitly asks to change them
+        7. If the user asks you to look up or find nutrition facts for an item, let them know that you can only provide AI estimates in the conversation — published nutrition lookups happen automatically when a restaurant is identified
+        8. For each item, include a "source" field: "published" for items with verified data, "estimated" for AI estimates
 
         For each item, return:
         - id: The original UUID if updating, or generate a new one for new items
         - name: Food description (max 30 chars)
-        - carbs: Estimated carbohydrate grams
+        - carbs: Estimated total carbohydrate grams (not net carbs)
         - emoji: 1-2 relevant emojis
         - fat: Estimated fat grams
         - protein: Estimated protein grams
+        - source: "published" if the item has verified published nutrition data, "estimated" if AI estimate
         """
 
         // Build messages array for multi-turn conversation
@@ -1244,12 +1351,13 @@ final class OpenAIService {
             properties: [
                 "id": .string(description: "UUID of the item (same as original if updating, new UUID if adding)"),
                 "name": .string(description: "Concise item description, max 30 chars"),
-                "carbs": .number(description: "Estimated carbohydrates in grams"),
+                "carbs": .number(description: "Estimated total carbohydrates in grams (not net carbs)"),
                 "emoji": .string(description: "1-2 food emojis representing the item"),
                 "fat": .number(description: "Estimated fat in grams"),
-                "protein": .number(description: "Estimated protein in grams")
+                "protein": .number(description: "Estimated protein in grams"),
+                "source": .string(description: "Data source: 'published' for verified restaurant data, 'estimated' for AI vision estimate")
             ],
-            required: ["id", "name", "carbs", "emoji", "fat", "protein"],
+            required: ["id", "name", "carbs", "emoji", "fat", "protein", "source"],
             description: "A food item"
         )
 
@@ -1267,7 +1375,7 @@ final class OpenAIService {
     }
 
     /// Parses conversation response
-    private func parseConversationResponse(_ data: Data, originalItems _: [AIFoodItem]) throws -> AIConversationResponse {
+    private func parseConversationResponse(_ data: Data, originalItems: [AIFoodItem]) throws -> AIConversationResponse {
         let chatResponse: OpenAIChatResponse
         do {
             chatResponse = try decoder.decode(OpenAIChatResponse.self, from: data)
@@ -1295,15 +1403,38 @@ final class OpenAIService {
             throw OpenAIServiceError.decodingError(error)
         }
 
-        // Convert API response items to domain model
+        // Build a lookup of original items by ID to preserve sourceURL and other metadata
+        let originalItemsById = Dictionary(
+            originalItems.map { ($0.id.uuidString.lowercased(), $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        // Convert API response items to domain model, preserving source metadata
         let foodItems = apiResponse.foodItems.map { item in
-            AIFoodItem(
-                id: UUID(uuidString: item.id) ?? UUID(),
+            let itemId = UUID(uuidString: item.id) ?? UUID()
+            let originalItem = originalItemsById[item.id.lowercased()]
+
+            // Determine source: prefer AI's response, fall back to original item's source
+            let source: AIFoodItemSource
+            if let aiSource = item.source, aiSource == "published" {
+                source = .published
+            } else if let original = originalItem {
+                source = original.source
+            } else {
+                source = .estimated
+            }
+
+            return AIFoodItem(
+                id: itemId,
                 name: item.name,
                 carbs: item.carbs,
                 emoji: item.emoji,
                 fat: item.fat,
-                protein: item.protein
+                protein: item.protein,
+                source: source,
+                sourceURL: originalItem?.sourceURL,
+                servingSize: originalItem?.servingSize,
+                calories: originalItem?.calories
             )
         }
 

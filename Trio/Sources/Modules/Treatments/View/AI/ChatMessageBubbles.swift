@@ -1,37 +1,96 @@
 import SwiftUI
 
-/// A user message bubble (right-aligned, colored background)
+// MARK: - Chat Bubble Tail Shape
+
+/// A chat bubble tail that sits at the bottom corner of a message bubble.
+/// Draws a small curved appendage like iMessage bubbles.
+private struct BubbleTail: Shape {
+    /// Whether the tail points to the right (user) or left (assistant)
+    var isFromUser: Bool = false
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let w: CGFloat = 10
+        let h: CGFloat = 16
+
+        if isFromUser {
+            // Right-side tail
+            path.move(to: CGPoint(x: rect.maxX - w, y: rect.maxY - h))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX, y: rect.maxY),
+                control: CGPoint(x: rect.maxX, y: rect.maxY - h * 0.15)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX - w, y: rect.maxY),
+                control: CGPoint(x: rect.maxX - w * 0.5, y: rect.maxY)
+            )
+        } else {
+            // Left-side tail
+            path.move(to: CGPoint(x: rect.minX + w, y: rect.maxY - h))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX, y: rect.maxY),
+                control: CGPoint(x: rect.minX, y: rect.maxY - h * 0.15)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX + w, y: rect.maxY),
+                control: CGPoint(x: rect.minX + w * 0.5, y: rect.maxY)
+            )
+        }
+
+        path.closeSubpath()
+        return path
+    }
+}
+
+// MARK: - Message Bubbles
+
+/// A user message bubble (right-aligned, blue background, tail on right)
 struct UserMessageBubble: View {
     let text: String
 
     var body: some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 0) {
             Spacer(minLength: 60)
 
-            Text(text)
-                .font(.body)
-                .foregroundColor(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color.accentColor)
-                .cornerRadius(18)
+            ZStack(alignment: .bottomTrailing) {
+                Text(text)
+                    .font(.body)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color.accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                BubbleTail(isFromUser: true)
+                    .fill(Color.accentColor)
+                    .frame(width: 10, height: 16)
+                    .offset(x: 3, y: 2)
+            }
         }
     }
 }
 
-/// An assistant message bubble (left-aligned, secondary background)
+/// An assistant text message bubble (left-aligned, grey background, tail on left).
+/// Light mode: light grey bubble. Dark mode: dark grey bubble.
 struct AssistantMessageBubble: View {
     let text: String
 
     var body: some View {
-        HStack {
-            Text(text)
-                .font(.body)
-                .foregroundColor(.primary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(Color(.secondarySystemGroupedBackground))
-                .cornerRadius(18)
+        HStack(alignment: .bottom, spacing: 0) {
+            ZStack(alignment: .bottomLeading) {
+                Text(text)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color(.systemGray5))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                BubbleTail(isFromUser: false)
+                    .fill(Color(.systemGray5))
+                    .frame(width: 10, height: 16)
+                    .offset(x: -3, y: 2)
+            }
 
             Spacer(minLength: 60)
         }
@@ -68,19 +127,26 @@ struct TypingIndicator: View {
     @State private var dotOpacities: [Double] = [0.3, 0.3, 0.3]
 
     var body: some View {
-        HStack {
-            HStack(spacing: 4) {
-                ForEach(0 ..< 3, id: \.self) { index in
-                    Circle()
-                        .fill(Color.secondary)
-                        .frame(width: 8, height: 8)
-                        .opacity(dotOpacities[index])
+        HStack(alignment: .bottom, spacing: 0) {
+            ZStack(alignment: .bottomLeading) {
+                HStack(spacing: 4) {
+                    ForEach(0 ..< 3, id: \.self) { index in
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 8, height: 8)
+                            .opacity(dotOpacities[index])
+                    }
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color(.systemGray5))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+
+                BubbleTail(isFromUser: false)
+                    .fill(Color(.systemGray5))
+                    .frame(width: 10, height: 16)
+                    .offset(x: -3, y: 2)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(Color(.secondarySystemGroupedBackground))
-            .cornerRadius(18)
 
             Spacer(minLength: 60)
         }
@@ -102,19 +168,44 @@ struct TypingIndicator: View {
     }
 }
 
+// MARK: - Carb Summary Header
+
 /// Header view for the carb summary showing AI sparkle icon
 struct AICarbSummaryHeader: View {
     let totalCarbs: Double
     let itemCount: Int
     let isUpdating: Bool
+    var hasPublishedItems: Bool = false
+    var allPublished: Bool = false
 
     var body: some View {
         HStack(spacing: 8) {
-            // AI indicator
+            // Source indicator
             HStack(spacing: 4) {
-                AnimatedSparkleIcon(isAnimating: isUpdating)
-                Text("AI Estimate", comment: "Label for AI-generated carb estimate")
-                    .font(.caption.bold())
+                if allPublished {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(Color.darkGreen)
+                    Text("Published", comment: "Label for published nutrition data")
+                        .font(.caption.bold())
+                        .foregroundColor(Color.darkGreen)
+                } else if hasPublishedItems {
+                    AnimatedSparkleIcon(isAnimating: isUpdating)
+                    Text("AI Estimate", comment: "Label for AI-generated carb estimate")
+                        .font(.caption.bold())
+                    Text("·")
+                        .font(.caption.bold())
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 9))
+                        .foregroundColor(Color.darkGreen)
+                    Text("Published", comment: "Label indicating some items have published data")
+                        .font(.caption.bold())
+                        .foregroundColor(Color.darkGreen)
+                } else {
+                    AnimatedSparkleIcon(isAnimating: isUpdating)
+                    Text("AI Estimate", comment: "Label for AI-generated carb estimate")
+                        .font(.caption.bold())
+                }
             }
             .foregroundColor(.secondary)
 

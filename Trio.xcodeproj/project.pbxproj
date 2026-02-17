@@ -11,6 +11,8 @@
 		041D1E995A6AE92E9289DC49 /* TreatmentsDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8D1A7CA8C10C4403D4BBFA7 /* TreatmentsDataFlow.swift */; };
 		0437CE46C12535A56504EC19 /* SnoozeRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5822B15939E719628E9FF7C /* SnoozeRootView.swift */; };
 		05F64B11B90BD79D88539991 /* FoodItemsSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3AD10798820B9AABB6A09A2 /* FoodItemsSelectionView.swift */; };
+		0F3772FF173BDE0FC5188E60 /* PublishedSourceVerificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 291E39730F3772FF173BDE0F /* PublishedSourceVerificationView.swift */; };
+		A8F3B72E194CD06583E2F1A7 /* ChatPublishedNutritionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C4E19A2D83F60B5E1A7C3D4 /* ChatPublishedNutritionView.swift */; };
 		06EA14194764FC7518A9B6A8 /* ChatMessageBubbles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE3CF472304972A06F81933 /* ChatMessageBubbles.swift */; };
 		0D9A5E34A899219C5C4CDFAF /* HistoryStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9455FA2D92E77A6C4AFED8A3 /* HistoryStateModel.swift */; };
 		0F7A65FBD2CD8D6477ED4539 /* GlucoseNotificationSettingsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E625985B47742D498CB1681A /* GlucoseNotificationSettingsProvider.swift */; };
@@ -896,6 +898,7 @@
 		118DF7672C5ECBC60067FEB7 /* OverridePresetEntity.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OverridePresetEntity.swift; sourceTree = "<group>"; };
 		118DF7682C5ECBC60067FEB7 /* OverridePresetsIntentRequest.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OverridePresetsIntentRequest.swift; sourceTree = "<group>"; };
 		124B3C1CF26757DCAEEC9BDE /* ChatCarbSummaryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatCarbSummaryView.swift; sourceTree = "<group>"; };
+		7C4E19A2D83F60B5E1A7C3D4 /* ChatPublishedNutritionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatPublishedNutritionView.swift; sourceTree = "<group>"; };
 		19012CDB291D2CB900FB8210 /* LoopStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopStats.swift; sourceTree = "<group>"; };
 		190EBCC329FF136900BA767D /* UserInterfaceSettingsDataFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserInterfaceSettingsDataFlow.swift; sourceTree = "<group>"; };
 		190EBCC529FF138000BA767D /* UserInterfaceSettingsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserInterfaceSettingsProvider.swift; sourceTree = "<group>"; };
@@ -935,6 +938,7 @@
 		223EC0494F55A91E3EA69EF4 /* TreatmentsStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TreatmentsStateModel.swift; sourceTree = "<group>"; };
 		22963BD06A9C83959D4914E4 /* GlucoseNotificationSettingsRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GlucoseNotificationSettingsRootView.swift; sourceTree = "<group>"; };
 		2AD22C985B79A2F0D2EA3D9D /* PumpConfigRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PumpConfigRootView.swift; sourceTree = "<group>"; };
+		291E39730F3772FF173BDE0F /* PublishedSourceVerificationView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PublishedSourceVerificationView.swift; sourceTree = "<group>"; };
 		2F2A13DF0EDEEEDC4106AA2A /* NightscoutConfigDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NightscoutConfigDataFlow.swift; sourceTree = "<group>"; };
 		3260468377DA9DB4DEE9AF6D /* GlucoseNotificationSettingsDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GlucoseNotificationSettingsDataFlow.swift; sourceTree = "<group>"; };
 		34E59764334CACBEE54E55FD /* ResultsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ResultsView.swift; sourceTree = "<group>"; };
@@ -2749,10 +2753,12 @@
 				D6B14D1F451E2514B16C24C2 /* AIChatView.swift */,
 				6B036683B506036C4E32D829 /* AnimatedRainbowButton.swift */,
 				124B3C1CF26757DCAEEC9BDE /* ChatCarbSummaryView.swift */,
+				7C4E19A2D83F60B5E1A7C3D4 /* ChatPublishedNutritionView.swift */,
 				1BE3CF472304972A06F81933 /* ChatMessageBubbles.swift */,
 				6F929A88F581348966326C99 /* ChatMessageView.swift */,
 				52B87767F0613A1FA18C7D34 /* FoodDescriptionInputView.swift */,
 				A3AD10798820B9AABB6A09A2 /* FoodItemsSelectionView.swift */,
+				291E39730F3772FF173BDE0F /* PublishedSourceVerificationView.swift */,
 				D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */,
 				AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */,
 				B3AD49EC5007797FF5BA635C /* AIFoodAnalysisView.swift */,
@@ -4895,10 +4901,12 @@
 				6C1F964067F3077CAB7F0A3A /* AIChatView.swift in Sources */,
 				FC598BB084F20B54CB964389 /* AnimatedRainbowButton.swift in Sources */,
 				5A8BCB50B6B8F80F42DF451B /* ChatCarbSummaryView.swift in Sources */,
+				A8F3B72E194CD06583E2F1A7 /* ChatPublishedNutritionView.swift in Sources */,
 				06EA14194764FC7518A9B6A8 /* ChatMessageBubbles.swift in Sources */,
 				BF1D90D02D82623C34E88872 /* ChatMessageView.swift in Sources */,
 				E96307B6D5C278A4E11026E7 /* FoodDescriptionInputView.swift in Sources */,
 				05F64B11B90BD79D88539991 /* FoodItemsSelectionView.swift in Sources */,
+				0F3772FF173BDE0FC5188E60 /* PublishedSourceVerificationView.swift in Sources */,
 				209E2A74CF8986BC64BB2B7D /* PhotoPickerWrapper.swift in Sources */,
 				B5EF10978C29C8DEBA0BC034 /* ShimmerModifier.swift in Sources */,
 				E9FBCE100D261468CBF9829D /* AIFoodAnalysisView.swift in Sources */,

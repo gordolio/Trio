@@ -100,7 +100,13 @@ struct AIFoodAnalysisView: View {
                                 await state.editFoodItemDescription(itemId, newDescription: newDescription)
                             }
                         },
-                        onOpenChat: state.isAnalyzingFood ? nil : onOpenChat
+                        onOpenChat: state.isAnalyzingFood ? nil : onOpenChat,
+                        onAcceptPublished: { itemId in
+                            state.acceptPublishedNutrition(for: itemId)
+                        },
+                        onRejectPublished: { itemId in
+                            state.rejectPublishedNutrition(for: itemId)
+                        }
                     )
 
                     if state.isAnalyzingFood {

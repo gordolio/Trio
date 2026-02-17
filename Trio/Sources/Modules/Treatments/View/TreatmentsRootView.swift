@@ -462,6 +462,12 @@ extension Treatments {
                         isPresented: $showAIChat,
                         onAcceptValues: { selection in
                             state.acceptConversationValues(selection)
+                        },
+                        onAcceptPublished: { itemId in
+                            state.acceptPublishedNutrition(for: itemId)
+                        },
+                        onRejectPublished: { itemId in
+                            state.rejectPublishedNutrition(for: itemId)
                         }
                     )
                 }

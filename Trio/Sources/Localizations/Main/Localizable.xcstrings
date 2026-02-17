@@ -5337,6 +5337,9 @@
         }
       }
     },
+    "·" : {
+
+    },
     "“Trio” Would Like to Use Bluetooth" : {
       "localizations" : {
         "bg" : {
@@ -20025,11 +20028,11 @@
         }
       }
     },
-    "1 unit of insulin covers %@g of carbs" : {
-
-    },
     "1 item" : {
       "comment" : "Single item count"
+    },
+    "1 unit of insulin covers %@g of carbs" : {
+
     },
     "1. Open the Settings app on your iOS device." : {
       "localizations" : {
@@ -25395,6 +25398,9 @@
           }
         }
       }
+    },
+    "Accept" : {
+      "comment" : "Button to accept the published nutrition value"
     },
     "Accept These Values" : {
       "comment" : "Button to accept AI carb estimates"
@@ -61506,7 +61512,7 @@
       "comment" : "Nutrient label for carbohydrates"
     },
     "Carbs" : {
-      "comment" : "Treatment type",
+      "comment" : "Carbohydrates nutrient label in published nutrition summary\nTreatment type",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -110681,7 +110687,7 @@
       "comment" : "Nutrient label for fat"
     },
     "Fat" : {
-      "comment" : "Add Fat",
+      "comment" : "Fat nutrient label in published nutrition summary",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -168104,6 +168110,9 @@
         }
       }
     },
+    "No valid URL: %@" : {
+
+    },
     "Noise:" : {
       "localizations" : {
         "bg" : {
@@ -187174,7 +187183,7 @@
       "comment" : "Nutrient label for protein"
     },
     "Protein" : {
-      "comment" : "Add Protein",
+      "comment" : "Protein nutrient label in published nutrition summary",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -187766,7 +187775,13 @@
       }
     },
     "Published" : {
-      "comment" : "Badge indicating nutrition data comes from official published source"
+      "comment" : "Badge indicating nutrition data comes from official published source\nLabel for published nutrition data\nLabel indicating some items have published data"
+    },
+    "Published · %@" : {
+      "comment" : "Header label for published nutrition card showing restaurant name"
+    },
+    "Published Nutrition Facts" : {
+      "comment" : "Title for the published nutrition source verification sheet"
     },
     "Pump" : {
       "extractionState" : "manual",
@@ -193993,14 +194008,17 @@
         }
       }
     },
-    "ReliOn glucose tablets, 4g carbs each" : {
-
-    },
     "Refine Food Analysis" : {
       "comment" : "Title for AI chat view"
     },
     "Refine with AI" : {
       "comment" : "Button to open AI chat for refining food analysis"
+    },
+    "Reject" : {
+      "comment" : "Button to reject published nutrition value and use AI estimate instead"
+    },
+    "ReliOn glucose tablets, 4g carbs each" : {
+
     },
     "Remaining Carbs Cap" : {
       "comment" : "Remaining Carbs Cap",
@@ -260004,6 +260022,9 @@
           }
         }
       }
+    },
+    "Verify" : {
+      "comment" : "Button to verify published nutrition source"
     },
     "Very High (>%@)" : {
       "localizations" : {

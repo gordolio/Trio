@@ -5,6 +5,19 @@ struct ChatMessageView: View {
     let message: AIConversationMessage
     let isUpdating: Bool
     let onAccept: (() -> Void)?
+    let onVerifyPublishedItem: ((AIFoodItem) -> Void)?
+
+    init(
+        message: AIConversationMessage,
+        isUpdating: Bool,
+        onAccept: (() -> Void)?,
+        onVerifyPublishedItem: ((AIFoodItem) -> Void)? = nil
+    ) {
+        self.message = message
+        self.isUpdating = isUpdating
+        self.onAccept = onAccept
+        self.onVerifyPublishedItem = onVerifyPublishedItem
+    }
 
     var body: some View {
         switch message.content {
@@ -17,6 +30,14 @@ struct ChatMessageView: View {
                 canAccept: canAccept,
                 isUpdating: isUpdating,
                 onAccept: onAccept
+            )
+
+        case let .publishedNutrition(items, restaurantName, sourceURL):
+            ChatPublishedNutritionView(
+                items: items,
+                restaurantName: restaurantName,
+                sourceURL: sourceURL,
+                onVerifyItem: onVerifyPublishedItem
             )
 
         case let .systemEvent(event):
@@ -42,6 +63,7 @@ struct ChatMessageList: View {
     let messages: [AIConversationMessage]
     let isProcessing: Bool
     let onAccept: () -> Void
+    var onVerifyPublishedItem: ((AIFoodItem) -> Void)?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -51,7 +73,8 @@ struct ChatMessageList: View {
                         ChatMessageView(
                             message: message,
                             isUpdating: isProcessing,
-                            onAccept: isCarbSummary(message) ? onAccept : nil
+                            onAccept: isCarbSummary(message) ? onAccept : nil,
+                            onVerifyPublishedItem: isPublishedNutrition(message) ? onVerifyPublishedItem : nil
                         )
                         .id(message.id)
                     }
@@ -78,6 +101,13 @@ struct ChatMessageList: View {
 
     private func isCarbSummary(_ message: AIConversationMessage) -> Bool {
         if case .carbSummary = message.content {
+            return true
+        }
+        return false
+    }
+
+    private func isPublishedNutrition(_ message: AIConversationMessage) -> Bool {
+        if case .publishedNutrition = message.content {
             return true
         }
         return false

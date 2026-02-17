@@ -14,13 +14,23 @@ struct ChatCarbSummaryView: View {
         items.reduce(0) { $0 + $1.carbs }
     }
 
+    private var hasPublishedItems: Bool {
+        items.contains { $0.source == .published }
+    }
+
+    private var allPublished: Bool {
+        items.allSatisfy { $0.source == .published }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header with total
             AICarbSummaryHeader(
                 totalCarbs: totalCarbs,
                 itemCount: items.count,
-                isUpdating: isUpdating
+                isUpdating: isUpdating,
+                hasPublishedItems: hasPublishedItems,
+                allPublished: allPublished
             )
 
             // Expandable item list
@@ -34,11 +44,11 @@ struct ChatCarbSummaryView: View {
             }
         }
         .padding(16)
-        .background(Color(.secondarySystemGroupedBackground))
+        .background(Color(.systemBackground))
         .cornerRadius(16)
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color(.separator).opacity(0.3), lineWidth: 1)
+                .stroke(Color(.separator).opacity(0.5), lineWidth: 1)
         )
     }
 
@@ -96,6 +106,12 @@ struct ChatCarbSummaryView: View {
                 .foregroundColor(.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
+
+            if item.source == .published {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 9))
+                    .foregroundColor(Color.darkGreen)
+            }
 
             Spacer(minLength: 8)
 

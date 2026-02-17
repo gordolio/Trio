@@ -25,9 +25,12 @@ enum NutritionFactsMerger {
             return visionItems
         }
 
+        // Clean the menu item name by stripping any parenthesized restaurant name the LLM may have included
+        let cleanedMenuItemName = cleanMenuItemName(published.menuItemName, restaurantName: published.restaurantName)
+
         // Create the published food item
         let publishedItem = AIFoodItem(
-            name: published.menuItemName,
+            name: cleanedMenuItemName,
             carbs: published.carbs,
             emoji: findBestEmoji(from: visionItems, matching: published),
             fat: published.fat,
@@ -42,7 +45,7 @@ enum NutritionFactsMerger {
         let nonDuplicateVisionItems = visionItems.filter { visionItem in
             !isLikelyMatch(
                 visionItemName: visionItem.name,
-                publishedItemName: published.menuItemName,
+                publishedItemName: cleanedMenuItemName,
                 restaurantName: published.restaurantName
             )
         }
@@ -88,6 +91,26 @@ enum NutritionFactsMerger {
         }
 
         return false
+    }
+
+    /// Strips any parenthesized restaurant name from the menu item name.
+    /// e.g., "Hash Browns (Chick-fil-A)" → "Hash Browns"
+    static func cleanMenuItemName(_ menuItemName: String, restaurantName: String) -> String {
+        let restaurantLower = restaurantName.lowercased()
+        // Remove parenthesized text containing the restaurant name
+        var cleaned = menuItemName
+        if let openParen = cleaned.range(of: "("),
+           let closeParen = cleaned.range(of: ")", range: openParen.upperBound ..< cleaned.endIndex)
+        {
+            let parenContent = cleaned[openParen.upperBound ..< closeParen.lowerBound].lowercased()
+            if parenContent.trimmingCharacters(in: .whitespaces).contains(restaurantLower) ||
+                restaurantLower.contains(parenContent.trimmingCharacters(in: .whitespaces))
+            {
+                cleaned.removeSubrange(openParen.lowerBound ... closeParen.lowerBound)
+                cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return cleaned.isEmpty ? menuItemName : cleaned
     }
 
     /// Find the best emoji from vision items that match the published item
