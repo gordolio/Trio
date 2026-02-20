@@ -42,6 +42,12 @@ struct FoodItemsSelectionView: View {
     /// Called when user taps "Refine with AI" button
     let onOpenChat: (() -> Void)?
 
+    /// Called when user accepts published nutrition for an item
+    let onAcceptPublished: ((UUID) -> Void)?
+
+    /// Called when user rejects published nutrition for an item
+    let onRejectPublished: ((UUID) -> Void)?
+
     // State for inline editing
     @State private var editingItemId: UUID?
     @State private var editText: String = ""
@@ -49,6 +55,9 @@ struct FoodItemsSelectionView: View {
 
     // State for nutrient display cycling
     @State private var nutrientDisplay: NutrientDisplayMode = .carbs
+
+    // State for published source verification sheet
+    @State private var verifyingItem: AIFoodItem?
 
     // Check if any item is pending (for total shimmer)
     private var isAnyItemPending: Bool {
@@ -61,7 +70,9 @@ struct FoodItemsSelectionView: View {
         pendingItemIds: Set<UUID> = [],
         onToggleItem: @escaping (UUID) -> Void,
         onEditItem: ((UUID, String) -> Void)? = nil,
-        onOpenChat: (() -> Void)? = nil
+        onOpenChat: (() -> Void)? = nil,
+        onAcceptPublished: ((UUID) -> Void)? = nil,
+        onRejectPublished: ((UUID) -> Void)? = nil
     ) {
         _selection = selection
         _isExpanded = isExpanded
@@ -69,6 +80,8 @@ struct FoodItemsSelectionView: View {
         self.onToggleItem = onToggleItem
         self.onEditItem = onEditItem
         self.onOpenChat = onOpenChat
+        self.onAcceptPublished = onAcceptPublished
+        self.onRejectPublished = onRejectPublished
     }
 
     var body: some View {
@@ -85,6 +98,19 @@ struct FoodItemsSelectionView: View {
                     if onOpenChat != nil {
                         refineWithAIButton
                     }
+                }
+            }
+            .sheet(item: $verifyingItem) { item in
+                if let urlString = item.sourceURL, let url = URL(string: urlString) {
+                    PublishedSourceVerificationView(
+                        url: url,
+                        item: item,
+                        onAccept: { onAcceptPublished?(item.id) },
+                        onReject: { onRejectPublished?(item.id) }
+                    )
+                } else {
+                    // Fallback — show what happened
+                    Text("No valid URL: \(item.sourceURL ?? "nil")")
                 }
             }
         }
@@ -118,27 +144,28 @@ struct FoodItemsSelectionView: View {
 
     /// Displays a nutrient value with an inline label, tappable to cycle
     private func nutrientValueView(value: Double, isSelected: Bool, isPending: Bool, isHeader _: Bool = false) -> some View {
-        Button(action: cycleNutrient) {
-            HStack(spacing: 4) {
-                if isPending {
-                    AnimatedSparkleIcon(isAnimating: true)
-                }
-                if nutrientDisplay == .carbs {
-                    Text(formatValue(value))
-                        .font(.body.monospacedDigit())
-                        .foregroundColor(isSelected ? .primary : .secondary)
-                } else {
-                    Text(formatValue(value))
-                        .font(.caption.monospacedDigit())
-                        .foregroundColor(isSelected ? .primary : .secondary)
-                    Text(nutrientDisplay.label)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
+        HStack(spacing: 4) {
+            if isPending {
+                AnimatedSparkleIcon(isAnimating: true)
             }
-            .fixedSize()
+            if nutrientDisplay == .carbs {
+                Text(formatValue(value))
+                    .font(.body.monospacedDigit())
+                    .foregroundColor(isSelected ? .primary : .secondary)
+            } else {
+                Text(formatValue(value))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(isSelected ? .primary : .secondary)
+                Text(nutrientDisplay.label)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
-        .buttonStyle(.plain)
+        .fixedSize()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            cycleNutrient()
+        }
     }
 
     // MARK: - Header
@@ -219,15 +246,15 @@ struct FoodItemsSelectionView: View {
     ) -> some View {
         HStack(spacing: 8) {
             // Checkbox
-            Button(action: {
-                onToggleItem(item.id)
-            }) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20))
-                    .foregroundColor(isSelected ? .accentColor : .secondary)
-                    .frame(width: 24)
-            }
-            .buttonStyle(.plain)
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 20))
+                .foregroundColor(isSelected ? .accentColor : .secondary)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    commitAnyPendingEdit(except: item.id)
+                    onToggleItem(item.id)
+                }
 
             // Emoji
             if let emoji = item.emoji, !emoji.isEmpty {
@@ -247,7 +274,8 @@ struct FoodItemsSelectionView: View {
                     }
                     .submitLabel(.done)
             } else {
-                // Display mode - tappable to edit
+                // Display mode - tappable to edit (use onTapGesture, not Button, to avoid
+                // multiple .borderless buttons in the same HStack stealing each other's taps)
                 Text(item.name)
                     .font(.body)
                     .foregroundColor(
@@ -257,6 +285,7 @@ struct FoodItemsSelectionView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .onTapGesture {
+                        commitAnyPendingEdit(except: item.id)
                         if onEditItem != nil, !isPending {
                             startEditing(item: item)
                         }
@@ -300,15 +329,6 @@ struct FoodItemsSelectionView: View {
             }
         )
         .totalShimmer(isAnimating: isPending)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            // If we're editing another item, commit that edit first
-            if let editingId = editingItemId, editingId != item.id {
-                if let editingItem = selection?.response.foodItems.first(where: { $0.id == editingId }) {
-                    commitEdit(for: editingItem)
-                }
-            }
-        }
     }
 
     private var refineWithAIButton: some View {
@@ -338,30 +358,45 @@ struct FoodItemsSelectionView: View {
     // MARK: - Published Badge
 
     @ViewBuilder private func publishedBadge(for item: AIFoodItem) -> some View {
-        if let urlString = item.sourceURL, let url = URL(string: urlString), !urlString.isEmpty {
-            SwiftUI.Link(destination: url) {
-                publishedBadgeLabel
-            }
-        } else {
-            publishedBadgeLabel
-        }
-    }
+        let hasURL = item.sourceURL != nil && !(item.sourceURL?.isEmpty ?? true)
 
-    private var publishedBadgeLabel: some View {
         HStack(spacing: 2) {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 8))
             Text("Published", comment: "Badge indicating nutrition data comes from official published source")
                 .font(.system(size: 9, weight: .medium))
+            if hasURL {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 6, weight: .bold))
+            }
         }
         .foregroundColor(.white)
         .padding(.horizontal, 5)
         .padding(.vertical, 2)
-        .background(Color.green.opacity(0.8))
+        .background(Color.darkGreen)
         .cornerRadius(4)
+        .fixedSize()
+        .padding(6) // Increase tap target on all sides
+        .contentShape(Rectangle())
+        .highPriorityGesture(
+            TapGesture().onEnded {
+                if hasURL {
+                    verifyingItem = item
+                }
+            }
+        )
     }
 
     // MARK: - Editing Helpers
+
+    /// Commits any pending edit for a different item (used when tapping other interactive elements)
+    private func commitAnyPendingEdit(except itemId: UUID) {
+        if let editingId = editingItemId, editingId != itemId {
+            if let editingItem = selection?.response.foodItems.first(where: { $0.id == editingId }) {
+                commitEdit(for: editingItem)
+            }
+        }
+    }
 
     private func startEditing(item: AIFoodItem) {
         editingItemId = item.id

@@ -134,6 +134,7 @@ private struct NutritionSearchResponse: Decodable {
     let protein: Double
     let calories: Double
     let servingSize: String
+    let sourceURL: String
     let confidence: Double
 }
 
@@ -271,8 +272,9 @@ final class OpenAIResponsesService {
         let inputPrompt = """
         Look up the official published nutrition facts for "\(menuItemName)" from "\(restaurantName)".
 
-        Search the restaurant's official website or a trusted nutrition database for the standard \
-        menu item's nutrition information.
+        STRONGLY PREFER the restaurant's own official website (e.g., \(restaurantName.lowercased()).com/nutrition \
+        or the restaurant's official nutrition PDF). Only use third-party nutrition databases as a fallback \
+        if the official source is unavailable.
 
         I need:
         - Total carbohydrates in grams
@@ -280,6 +282,15 @@ final class OpenAIResponsesService {
         - Protein in grams
         - Calories
         - Serving size
+        - The URL of the webpage where you found the nutrition facts (sourceURL)
+
+        IMPORTANT: For menuItemName, return ONLY the menu item name as it appears on the menu, \
+        without including the restaurant or brand name. For example, return "Hash Browns" not \
+        "Hash Browns (Chick-fil-A)".
+
+        IMPORTANT: For sourceURL, return the actual URL of the official webpage where the nutrition \
+        information was found. Prefer the restaurant's own domain (e.g., "https://www.chickfila.com/nutrition"). \
+        Do not leave this empty.
 
         Return the data from the official/published source. If you cannot find the exact item, \
         return your best match with a lower confidence score.
@@ -347,17 +358,23 @@ final class OpenAIResponsesService {
             type: "object",
             properties: [
                 "restaurantName": .string(description: "Name of the restaurant or brand"),
-                "menuItemName": .string(description: "Name of the menu item"),
+                "menuItemName": .string(description: "Name of the menu item only, without the restaurant or brand name"),
                 "carbs": .number(description: "Total carbohydrates in grams"),
                 "fat": .number(description: "Total fat in grams"),
                 "protein": .number(description: "Protein in grams"),
                 "calories": .number(description: "Total calories"),
                 "servingSize": .string(description: "Serving size description (e.g., '1 sandwich (245g)')"),
+                "sourceURL": .string(
+                    description: "The URL of the webpage where the nutrition facts were found (e.g., the restaurant's official nutrition page)"
+                ),
                 "confidence": .number(
                     description: "Confidence that the result matches the query (0.0-1.0). Use lower values if the exact item wasn't found."
                 )
             ],
-            required: ["restaurantName", "menuItemName", "carbs", "fat", "protein", "calories", "servingSize", "confidence"],
+            required: [
+                "restaurantName", "menuItemName", "carbs", "fat", "protein", "calories", "servingSize", "sourceURL",
+                "confidence"
+            ],
             additionalProperties: false
         )
     }
@@ -378,6 +395,12 @@ final class OpenAIResponsesService {
         var citationURL: String?
 
         for outputItem in responsesResponse.output {
+            os_log(
+                "Responses API output item type: %{public}@, has content: %{public}@",
+                log: log, type: .info,
+                outputItem.type,
+                outputItem.content != nil ? "yes (\(outputItem.content!.count) items)" : "no"
+            )
             guard outputItem.type == "message", let contents = outputItem.content else { continue }
             for content in contents {
                 if content.type == "output_text", let text = content.text {
@@ -385,14 +408,28 @@ final class OpenAIResponsesService {
                 }
                 // Extract first citation URL
                 if let annotations = content.annotations {
-                    for annotation in annotations where annotation.type == "url_citation" {
-                        if citationURL == nil {
+                    os_log(
+                        "Found %d annotations in content",
+                        log: log, type: .info,
+                        annotations.count
+                    )
+                    for annotation in annotations {
+                        os_log(
+                            "Annotation type: %{public}@, url: %{public}@",
+                            log: log, type: .info,
+                            annotation.type,
+                            annotation.url ?? "nil"
+                        )
+                        if annotation.type == "url_citation", citationURL == nil {
                             citationURL = annotation.url
                         }
                     }
+                } else {
+                    os_log("No annotations found in content of type: %{public}@", log: log, type: .info, content.type)
                 }
             }
         }
+        os_log("Final citationURL: %{public}@", log: log, type: .info, citationURL ?? "nil")
 
         guard let content = textContent, let contentData = content.data(using: .utf8) else {
             throw OpenAIServiceError.noContentInResponse
@@ -413,6 +450,15 @@ final class OpenAIResponsesService {
             nutrition.carbs, nutrition.fat, nutrition.protein, nutrition.calories
         )
 
+        // Prefer the LLM-provided sourceURL (from JSON schema), fall back to annotation citation
+        let finalSourceURL: String
+        if !nutrition.sourceURL.isEmpty {
+            finalSourceURL = nutrition.sourceURL
+        } else {
+            finalSourceURL = citationURL ?? ""
+        }
+        os_log("Final sourceURL: %{public}@", log: log, type: .info, finalSourceURL)
+
         return PublishedNutritionResult(
             restaurantName: nutrition.restaurantName,
             menuItemName: nutrition.menuItemName,
@@ -421,7 +467,7 @@ final class OpenAIResponsesService {
             protein: nutrition.protein,
             calories: nutrition.calories,
             servingSize: nutrition.servingSize,
-            sourceURL: citationURL ?? "",
+            sourceURL: finalSourceURL,
             confidence: nutrition.confidence
         )
     }

@@ -40,6 +40,12 @@ final class AIConversationManager: ObservableObject {
     /// Overall confidence from the most recent analysis
     var overallConfidence: Double = 0.0
 
+    /// Restaurant name (if published nutrition data was found)
+    var restaurantName: String?
+
+    /// Source URL for published nutrition data
+    var publishedSourceURL: String?
+
     // MARK: - Computed Properties
 
     /// Total carbs for selected items
@@ -92,9 +98,25 @@ final class AIConversationManager: ObservableObject {
 
     /// Replace current items with merged items (e.g., after published nutrition merge).
     /// Preserves conversation state while updating item data.
-    @MainActor func replaceItems(_ newItems: [AIFoodItem]) {
+    /// - Parameters:
+    ///   - newItems: The merged food items (may include published items)
+    ///   - restaurantName: Name of the restaurant if published data was found
+    ///   - sourceURL: URL of the published nutrition source
+    @MainActor func replaceItems(
+        _ newItems: [AIFoodItem],
+        restaurantName: String? = nil,
+        sourceURL: String? = nil
+    ) {
         currentItems = newItems
         selectedItemIds = Set(newItems.map(\.id))
+
+        // Store restaurant context for future conversation turns
+        if let restaurant = restaurantName {
+            self.restaurantName = restaurant
+        }
+        if let url = sourceURL {
+            publishedSourceURL = url
+        }
 
         // Rebuild messages with updated items
         if let reasoning = initialReasoning {
@@ -104,11 +126,22 @@ final class AIConversationManager: ObservableObject {
             ]
         }
 
+        // Add published nutrition card if there are published items
+        let publishedItems = newItems.filter { $0.source == .published }
+        if !publishedItems.isEmpty, let restaurant = restaurantName {
+            messages.append(.publishedNutrition(
+                items: publishedItems,
+                restaurantName: restaurant,
+                sourceURL: sourceURL
+            ))
+        }
+
         os_log(
-            "Replaced items with %d merged items, total %.1fg carbs",
+            "Replaced items with %d merged items (%d published), total %.1fg carbs",
             log: log,
             type: .info,
             currentItems.count,
+            publishedItems.count,
             totalCarbs
         )
     }
@@ -304,7 +337,9 @@ final class AIConversationManager: ObservableObject {
 
     // MARK: - Chat Messages
 
-    /// Send a user message and get AI response
+    /// Send a user message and get AI response.
+    /// If the user is asking for a nutrition lookup and we have restaurant context,
+    /// this will search for published nutrition via web search instead of just estimating.
     /// - Parameter text: The user's message
     @MainActor func sendMessage(_ text: String) async {
         guard let imageData = imageData else {
@@ -324,6 +359,21 @@ final class AIConversationManager: ObservableObject {
         os_log("Sending chat message: %{public}@", log: log, type: .info, text)
 
         do {
+            // Check if user is requesting a published nutrition lookup
+            if let restaurant = restaurantName {
+                let handled = try await handleNutritionLookupIfNeeded(
+                    text: text,
+                    restaurantName: restaurant,
+                    imageData: imageData
+                )
+                if handled {
+                    pendingItemIds.removeAll()
+                    isProcessing = false
+                    return
+                }
+            }
+
+            // Standard conversation turn (no lookup needed)
             let response = try await OpenAIService.shared.conversationTurn(
                 imageData: imageData,
                 currentItems: currentItems,
@@ -377,6 +427,113 @@ final class AIConversationManager: ObservableObject {
         // Clear pending state
         pendingItemIds.removeAll()
         isProcessing = false
+    }
+
+    // MARK: - Nutrition Lookup in Conversation
+
+    /// Checks if the user's message is requesting a nutrition lookup.
+    /// If so, performs a web search for published nutrition data, merges the result,
+    /// and updates the conversation. Returns true if handled, false to fall through to normal turn.
+    @MainActor private func handleNutritionLookupIfNeeded(
+        text: String,
+        restaurantName: String,
+        imageData _: Data
+    ) async throws -> Bool {
+        // Classify intent
+        let intent = try await OpenAIService.shared.classifyNutritionLookupIntent(
+            userMessage: text,
+            currentItems: currentItems,
+            restaurantName: restaurantName
+        )
+
+        guard intent.isNutritionLookup, !intent.menuItemName.isEmpty else {
+            return false
+        }
+
+        os_log(
+            "Nutrition lookup requested for: %{public}@ at %{public}@",
+            log: log, type: .info,
+            intent.menuItemName, restaurantName
+        )
+
+        // Search for published nutrition via web search (Responses API)
+        let result = try await OpenAIResponsesService.shared.searchPublishedNutrition(
+            restaurantName: restaurantName,
+            menuItemName: intent.menuItemName
+        )
+
+        os_log(
+            "Published nutrition found: %{public}@ — carbs: %.0fg, confidence: %.2f",
+            log: log, type: .info,
+            result.menuItemName, result.carbs, result.confidence
+        )
+
+        // Create the new published food item
+        let newItem = AIFoodItem(
+            name: result.menuItemName,
+            carbs: result.carbs,
+            emoji: nil, // Will be set by conversation turn below
+            fat: result.fat,
+            protein: result.protein,
+            source: .published,
+            sourceURL: result.sourceURL,
+            servingSize: result.servingSize,
+            calories: result.calories
+        )
+
+        // Check if this item already exists (by name match) — replace it if so
+        let normalizedNewName = result.menuItemName.lowercased()
+        if let existingIndex = currentItems.firstIndex(where: {
+            $0.name.lowercased().contains(normalizedNewName) ||
+                normalizedNewName.contains($0.name.lowercased())
+        }) {
+            // Replace existing estimated item with published data
+            let existingItem = currentItems[existingIndex]
+            let replacedItem = AIFoodItem(
+                id: existingItem.id,
+                name: result.menuItemName,
+                carbs: result.carbs,
+                emoji: existingItem.emoji,
+                fat: result.fat,
+                protein: result.protein,
+                source: .published,
+                sourceURL: result.sourceURL,
+                servingSize: result.servingSize,
+                calories: result.calories
+            )
+            currentItems[existingIndex] = replacedItem
+        } else {
+            // Add as a new item
+            currentItems.append(newItem)
+            selectedItemIds.insert(newItem.id)
+        }
+
+        // Update published source URL
+        publishedSourceURL = result.sourceURL
+
+        // Add assistant message confirming the lookup
+        let carbsStr = result.carbs == floor(result.carbs) ? "\(Int(result.carbs))g" : String(format: "%.1fg", result.carbs)
+        let fatStr = result.fat == floor(result.fat) ? "\(Int(result.fat))g" : String(format: "%.1fg", result.fat)
+        let proteinStr = result
+            .protein == floor(result.protein) ? "\(Int(result.protein))g" : String(format: "%.1fg", result.protein)
+
+        let confirmationMessage = "I found the published nutrition facts for \(result.menuItemName) from \(restaurantName): " +
+            "\(carbsStr) carbs, \(fatStr) fat, \(proteinStr) protein."
+
+        messages.append(.assistantMessage(confirmationMessage))
+
+        // Add published nutrition card for the new item
+        let publishedItems = currentItems.filter { $0.source == .published }
+        messages.append(.publishedNutrition(
+            items: publishedItems,
+            restaurantName: restaurantName,
+            sourceURL: result.sourceURL
+        ))
+
+        // Add updated carb summary
+        messages.append(.carbSummary(items: currentItems, canAccept: true))
+
+        return true
     }
 
     // MARK: - Accept Values

@@ -6,7 +6,11 @@ struct AIChatView: View {
     @Binding var isPresented: Bool
     let onAcceptValues: (FoodItemSelection) -> Void
 
+    let onAcceptPublished: ((UUID) -> Void)?
+    let onRejectPublished: ((UUID) -> Void)?
+
     @State private var inputText = ""
+    @State private var verifyingItem: AIFoodItem?
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -21,7 +25,10 @@ struct AIChatView: View {
                 ChatMessageList(
                     messages: conversationManager.messages,
                     isProcessing: conversationManager.isProcessing,
-                    onAccept: acceptAndClose
+                    onAccept: acceptAndClose,
+                    onVerifyPublishedItem: { item in
+                        verifyingItem = item
+                    }
                 )
 
                 Divider()
@@ -44,6 +51,16 @@ struct AIChatView: View {
                             .bold()
                     }
                     .disabled(conversationManager.isProcessing)
+                }
+            }
+            .sheet(item: $verifyingItem) { item in
+                if let urlString = item.sourceURL, let url = URL(string: urlString) {
+                    PublishedSourceVerificationView(
+                        url: url,
+                        item: item,
+                        onAccept: { onAcceptPublished?(item.id) },
+                        onReject: { onRejectPublished?(item.id) }
+                    )
                 }
             }
             .alert(
@@ -157,7 +174,9 @@ struct AIChatView: View {
             return AIChatView(
                 conversationManager: manager,
                 isPresented: .constant(true),
-                onAcceptValues: { _ in print("Accepted") }
+                onAcceptValues: { _ in print("Accepted") },
+                onAcceptPublished: nil,
+                onRejectPublished: nil
             )
             .onAppear {
                 // Initialize manager with sample data for preview

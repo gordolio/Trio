@@ -146,6 +146,11 @@ extension Treatments {
         private var originalAICarbsQuantity: Double?
         private var pendingImageData: Data?
 
+        /// Vision items saved before merge, used as fallback when user rejects published nutrition
+        private var premergeVisionItems: [AIFoodItem]?
+        /// Restaurant name from the published result, used for matching during reject
+        private var publishedRestaurantName: String?
+
         /// Whether we're in AI mode (photo captured or analysis complete)
         var isInAIMode: Bool {
             capturedImageData != nil || foodItemSelection != nil || isAnalyzingFood
@@ -824,6 +829,12 @@ extension Treatments {
                 print("🍽️ [NutritionLookup] Waiting for classifier/search result...")
                 let publishedResult = await publishedNutritionTask.value
 
+                // Save vision items before merge for fallback if user rejects published nutrition
+                await MainActor.run {
+                    premergeVisionItems = visionResponse.foodItems
+                    publishedRestaurantName = publishedResult?.restaurantName
+                }
+
                 // Merge published facts with vision items
                 let mergedItems = NutritionFactsMerger.merge(
                     publishedResult: publishedResult,
@@ -848,10 +859,14 @@ extension Treatments {
                         overallConfidence: visionResponse.overallConfidence
                     )
 
-                    // Update conversation manager with merged items
+                    // Update conversation manager with merged items and published info
                     if mergedItems != visionResponse.foodItems {
                         print("🍽️ [NutritionLookup] Updating conversation manager with merged items")
-                        manager.replaceItems(mergedItems)
+                        manager.replaceItems(
+                            mergedItems,
+                            restaurantName: publishedResult?.restaurantName,
+                            sourceURL: publishedResult?.sourceURL
+                        )
                     }
 
                     let selection = FoodItemSelection(response: mergedResponse)
@@ -923,6 +938,73 @@ extension Treatments {
             updateFormFromSelection()
         }
 
+        /// Accepts published nutrition for an item (no-op — values are already applied)
+        @MainActor func acceptPublishedNutrition(for _: UUID) {
+            // Nothing to do — published values are already in use
+        }
+
+        /// Rejects published nutrition for an item and restores the original vision estimate
+        @MainActor func rejectPublishedNutrition(for itemId: UUID) {
+            guard var selection = foodItemSelection else { return }
+
+            let currentItems = selection.response.foodItems
+
+            // Find the published item being rejected
+            guard let publishedItem = currentItems.first(where: { $0.id == itemId && $0.source == .published }) else {
+                return
+            }
+
+            // Find matching vision item(s) from the pre-merge snapshot
+            let restaurantName = publishedRestaurantName ?? ""
+            let fallbackItems: [AIFoodItem]
+            if let visionItems = premergeVisionItems {
+                fallbackItems = visionItems.filter { visionItem in
+                    NutritionFactsMerger.isLikelyMatch(
+                        visionItemName: visionItem.name,
+                        publishedItemName: publishedItem.name,
+                        restaurantName: restaurantName
+                    )
+                }
+            } else {
+                fallbackItems = []
+            }
+
+            // Build the new items list: replace the published item with vision fallback(s)
+            var newItems: [AIFoodItem] = []
+            for item in currentItems {
+                if item.id == itemId {
+                    if fallbackItems.isEmpty {
+                        // No vision fallback found — keep the published item but mark as estimated
+                        newItems.append(AIFoodItem(
+                            name: publishedItem.name,
+                            carbs: publishedItem.carbs,
+                            emoji: publishedItem.emoji,
+                            fat: publishedItem.fat,
+                            protein: publishedItem.protein,
+                            source: .estimated
+                        ))
+                    } else {
+                        newItems.append(contentsOf: fallbackItems)
+                    }
+                } else {
+                    newItems.append(item)
+                }
+            }
+
+            let newResponse = AIFoodItemsResponse(
+                foodItems: newItems,
+                overallConfidence: selection.response.overallConfidence
+            )
+            let newSelection = FoodItemSelection(response: newResponse)
+
+            withAnimation(.easeInOut(duration: 0.35)) {
+                foodItemSelection = newSelection
+            }
+
+            conversationManager?.replaceItems(newItems)
+            updateFormFromSelection()
+        }
+
         /// Clears the AI error state
         func clearAIError() {
             aiError = nil
@@ -937,6 +1019,8 @@ extension Treatments {
             originalAICarbsQuantity = nil
             aiAssistedMetadata = nil
             pendingImageData = nil
+            premergeVisionItems = nil
+            publishedRestaurantName = nil
         }
 
         /// Edit a food item's description and recalculate its carbs
