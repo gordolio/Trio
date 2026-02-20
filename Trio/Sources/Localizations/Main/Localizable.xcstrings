@@ -230669,6 +230669,9 @@
         }
       }
     },
+    "The order of Fat and Protein inputs has changed." : {
+
+    },
     "The oref algorithm determines insulin dosing based on a number of scenarios that it estimates with different types of forecasts." : {
       "localizations" : {
         "bg" : {
