@@ -173,6 +173,8 @@ struct TypingIndicator: View {
 /// Header view for the carb summary showing AI sparkle icon
 struct AICarbSummaryHeader: View {
     let totalCarbs: Double
+    let totalFat: Double
+    let totalProtein: Double
     let itemCount: Int
     let isUpdating: Bool
     var hasPublishedItems: Bool = false
@@ -218,16 +220,17 @@ struct AICarbSummaryHeader: View {
 
             // Total nutrient value
             VStack(alignment: .trailing, spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(formatCarbs(totalCarbs))
-                        .font(.title2.bold().monospacedDigit())
-                        .foregroundColor(.primary)
-                    if nutrientDisplay != .carbs {
-                        Text(nutrientDisplay.label)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
+                AnimatedNutrientValue(
+                    carbs: totalCarbs,
+                    fat: totalFat,
+                    protein: totalProtein,
+                    mode: nutrientDisplay,
+                    valueFont: .title2.bold(),
+                    altValueFont: .title3.bold(),
+                    unitFont: .caption,
+                    valueColor: .primary,
+                    unitColor: .secondary
+                )
                 Text(itemCountLabel)
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -247,14 +250,6 @@ struct AICarbSummaryHeader: View {
             return String(localized: "\(itemCount) items", comment: "Multiple item count")
         }
     }
-
-    private func formatCarbs(_ carbs: Double) -> String {
-        if carbs == floor(carbs) {
-            return "\(Int(carbs))g"
-        } else {
-            return String(format: "%.1fg", carbs)
-        }
-    }
 }
 
 #if DEBUG
@@ -271,12 +266,12 @@ struct AICarbSummaryHeader: View {
 
                 TypingIndicator()
 
-                AICarbSummaryHeader(totalCarbs: 47, itemCount: 3, isUpdating: false)
+                AICarbSummaryHeader(totalCarbs: 47, totalFat: 14, totalProtein: 22, itemCount: 3, isUpdating: false)
                     .padding()
                     .background(Color(.systemGroupedBackground))
                     .cornerRadius(12)
 
-                AICarbSummaryHeader(totalCarbs: 47, itemCount: 3, isUpdating: true)
+                AICarbSummaryHeader(totalCarbs: 47, totalFat: 14, totalProtein: 22, itemCount: 3, isUpdating: true)
                     .padding()
                     .background(Color(.systemGroupedBackground))
                     .cornerRadius(12)

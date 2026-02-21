@@ -13,21 +13,9 @@ struct ChatCarbSummaryView: View {
     @State private var isExpanded = false
     @State private var nutrientDisplay: NutrientDisplayMode = .carbs
 
-    private var totalNutrient: Double {
-        switch nutrientDisplay {
-        case .carbs: return items.reduce(0) { $0 + $1.carbs }
-        case .fat: return items.reduce(0) { $0 + $1.fat }
-        case .protein: return items.reduce(0) { $0 + $1.protein }
-        }
-    }
-
-    private func nutrientValue(for item: AIFoodItem) -> Double {
-        switch nutrientDisplay {
-        case .carbs: return item.carbs
-        case .fat: return item.fat
-        case .protein: return item.protein
-        }
-    }
+    private var totalCarbs: Double { items.reduce(0) { $0 + $1.carbs } }
+    private var totalFat: Double { items.reduce(0) { $0 + $1.fat } }
+    private var totalProtein: Double { items.reduce(0) { $0 + $1.protein } }
 
     private func cycleNutrient() {
         withAnimation(.easeInOut(duration: 0.15)) {
@@ -47,7 +35,9 @@ struct ChatCarbSummaryView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Header with total
             AICarbSummaryHeader(
-                totalCarbs: totalNutrient,
+                totalCarbs: totalCarbs,
+                totalFat: totalFat,
+                totalProtein: totalProtein,
                 itemCount: items.count,
                 isUpdating: isUpdating,
                 hasPublishedItems: hasPublishedItems,
@@ -144,16 +134,17 @@ struct ChatCarbSummaryView: View {
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 4) {
-                Text(formatCarbs(nutrientValue(for: item)))
-                    .font(.callout.monospacedDigit())
-                    .foregroundColor(.secondary)
-                if nutrientDisplay != .carbs {
-                    Text(nutrientDisplay.label)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-            }
+            AnimatedNutrientValue(
+                carbs: item.carbs,
+                fat: item.fat,
+                protein: item.protein,
+                mode: nutrientDisplay,
+                valueFont: .callout,
+                altValueFont: .caption,
+                unitFont: .caption2,
+                valueColor: .primary,
+                unitColor: .secondary
+            )
             .contentShape(Rectangle())
             .onTapGesture {
                 cycleNutrient()
@@ -182,14 +173,6 @@ struct ChatCarbSummaryView: View {
         .disabled(isUpdating)
         .opacity(isUpdating ? 0.6 : 1.0)
     }
-
-    private func formatCarbs(_ carbs: Double) -> String {
-        if carbs == floor(carbs) {
-            return "\(Int(carbs))g"
-        } else {
-            return String(format: "%.1fg", carbs)
-        }
-    }
 }
 
 /// A compact inline version of the carb summary for sticky header
@@ -201,13 +184,9 @@ struct CompactCarbSummaryView: View {
 
     @State private var nutrientDisplay: NutrientDisplayMode = .carbs
 
-    private var totalNutrient: Double {
-        switch nutrientDisplay {
-        case .carbs: return items.reduce(0) { $0 + $1.carbs }
-        case .fat: return items.reduce(0) { $0 + $1.fat }
-        case .protein: return items.reduce(0) { $0 + $1.protein }
-        }
-    }
+    private var totalCarbs: Double { items.reduce(0) { $0 + $1.carbs } }
+    private var totalFat: Double { items.reduce(0) { $0 + $1.fat } }
+    private var totalProtein: Double { items.reduce(0) { $0 + $1.protein } }
 
     private func cycleNutrient() {
         withAnimation(.easeInOut(duration: 0.15)) {
@@ -221,16 +200,17 @@ struct CompactCarbSummaryView: View {
             HStack(spacing: 6) {
                 AnimatedSparkleIcon(isAnimating: isUpdating)
 
-                HStack(spacing: 4) {
-                    Text(formatCarbs(totalNutrient))
-                        .font(.headline.monospacedDigit())
-                        .foregroundColor(.primary)
-                    if nutrientDisplay != .carbs {
-                        Text(nutrientDisplay.label)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
+                AnimatedNutrientValue(
+                    carbs: totalCarbs,
+                    fat: totalFat,
+                    protein: totalProtein,
+                    mode: nutrientDisplay,
+                    valueFont: .headline,
+                    altValueFont: .subheadline,
+                    unitFont: .caption,
+                    valueColor: .primary,
+                    unitColor: .secondary
+                )
 
                 Text("(\(items.count) items)", comment: "Item count in compact view")
                     .font(.caption)
@@ -266,14 +246,6 @@ struct CompactCarbSummaryView: View {
         .padding(.vertical, 12)
         .background(Color(.systemBackground))
         .shadow(color: Color.black.opacity(0.1), radius: 4, y: 2)
-    }
-
-    private func formatCarbs(_ carbs: Double) -> String {
-        if carbs == floor(carbs) {
-            return "\(Int(carbs))g"
-        } else {
-            return String(format: "%.1fg", carbs)
-        }
     }
 }
 

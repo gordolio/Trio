@@ -5340,6 +5340,9 @@
     "·" : {
 
     },
+    "· %@" : {
+
+    },
     "“Trio” Would Like to Use Bluetooth" : {
       "localizations" : {
         "bg" : {
@@ -168110,9 +168113,6 @@
         }
       }
     },
-    "No valid URL: %@" : {
-
-    },
     "Noise:" : {
       "localizations" : {
         "bg" : {
@@ -187775,10 +187775,7 @@
       }
     },
     "Published" : {
-      "comment" : "Badge indicating nutrition data comes from official published source\nLabel for published nutrition data\nLabel indicating some items have published data"
-    },
-    "Published · %@" : {
-      "comment" : "Header label for published nutrition card showing restaurant name"
+      "comment" : "Badge indicating nutrition data comes from official published source\nLabel for published nutrition data"
     },
     "Published Nutrition Facts" : {
       "comment" : "Title for the published nutrition source verification sheet"

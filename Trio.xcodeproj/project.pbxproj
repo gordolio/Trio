@@ -15,6 +15,7 @@
 		0F3772FF173BDE0FC5188E60 /* PublishedSourceVerificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 291E39730F3772FF173BDE0F /* PublishedSourceVerificationView.swift */; };
 		A8F3B72E194CD06583E2F1A7 /* ChatPublishedNutritionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C4E19A2D83F60B5E1A7C3D4 /* ChatPublishedNutritionView.swift */; };
 		06EA14194764FC7518A9B6A8 /* ChatMessageBubbles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE3CF472304972A06F81933 /* ChatMessageBubbles.swift */; };
+		F4A3B2C1D0E9F8A7B6C5D4E3 /* AnimatedNutrientValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* AnimatedNutrientValue.swift */; };
 		0D9A5E34A899219C5C4CDFAF /* HistoryStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9455FA2D92E77A6C4AFED8A3 /* HistoryStateModel.swift */; };
 		0F7A65FBD2CD8D6477ED4539 /* GlucoseNotificationSettingsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E625985B47742D498CB1681A /* GlucoseNotificationSettingsProvider.swift */; };
 		110AEDE32C5193D200615CC9 /* BolusIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110AEDE02C5193D100615CC9 /* BolusIntent.swift */; };
@@ -899,6 +900,7 @@
 		118DF7672C5ECBC60067FEB7 /* OverridePresetEntity.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OverridePresetEntity.swift; sourceTree = "<group>"; };
 		118DF7682C5ECBC60067FEB7 /* OverridePresetsIntentRequest.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = OverridePresetsIntentRequest.swift; sourceTree = "<group>"; };
 		124B3C1CF26757DCAEEC9BDE /* ChatCarbSummaryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatCarbSummaryView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A7B8C9D0E1F2 /* AnimatedNutrientValue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AnimatedNutrientValue.swift; sourceTree = "<group>"; };
 		7C4E19A2D83F60B5E1A7C3D4 /* ChatPublishedNutritionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatPublishedNutritionView.swift; sourceTree = "<group>"; };
 		19012CDB291D2CB900FB8210 /* LoopStats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopStats.swift; sourceTree = "<group>"; };
 		190EBCC329FF136900BA767D /* UserInterfaceSettingsDataFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserInterfaceSettingsDataFlow.swift; sourceTree = "<group>"; };
@@ -2753,6 +2755,7 @@
 			children = (
 				F87C74492F3AA31B00019C66 /* FoodScannerOverlayView.swift */,
 				D6B14D1F451E2514B16C24C2 /* AIChatView.swift */,
+				A1B2C3D4E5F6A7B8C9D0E1F2 /* AnimatedNutrientValue.swift */,
 				6B036683B506036C4E32D829 /* AnimatedRainbowButton.swift */,
 				124B3C1CF26757DCAEEC9BDE /* ChatCarbSummaryView.swift */,
 				7C4E19A2D83F60B5E1A7C3D4 /* ChatPublishedNutritionView.swift */,
@@ -4902,6 +4905,7 @@
 				DEC0F6561F44D83F9F0F3B6A /* AIConversationMessage.swift in Sources */,
 				9CBE52B8A814E5100B01A5D8 /* AIAssistedCarbEntryMetadata.swift in Sources */,
 				6C1F964067F3077CAB7F0A3A /* AIChatView.swift in Sources */,
+				F4A3B2C1D0E9F8A7B6C5D4E3 /* AnimatedNutrientValue.swift in Sources */,
 				FC598BB084F20B54CB964389 /* AnimatedRainbowButton.swift in Sources */,
 				5A8BCB50B6B8F80F42DF451B /* ChatCarbSummaryView.swift in Sources */,
 				A8F3B72E194CD06583E2F1A7 /* ChatPublishedNutritionView.swift in Sources */,

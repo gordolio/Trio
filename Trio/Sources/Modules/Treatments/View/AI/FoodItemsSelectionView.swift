@@ -102,22 +102,6 @@ struct FoodItemsSelectionView: View {
 
     // MARK: - Nutrient Helpers
 
-    private func nutrientValue(for item: AIFoodItem) -> Double {
-        switch nutrientDisplay {
-        case .carbs: return item.carbs
-        case .fat: return item.fat
-        case .protein: return item.protein
-        }
-    }
-
-    private func selectedNutrientTotal(_ selection: FoodItemSelection) -> Double {
-        switch nutrientDisplay {
-        case .carbs: return selection.selectedCarbs
-        case .fat: return selection.selectedFat
-        case .protein: return selection.selectedProtein
-        }
-    }
-
     private func cycleNutrient() {
         withAnimation(.easeInOut(duration: 0.15)) {
             nutrientDisplay = nutrientDisplay.next
@@ -127,23 +111,47 @@ struct FoodItemsSelectionView: View {
     // MARK: - Nutrient Value View
 
     /// Displays a nutrient value with an inline label, tappable to cycle
-    private func nutrientValueView(value: Double, isSelected: Bool, isPending: Bool, isHeader _: Bool = false) -> some View {
+    private func nutrientValueView(item: AIFoodItem, isSelected: Bool, isPending: Bool) -> some View {
         HStack(spacing: 4) {
             if isPending {
                 AnimatedSparkleIcon(isAnimating: true)
             }
-            if nutrientDisplay == .carbs {
-                Text(formatValue(value))
-                    .font(.body.monospacedDigit())
-                    .foregroundColor(isSelected ? .primary : .secondary)
-            } else {
-                Text(formatValue(value))
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(isSelected ? .primary : .secondary)
-                Text(nutrientDisplay.label)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+            AnimatedNutrientValue(
+                carbs: item.carbs,
+                fat: item.fat,
+                protein: item.protein,
+                mode: nutrientDisplay,
+                valueFont: .body,
+                altValueFont: .caption,
+                unitFont: .caption2,
+                valueColor: isSelected ? .primary : .secondary,
+                unitColor: .secondary
+            )
+        }
+        .fixedSize()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            cycleNutrient()
+        }
+    }
+
+    /// Displays the total nutrient value for the header
+    private func headerNutrientValueView(selection: FoodItemSelection, isPending: Bool) -> some View {
+        HStack(spacing: 4) {
+            if isPending {
+                AnimatedSparkleIcon(isAnimating: true)
             }
+            AnimatedNutrientValue(
+                carbs: selection.selectedCarbs,
+                fat: selection.selectedFat,
+                protein: selection.selectedProtein,
+                mode: nutrientDisplay,
+                valueFont: .body,
+                altValueFont: .caption,
+                unitFont: .caption2,
+                valueColor: .primary,
+                unitColor: .secondary
+            )
         }
         .fixedSize()
         .contentShape(Rectangle())
@@ -175,11 +183,9 @@ struct FoodItemsSelectionView: View {
                 Spacer(minLength: 8)
 
                 // Total nutrient value with shimmer when any item is pending
-                nutrientValueView(
-                    value: selectedNutrientTotal(selection),
-                    isSelected: true,
-                    isPending: isAnyItemPending,
-                    isHeader: true
+                headerNutrientValueView(
+                    selection: selection,
+                    isPending: isAnyItemPending
                 )
                 .padding(.horizontal, isAnyItemPending ? 12 : 0)
                 .padding(.vertical, isAnyItemPending ? 6 : 0)
@@ -290,7 +296,7 @@ struct FoodItemsSelectionView: View {
 
             // Nutrient value - tappable to cycle between carbs/fat/protein
             nutrientValueView(
-                value: nutrientValue(for: item),
+                item: item,
                 isSelected: isSelected,
                 isPending: isPending
             )
@@ -373,14 +379,6 @@ struct FoodItemsSelectionView: View {
         editingItemId = nil
         editText = ""
         isEditingFocused = false
-    }
-
-    private func formatValue(_ value: Double) -> String {
-        if value == floor(value) {
-            return "\(Int(value))g"
-        } else {
-            return String(format: "%.1fg", value)
-        }
     }
 }
 
