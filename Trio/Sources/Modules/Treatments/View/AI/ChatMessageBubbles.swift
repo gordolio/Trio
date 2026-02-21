@@ -180,6 +180,8 @@ struct AICarbSummaryHeader: View {
     var publishedItems: [AIFoodItem] = []
     var onAcceptPublished: ((UUID) -> Void)?
     var onRejectPublished: ((UUID) -> Void)?
+    var nutrientDisplay: NutrientDisplayMode = .carbs
+    var onCycleNutrient: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -214,16 +216,27 @@ struct AICarbSummaryHeader: View {
 
             Spacer()
 
-            // Total carbs
+            // Total nutrient value
             VStack(alignment: .trailing, spacing: 2) {
-                Text(formatCarbs(totalCarbs))
-                    .font(.title2.bold().monospacedDigit())
-                    .foregroundColor(.primary)
+                HStack(spacing: 4) {
+                    Text(formatCarbs(totalCarbs))
+                        .font(.title2.bold().monospacedDigit())
+                        .foregroundColor(.primary)
+                    if nutrientDisplay != .carbs {
+                        Text(nutrientDisplay.label)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
                 Text(itemCountLabel)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             .totalShimmer(isAnimating: isUpdating)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onCycleNutrient?()
+            }
         }
     }
 

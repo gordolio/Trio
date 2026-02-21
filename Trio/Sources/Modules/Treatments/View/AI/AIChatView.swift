@@ -95,26 +95,22 @@ struct AIChatView: View {
     // MARK: - Chat Input
 
     private var chatInputArea: some View {
-        HStack(spacing: 12) {
-            // Text input - using TextEditor for multiline support on iOS 15
-            ZStack(alignment: .topLeading) {
-                if inputText.isEmpty {
-                    Text("Type a message...", comment: "Placeholder for chat input")
-                        .foregroundColor(Color(.placeholderText))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 10)
-                }
-                TextEditor(text: $inputText)
-                    .frame(minHeight: 36, maxHeight: 100)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .focused($isInputFocused)
-            }
+        HStack(alignment: .bottom, spacing: 12) {
+            // Text input - auto-growing TextField like iMessage
+            TextField(
+                String(localized: "Type a message...", comment: "Placeholder for chat input"),
+                text: $inputText,
+                axis: .vertical
+            )
+            .lineLimit(1 ... 5)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .focused($isInputFocused)
             .background(Color(.systemGray6))
-            .cornerRadius(8)
+            .cornerRadius(18)
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(.systemGray4), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Color(.systemGray4), lineWidth: 0.5)
             )
 
             // Send button
@@ -126,7 +122,7 @@ struct AIChatView: View {
             .disabled(!canSend)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
         .background(Color(.systemBackground))
     }
 

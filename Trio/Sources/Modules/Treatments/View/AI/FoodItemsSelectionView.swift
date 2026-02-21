@@ -4,7 +4,7 @@ import SwiftUI
 // MARK: - Nutrient Display Mode
 
 /// Which nutrient value to show in the food items list
-private enum NutrientDisplayMode: CaseIterable {
+enum NutrientDisplayMode: CaseIterable {
     case carbs
     case fat
     case protein

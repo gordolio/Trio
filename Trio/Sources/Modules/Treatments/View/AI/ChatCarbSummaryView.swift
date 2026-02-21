@@ -11,9 +11,28 @@ struct ChatCarbSummaryView: View {
     var onRejectPublished: ((UUID) -> Void)?
 
     @State private var isExpanded = false
+    @State private var nutrientDisplay: NutrientDisplayMode = .carbs
 
-    private var totalCarbs: Double {
-        items.reduce(0) { $0 + $1.carbs }
+    private var totalNutrient: Double {
+        switch nutrientDisplay {
+        case .carbs: return items.reduce(0) { $0 + $1.carbs }
+        case .fat: return items.reduce(0) { $0 + $1.fat }
+        case .protein: return items.reduce(0) { $0 + $1.protein }
+        }
+    }
+
+    private func nutrientValue(for item: AIFoodItem) -> Double {
+        switch nutrientDisplay {
+        case .carbs: return item.carbs
+        case .fat: return item.fat
+        case .protein: return item.protein
+        }
+    }
+
+    private func cycleNutrient() {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            nutrientDisplay = nutrientDisplay.next
+        }
     }
 
     private var hasPublishedItems: Bool {
@@ -28,14 +47,16 @@ struct ChatCarbSummaryView: View {
         VStack(alignment: .leading, spacing: 12) {
             // Header with total
             AICarbSummaryHeader(
-                totalCarbs: totalCarbs,
+                totalCarbs: totalNutrient,
                 itemCount: items.count,
                 isUpdating: isUpdating,
                 hasPublishedItems: hasPublishedItems,
                 allPublished: allPublished,
                 publishedItems: items.filter { $0.source == .published },
                 onAcceptPublished: onAcceptPublished,
-                onRejectPublished: onRejectPublished
+                onRejectPublished: onRejectPublished,
+                nutrientDisplay: nutrientDisplay,
+                onCycleNutrient: cycleNutrient
             )
 
             // Expandable item list
@@ -123,9 +144,20 @@ struct ChatCarbSummaryView: View {
 
             Spacer(minLength: 8)
 
-            Text(formatCarbs(item.carbs))
-                .font(.callout.monospacedDigit())
-                .foregroundColor(.secondary)
+            HStack(spacing: 4) {
+                Text(formatCarbs(nutrientValue(for: item)))
+                    .font(.callout.monospacedDigit())
+                    .foregroundColor(.secondary)
+                if nutrientDisplay != .carbs {
+                    Text(nutrientDisplay.label)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                cycleNutrient()
+            }
         }
         .padding(.vertical, 6)
         .padding(.leading, 4)
@@ -167,8 +199,20 @@ struct CompactCarbSummaryView: View {
     let onExpand: () -> Void
     let onAccept: () -> Void
 
-    private var totalCarbs: Double {
-        items.reduce(0) { $0 + $1.carbs }
+    @State private var nutrientDisplay: NutrientDisplayMode = .carbs
+
+    private var totalNutrient: Double {
+        switch nutrientDisplay {
+        case .carbs: return items.reduce(0) { $0 + $1.carbs }
+        case .fat: return items.reduce(0) { $0 + $1.fat }
+        case .protein: return items.reduce(0) { $0 + $1.protein }
+        }
+    }
+
+    private func cycleNutrient() {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            nutrientDisplay = nutrientDisplay.next
+        }
     }
 
     var body: some View {
@@ -177,15 +221,26 @@ struct CompactCarbSummaryView: View {
             HStack(spacing: 6) {
                 AnimatedSparkleIcon(isAnimating: isUpdating)
 
-                Text(formatCarbs(totalCarbs))
-                    .font(.headline.monospacedDigit())
-                    .foregroundColor(.primary)
+                HStack(spacing: 4) {
+                    Text(formatCarbs(totalNutrient))
+                        .font(.headline.monospacedDigit())
+                        .foregroundColor(.primary)
+                    if nutrientDisplay != .carbs {
+                        Text(nutrientDisplay.label)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
 
                 Text("(\(items.count) items)", comment: "Item count in compact view")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             .totalShimmer(isAnimating: isUpdating)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                cycleNutrient()
+            }
 
             Spacer()
 
