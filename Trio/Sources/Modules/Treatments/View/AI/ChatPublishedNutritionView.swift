@@ -46,15 +46,11 @@ struct ChatPublishedNutritionView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 12))
-                .foregroundColor(Color.darkGreen)
-            Text(
-                "Published · \(restaurantName)",
-                comment: "Header label for published nutrition card showing restaurant name"
-            )
-            .font(.caption.bold())
-            .foregroundColor(.secondary)
+            PublishedBadge(style: .label, items: items)
+
+            Text("· \(restaurantName)")
+                .font(.caption.bold())
+                .foregroundColor(.secondary)
 
             Spacer()
         }

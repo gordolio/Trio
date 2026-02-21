@@ -7,6 +7,8 @@ struct ChatCarbSummaryView: View {
     let canAccept: Bool
     let isUpdating: Bool
     let onAccept: (() -> Void)?
+    var onAcceptPublished: ((UUID) -> Void)?
+    var onRejectPublished: ((UUID) -> Void)?
 
     @State private var isExpanded = false
 
@@ -30,7 +32,10 @@ struct ChatCarbSummaryView: View {
                 itemCount: items.count,
                 isUpdating: isUpdating,
                 hasPublishedItems: hasPublishedItems,
-                allPublished: allPublished
+                allPublished: allPublished,
+                publishedItems: items.filter { $0.source == .published },
+                onAcceptPublished: onAcceptPublished,
+                onRejectPublished: onRejectPublished
             )
 
             // Expandable item list
@@ -108,9 +113,12 @@ struct ChatCarbSummaryView: View {
                 .truncationMode(.tail)
 
             if item.source == .published {
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 9))
-                    .foregroundColor(Color.darkGreen)
+                PublishedBadge(
+                    style: .badge,
+                    items: [item],
+                    onAccept: onAcceptPublished,
+                    onReject: onRejectPublished
+                )
             }
 
             Spacer(minLength: 8)

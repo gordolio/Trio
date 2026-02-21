@@ -56,9 +56,6 @@ struct FoodItemsSelectionView: View {
     // State for nutrient display cycling
     @State private var nutrientDisplay: NutrientDisplayMode = .carbs
 
-    // State for published source verification sheet
-    @State private var verifyingItem: AIFoodItem?
-
     // Check if any item is pending (for total shimmer)
     private var isAnyItemPending: Bool {
         !pendingItemIds.isEmpty
@@ -98,19 +95,6 @@ struct FoodItemsSelectionView: View {
                     if onOpenChat != nil {
                         refineWithAIButton
                     }
-                }
-            }
-            .sheet(item: $verifyingItem) { item in
-                if let urlString = item.sourceURL, let url = URL(string: urlString) {
-                    PublishedSourceVerificationView(
-                        url: url,
-                        item: item,
-                        onAccept: { onAcceptPublished?(item.id) },
-                        onReject: { onRejectPublished?(item.id) }
-                    )
-                } else {
-                    // Fallback — show what happened
-                    Text("No valid URL: \(item.sourceURL ?? "nil")")
                 }
             }
         }
@@ -293,7 +277,12 @@ struct FoodItemsSelectionView: View {
 
                 // Source badge for published nutrition items
                 if item.source == .published {
-                    publishedBadge(for: item)
+                    PublishedBadge(
+                        style: .badge,
+                        items: [item],
+                        onAccept: { id in onAcceptPublished?(id) },
+                        onReject: { id in onRejectPublished?(id) }
+                    )
                 }
             }
 
@@ -353,38 +342,6 @@ struct FoodItemsSelectionView: View {
         .buttonStyle(.plain)
         .disabled(isAnyItemPending)
         .opacity(isAnyItemPending ? 0.5 : 1.0)
-    }
-
-    // MARK: - Published Badge
-
-    @ViewBuilder private func publishedBadge(for item: AIFoodItem) -> some View {
-        let hasURL = item.sourceURL != nil && !(item.sourceURL?.isEmpty ?? true)
-
-        HStack(spacing: 2) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 8))
-            Text("Published", comment: "Badge indicating nutrition data comes from official published source")
-                .font(.system(size: 9, weight: .medium))
-            if hasURL {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 6, weight: .bold))
-            }
-        }
-        .foregroundColor(.white)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 2)
-        .background(Color.darkGreen)
-        .cornerRadius(4)
-        .fixedSize()
-        .padding(6) // Increase tap target on all sides
-        .contentShape(Rectangle())
-        .highPriorityGesture(
-            TapGesture().onEnded {
-                if hasURL {
-                    verifyingItem = item
-                }
-            }
-        )
     }
 
     // MARK: - Editing Helpers

@@ -177,30 +177,33 @@ struct AICarbSummaryHeader: View {
     let isUpdating: Bool
     var hasPublishedItems: Bool = false
     var allPublished: Bool = false
+    var publishedItems: [AIFoodItem] = []
+    var onAcceptPublished: ((UUID) -> Void)?
+    var onRejectPublished: ((UUID) -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
             // Source indicator
             HStack(spacing: 4) {
                 if allPublished {
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(Color.darkGreen)
-                    Text("Published", comment: "Label for published nutrition data")
-                        .font(.caption.bold())
-                        .foregroundColor(Color.darkGreen)
+                    PublishedBadge(
+                        style: .label,
+                        items: publishedItems,
+                        onAccept: onAcceptPublished,
+                        onReject: onRejectPublished
+                    )
                 } else if hasPublishedItems {
                     AnimatedSparkleIcon(isAnimating: isUpdating)
                     Text("AI Estimate", comment: "Label for AI-generated carb estimate")
                         .font(.caption.bold())
                     Text("·")
                         .font(.caption.bold())
-                    Image(systemName: "checkmark.seal.fill")
-                        .font(.system(size: 9))
-                        .foregroundColor(Color.darkGreen)
-                    Text("Published", comment: "Label indicating some items have published data")
-                        .font(.caption.bold())
-                        .foregroundColor(Color.darkGreen)
+                    PublishedBadge(
+                        style: .label,
+                        items: publishedItems,
+                        onAccept: onAcceptPublished,
+                        onReject: onRejectPublished
+                    )
                 } else {
                     AnimatedSparkleIcon(isAnimating: isUpdating)
                     Text("AI Estimate", comment: "Label for AI-generated carb estimate")

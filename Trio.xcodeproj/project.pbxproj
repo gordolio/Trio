@@ -11,6 +11,7 @@
 		041D1E995A6AE92E9289DC49 /* TreatmentsDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8D1A7CA8C10C4403D4BBFA7 /* TreatmentsDataFlow.swift */; };
 		0437CE46C12535A56504EC19 /* SnoozeRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5822B15939E719628E9FF7C /* SnoozeRootView.swift */; };
 		05F64B11B90BD79D88539991 /* FoodItemsSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3AD10798820B9AABB6A09A2 /* FoodItemsSelectionView.swift */; };
+		D59D911479724734A9D83E90 /* PublishedBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200525D6E07D4639B5197A8E /* PublishedBadge.swift */; };
 		0F3772FF173BDE0FC5188E60 /* PublishedSourceVerificationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 291E39730F3772FF173BDE0F /* PublishedSourceVerificationView.swift */; };
 		A8F3B72E194CD06583E2F1A7 /* ChatPublishedNutritionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C4E19A2D83F60B5E1A7C3D4 /* ChatPublishedNutritionView.swift */; };
 		06EA14194764FC7518A9B6A8 /* ChatMessageBubbles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE3CF472304972A06F81933 /* ChatMessageBubbles.swift */; };
@@ -1233,6 +1234,7 @@
 		9F9F137F126D9F8DEB799F26 /* ISFEditorProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFEditorProvider.swift; sourceTree = "<group>"; };
 		A0A48AE3AC813A49A517846A /* NightscoutConfigStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NightscoutConfigStateModel.swift; sourceTree = "<group>"; };
 		A3AD10798820B9AABB6A09A2 /* FoodItemsSelectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FoodItemsSelectionView.swift; sourceTree = "<group>"; };
+		200525D6E07D4639B5197A8E /* PublishedBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublishedBadge.swift; sourceTree = "<group>"; };
 		A401509D21F7F35D4E109EDA /* HistoryDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = HistoryDataFlow.swift; sourceTree = "<group>"; };
 		A8630D58BDAD6D9C650B9B39 /* PumpConfigProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PumpConfigProvider.swift; sourceTree = "<group>"; };
 		AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShimmerModifier.swift; sourceTree = "<group>"; };
@@ -2758,6 +2760,7 @@
 				6F929A88F581348966326C99 /* ChatMessageView.swift */,
 				52B87767F0613A1FA18C7D34 /* FoodDescriptionInputView.swift */,
 				A3AD10798820B9AABB6A09A2 /* FoodItemsSelectionView.swift */,
+				200525D6E07D4639B5197A8E /* PublishedBadge.swift */,
 				291E39730F3772FF173BDE0F /* PublishedSourceVerificationView.swift */,
 				D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */,
 				AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */,
@@ -4906,6 +4909,7 @@
 				BF1D90D02D82623C34E88872 /* ChatMessageView.swift in Sources */,
 				E96307B6D5C278A4E11026E7 /* FoodDescriptionInputView.swift in Sources */,
 				05F64B11B90BD79D88539991 /* FoodItemsSelectionView.swift in Sources */,
+				D59D911479724734A9D83E90 /* PublishedBadge.swift in Sources */,
 				0F3772FF173BDE0FC5188E60 /* PublishedSourceVerificationView.swift in Sources */,
 				209E2A74CF8986BC64BB2B7D /* PhotoPickerWrapper.swift in Sources */,
 				B5EF10978C29C8DEBA0BC034 /* ShimmerModifier.swift in Sources */,
