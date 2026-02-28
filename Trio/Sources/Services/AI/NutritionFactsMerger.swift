@@ -37,7 +37,8 @@ enum NutritionFactsMerger {
             protein: published.protein,
             source: .published,
             sourceURL: published.sourceURL,
-            servingSize: published.servingSize,
+            servingCount: published.servingCount,
+            servingUnit: published.servingCountUnit,
             calories: published.calories
         )
 

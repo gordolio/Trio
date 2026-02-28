@@ -175,7 +175,7 @@ struct AICarbSummaryHeader: View {
     let totalCarbs: Double
     let totalFat: Double
     let totalProtein: Double
-    let itemCount: Int
+    let items: [AIFoodItem]
     let isUpdating: Bool
     var hasPublishedItems: Bool = false
     var allPublished: Bool = false
@@ -244,10 +244,15 @@ struct AICarbSummaryHeader: View {
     }
 
     private var itemCountLabel: String {
-        if itemCount == 1 {
+        // For a single item with specific serving info, show serving details (e.g., "4 Crackers")
+        if items.count == 1, let item = items.first, item.servingUnit != "Serving" {
+            let count = Int(item.servingCount)
+            return "\(count) \(item.servingUnit)"
+        }
+        if items.count == 1 {
             return String(localized: "1 item", comment: "Single item count")
         } else {
-            return String(localized: "\(itemCount) items", comment: "Multiple item count")
+            return String(localized: "\(items.count) items", comment: "Multiple item count")
         }
     }
 }
@@ -266,12 +271,20 @@ struct AICarbSummaryHeader: View {
 
                 TypingIndicator()
 
-                AICarbSummaryHeader(totalCarbs: 47, totalFat: 14, totalProtein: 22, itemCount: 3, isUpdating: false)
+                AICarbSummaryHeader(totalCarbs: 47, totalFat: 14, totalProtein: 22, items: [
+                    AIFoodItem(name: "Sandwich", carbs: 32, emoji: "🥪", fat: 14, protein: 22),
+                    AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎"),
+                    AIFoodItem(name: "Diet Soda", carbs: 0, emoji: "🥤")
+                ], isUpdating: false)
                     .padding()
                     .background(Color(.systemGroupedBackground))
                     .cornerRadius(12)
 
-                AICarbSummaryHeader(totalCarbs: 47, totalFat: 14, totalProtein: 22, itemCount: 3, isUpdating: true)
+                AICarbSummaryHeader(totalCarbs: 47, totalFat: 14, totalProtein: 22, items: [
+                    AIFoodItem(name: "Sandwich", carbs: 32, emoji: "🥪", fat: 14, protein: 22),
+                    AIFoodItem(name: "Apple", carbs: 15, emoji: "🍎"),
+                    AIFoodItem(name: "Diet Soda", carbs: 0, emoji: "🥤")
+                ], isUpdating: true)
                     .padding()
                     .background(Color(.systemGroupedBackground))
                     .cornerRadius(12)

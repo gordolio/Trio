@@ -197,7 +197,9 @@ final class AIConversationManager: ObservableObject {
                         carbs: item.carbs,
                         emoji: item.emoji,
                         fat: item.fat,
-                        protein: item.protein
+                        protein: item.protein,
+                        servingCount: item.servingCount,
+                        servingUnit: item.servingUnit
                     )
                 }
             }
@@ -270,7 +272,9 @@ final class AIConversationManager: ObservableObject {
             carbs: oldItem.carbs,
             emoji: oldItem.emoji,
             fat: oldItem.fat,
-            protein: oldItem.protein
+            protein: oldItem.protein,
+            servingCount: oldItem.servingCount,
+            servingUnit: oldItem.servingUnit
         )
 
         // Add system event to conversation history
@@ -306,7 +310,9 @@ final class AIConversationManager: ObservableObject {
                 carbs: response.updatedCarbs,
                 emoji: updatedItem.emoji,
                 fat: response.updatedFat ?? updatedItem.fat,
-                protein: response.updatedProtein ?? updatedItem.protein
+                protein: response.updatedProtein ?? updatedItem.protein,
+                servingCount: updatedItem.servingCount,
+                servingUnit: updatedItem.servingUnit
             )
             currentItems[itemIndex] = updatedItem
 
@@ -477,7 +483,8 @@ final class AIConversationManager: ObservableObject {
             protein: result.protein,
             source: .published,
             sourceURL: result.sourceURL,
-            servingSize: result.servingSize,
+            servingCount: result.servingCount,
+            servingUnit: result.servingCountUnit,
             calories: result.calories
         )
 
@@ -498,7 +505,8 @@ final class AIConversationManager: ObservableObject {
                 protein: result.protein,
                 source: .published,
                 sourceURL: result.sourceURL,
-                servingSize: result.servingSize,
+                servingCount: result.servingCount,
+                servingUnit: result.servingCountUnit,
                 calories: result.calories
             )
             currentItems[existingIndex] = replacedItem

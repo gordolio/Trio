@@ -23,8 +23,8 @@ final class OpenAIStreamingParser {
     private let decoder = JSONDecoder()
 
     /// Known field types for food item objects — used to assign defaults to dangling keys
-    private static let knownStringFields: Set<String> = ["name", "emoji", "reasoning"]
-    private static let knownNumberFields: Set<String> = ["carbs", "fat", "protein", "overallConfidence"]
+    private static let knownStringFields: Set<String> = ["name", "emoji", "reasoning", "servingUnit"]
+    private static let knownNumberFields: Set<String> = ["carbs", "fat", "protein", "overallConfidence", "servingCount"]
 
     /// Maximum accumulated content length before we stop appending (safety cap)
     private static let maxAccumulatedLength = 100_000
@@ -137,13 +137,17 @@ final class OpenAIStreamingParser {
                 let emoji = itemDict["emoji"] as? String
                 let fat = itemDict["fat"] as? Double ?? 0
                 let protein = itemDict["protein"] as? Double ?? 0
+                let servingCount = itemDict["servingCount"] as? Double ?? 1
+                let servingUnit = itemDict["servingUnit"] as? String ?? "Serving"
 
                 items.append(AIFoodItem(
                     name: name,
                     carbs: carbs,
                     emoji: emoji,
                     fat: fat,
-                    protein: protein
+                    protein: protein,
+                    servingCount: servingCount,
+                    servingUnit: servingUnit
                 ))
             }
         }

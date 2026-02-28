@@ -34,8 +34,11 @@ struct AIFoodItem: Codable, Identifiable, Equatable {
     /// Citation URL for published nutrition items
     let sourceURL: String?
 
-    /// Serving size description (e.g., "1 sandwich (245g)")
-    let servingSize: String?
+    /// Number of individual items in one serving (e.g., 8 for an 8-count nugget). Defaults to 1.
+    let servingCount: Double
+
+    /// Unit for the serving count (e.g., "Nuggets", "Pieces"). Defaults to "Serving".
+    let servingUnit: String
 
     /// Calories (typically available for published items)
     let calories: Double?
@@ -49,7 +52,8 @@ struct AIFoodItem: Codable, Identifiable, Equatable {
         protein: Double = 0,
         source: AIFoodItemSource = .estimated,
         sourceURL: String? = nil,
-        servingSize: String? = nil,
+        servingCount: Double = 1,
+        servingUnit: String = "Serving",
         calories: Double? = nil
     ) {
         self.id = id
@@ -60,7 +64,8 @@ struct AIFoodItem: Codable, Identifiable, Equatable {
         self.protein = protein
         self.source = source
         self.sourceURL = sourceURL
-        self.servingSize = servingSize
+        self.servingCount = servingCount
+        self.servingUnit = servingUnit
         self.calories = calories
     }
 }
@@ -97,10 +102,27 @@ struct FoodItemSelection: Equatable {
     /// Set of selected item IDs
     var selectedItemIds: Set<UUID>
 
+    /// Per-item user serving counts, keyed by item ID.
+    /// Only populated for items that have serving info (servingCount != nil).
+    /// Initialized to the item's servingCount so multiplier starts at 1.0.
+    var userServingCounts: [UUID: Double]
+
     init(response: AIFoodItemsResponse) {
         self.response = response
-        // Select all items by default
         selectedItemIds = Set(response.foodItems.map(\.id))
+        // Initialize user counts to match the item's serving count (multiplier = 1.0)
+        var counts: [UUID: Double] = [:]
+        for item in response.foodItems {
+            counts[item.id] = item.servingCount
+        }
+        userServingCounts = counts
+    }
+
+    /// Returns the serving multiplier for a specific item.
+    func servingMultiplier(for item: AIFoodItem) -> Double {
+        guard item.servingCount > 0 else { return 1.0 }
+        guard let userCount = userServingCounts[item.id] else { return 1.0 }
+        return userCount / item.servingCount
     }
 
     /// Returns only the selected food items
@@ -108,19 +130,19 @@ struct FoodItemSelection: Equatable {
         response.foodItems.filter { selectedItemIds.contains($0.id) }
     }
 
-    /// Total carbs for selected items only
+    /// Total carbs for selected items, each scaled by its own serving multiplier
     var selectedCarbs: Double {
-        selectedItems.reduce(0) { $0 + $1.carbs }
+        selectedItems.reduce(0) { $0 + $1.carbs * servingMultiplier(for: $1) }
     }
 
-    /// Total fat for selected items only
+    /// Total fat for selected items, each scaled by its own serving multiplier
     var selectedFat: Double {
-        selectedItems.reduce(0) { $0 + $1.fat }
+        selectedItems.reduce(0) { $0 + $1.fat * servingMultiplier(for: $1) }
     }
 
-    /// Total protein for selected items only
+    /// Total protein for selected items, each scaled by its own serving multiplier
     var selectedProtein: Double {
-        selectedItems.reduce(0) { $0 + $1.protein }
+        selectedItems.reduce(0) { $0 + $1.protein * servingMultiplier(for: $1) }
     }
 
     /// Number of selected items
