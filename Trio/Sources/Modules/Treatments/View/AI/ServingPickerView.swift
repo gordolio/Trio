@@ -49,12 +49,7 @@ struct ServingPickerView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(.secondarySystemGroupedBackground))
-        )
+        .padding(.vertical, 6)
         .animation(.easeInOut(duration: 0.15), value: userCount)
     }
 
