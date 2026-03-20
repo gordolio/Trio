@@ -319,6 +319,8 @@ struct AIFoodItemResponse: Decodable {
     let emoji: String
     let fat: Double
     let protein: Double
+    let servingCount: Double
+    let servingUnit: String
 }
 
 /// Individual food item in conversation response (includes ID and source)
@@ -330,6 +332,8 @@ struct AIFoodItemWithIdResponse: Decodable {
     let fat: Double
     let protein: Double
     let source: String?
+    let servingCount: Double
+    let servingUnit: String
 }
 
 /// Response from OpenAI Vision API containing carb estimate and food description (legacy single-item)
@@ -780,9 +784,15 @@ final class OpenAIService {
                 "carbs": .number(description: "Estimated total carbohydrates in grams (not net carbs)"),
                 "emoji": .string(description: "1-2 food emojis representing the item"),
                 "fat": .number(description: "Estimated fat in grams"),
-                "protein": .number(description: "Estimated protein in grams")
+                "protein": .number(description: "Estimated protein in grams"),
+                "servingCount": .number(
+                    description: "Number of individual items in one serving for this item. For nutrition labels, use the count per serving (e.g., 4 for '4 crackers'). For actual food, use 1."
+                ),
+                "servingUnit": .string(
+                    description: "Unit for the serving count (e.g., 'Crackers', 'Nuggets', 'Pieces'). Use 'Serving' for actual food."
+                )
             ],
-            required: ["name", "carbs", "emoji", "fat", "protein"],
+            required: ["name", "carbs", "emoji", "fat", "protein", "servingCount", "servingUnit"],
             description: "A single food item detected in the image"
         )
 
@@ -844,7 +854,9 @@ final class OpenAIService {
                 carbs: item.carbs,
                 emoji: item.emoji,
                 fat: item.fat,
-                protein: item.protein
+                protein: item.protein,
+                servingCount: max(item.servingCount, 1),
+                servingUnit: item.servingUnit.isEmpty ? "Serving" : item.servingUnit
             )
         }
 
@@ -907,6 +919,10 @@ final class OpenAIService {
                     - Choose 1-2 emojis per item that best represent it
                     - Estimate fat and protein in grams for each item
                     - Provide a brief reasoning explaining your carb estimates
+
+                    SERVING SIZE RULES (per item):
+                    - If the image shows a NUTRITION FACTS LABEL, report carbs/fat/protein PER SERVING as printed on the label. Set the item's servingCount to the number per serving (e.g., 4) and servingUnit to the unit (e.g., "Crackers").
+                    - If the image shows ACTUAL FOOD (not a label), estimate total nutrients for the visible portion. Set servingCount to 1 and servingUnit to "Serving".
                     """
 
                     if let description = userDescription, !description.isEmpty {
@@ -1294,6 +1310,8 @@ final class OpenAIService {
         - fat: Estimated fat grams
         - protein: Estimated protein grams
         - source: "published" if the item has verified published nutrition data, "estimated" if AI estimate
+
+        For each item, also preserve its servingCount and servingUnit from the previous analysis unless the user explicitly changes it.
         """
 
         // Build messages array for multi-turn conversation
@@ -1355,9 +1373,15 @@ final class OpenAIService {
                 "emoji": .string(description: "1-2 food emojis representing the item"),
                 "fat": .number(description: "Estimated fat in grams"),
                 "protein": .number(description: "Estimated protein in grams"),
-                "source": .string(description: "Data source: 'published' for verified restaurant data, 'estimated' for AI vision estimate")
+                "source": .string(description: "Data source: 'published' for verified restaurant data, 'estimated' for AI vision estimate"),
+                "servingCount": .number(
+                    description: "Number of individual items in one serving for this item. Preserve from previous turn. Use 1 if no specific serving info."
+                ),
+                "servingUnit": .string(
+                    description: "Unit for the serving count (e.g., 'Nuggets', 'Pieces'). Preserve from previous turn. Use 'Serving' if no specific serving info."
+                )
             ],
-            required: ["id", "name", "carbs", "emoji", "fat", "protein", "source"],
+            required: ["id", "name", "carbs", "emoji", "fat", "protein", "source", "servingCount", "servingUnit"],
             description: "A food item"
         )
 
@@ -1424,6 +1448,16 @@ final class OpenAIService {
                 source = .estimated
             }
 
+            // Prefer AI response serving info, fall back to original item's values.
+            let servingCount: Double = {
+                if item.servingCount > 0 { return item.servingCount }
+                return originalItem?.servingCount ?? 1
+            }()
+            let servingUnit: String = {
+                if !item.servingUnit.isEmpty { return item.servingUnit }
+                return originalItem?.servingUnit ?? "Serving"
+            }()
+
             return AIFoodItem(
                 id: itemId,
                 name: item.name,
@@ -1433,7 +1467,8 @@ final class OpenAIService {
                 protein: item.protein,
                 source: source,
                 sourceURL: originalItem?.sourceURL,
-                servingSize: originalItem?.servingSize,
+                servingCount: servingCount,
+                servingUnit: servingUnit,
                 calories: originalItem?.calories
             )
         }

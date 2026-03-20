@@ -778,7 +778,7 @@ extension Treatments {
                             "🍽️ [NutritionLookup] Published nutrition found: " +
                                 "carbs=\(Int(result.carbs))g, fat=\(Int(result.fat))g, " +
                                 "protein=\(Int(result.protein))g, calories=\(Int(result.calories)), " +
-                                "serving=\"\(result.servingSize)\", " +
+                                "servingCount=\(Int(result.servingCount)) \(result.servingCountUnit), " +
                                 "confidence=\(String(format: "%.2f", result.confidence)), " +
                                 "source=\"\(result.sourceURL)\""
                         )
@@ -930,6 +930,13 @@ extension Treatments {
             applySelection(selection, userModified: selection.userModifiedSelection)
         }
 
+        /// Update the user's serving count for a specific item and recalculate form values
+        @MainActor func updateServingCount(for itemId: UUID, count: Double) {
+            guard foodItemSelection != nil else { return }
+            foodItemSelection?.userServingCounts[itemId] = count
+            updateFormFromSelection()
+        }
+
         /// Toggle selection of a food item and update form
         @MainActor func toggleFoodItem(_ itemId: UUID) {
             guard foodItemSelection != nil else { return }
@@ -995,7 +1002,8 @@ extension Treatments {
                 foodItems: newItems,
                 overallConfidence: selection.response.overallConfidence
             )
-            let newSelection = FoodItemSelection(response: newResponse)
+            var newSelection = FoodItemSelection(response: newResponse)
+            newSelection.userServingCounts = selection.userServingCounts
 
             withAnimation(.easeInOut(duration: 0.35)) {
                 foodItemSelection = newSelection
@@ -1040,7 +1048,9 @@ extension Treatments {
                         carbs: oldItem.carbs,
                         emoji: oldItem.emoji,
                         fat: oldItem.fat,
-                        protein: oldItem.protein
+                        protein: oldItem.protein,
+                        servingCount: oldItem.servingCount,
+                        servingUnit: oldItem.servingUnit
                     )
                     let updatedResponse = AIFoodItemsResponse(
                         foodItems: updatedItems,
@@ -1048,6 +1058,7 @@ extension Treatments {
                     )
                     var newSelection = FoodItemSelection(response: updatedResponse)
                     newSelection.selectedItemIds = selection.selectedItemIds
+                    newSelection.userServingCounts = selection.userServingCounts
                     foodItemSelection = newSelection
                 }
             }
@@ -1070,6 +1081,12 @@ extension Treatments {
             )
             var selection = FoodItemSelection(response: response)
             selection.selectedItemIds = manager.selectedItemIds
+            // Preserve user's per-item serving counts
+            if let oldCounts = foodItemSelection?.userServingCounts {
+                for (id, count) in oldCounts {
+                    selection.userServingCounts[id] = count
+                }
+            }
             foodItemSelection = selection
 
             applySelection(selection, userModified: true)

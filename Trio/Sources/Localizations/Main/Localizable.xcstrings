@@ -9219,6 +9219,9 @@
         }
       }
     },
+    "%@ per serving" : {
+
+    },
     "%@ U/hr" : {
       "comment" : "Number of units per hour",
       "extractionState" : "stale",

@@ -38,7 +38,7 @@ struct ChatCarbSummaryView: View {
                 totalCarbs: totalCarbs,
                 totalFat: totalFat,
                 totalProtein: totalProtein,
-                itemCount: items.count,
+                items: items,
                 isUpdating: isUpdating,
                 hasPublishedItems: hasPublishedItems,
                 allPublished: allPublished,
@@ -194,6 +194,14 @@ struct CompactCarbSummaryView: View {
         }
     }
 
+    private var compactItemLabel: String {
+        if items.count == 1, let item = items.first, item.servingUnit != "Serving" {
+            let count = Int(item.servingCount)
+            return "\(count) \(item.servingUnit)"
+        }
+        return String(localized: "\(items.count) items", comment: "Item count in compact view")
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             // AI indicator and total
@@ -212,7 +220,7 @@ struct CompactCarbSummaryView: View {
                     unitColor: .secondary
                 )
 
-                Text("(\(items.count) items)", comment: "Item count in compact view")
+                Text("(\(compactItemLabel))")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }

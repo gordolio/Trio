@@ -109,6 +109,19 @@ struct AIFoodAnalysisView: View {
                         }
                     )
 
+                    if let selection = state.foodItemSelection, !state.isAnalyzingFood {
+                        ForEach(selection.selectedItems) { item in
+                            ServingPickerView(
+                                item: item,
+                                userCount: Binding(
+                                    get: { state.foodItemSelection?.userServingCounts[item.id] ?? item.servingCount },
+                                    set: { state.updateServingCount(for: item.id, count: $0) }
+                                )
+                            )
+                        }
+                        .padding(.top, 6)
+                    }
+
                     if state.isAnalyzingFood {
                         HStack(spacing: 6) {
                             AnimatedSparkleIcon(isAnimating: true)

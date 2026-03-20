@@ -31,12 +31,14 @@ struct PublishedNutritionResult: Codable {
     let protein: Double
     /// Calories
     let calories: Double
-    /// Serving size description (e.g., "1 sandwich (245g)")
-    let servingSize: String
     /// URL of the source where nutrition facts were found
     let sourceURL: String
     /// Confidence that the result matches the query (0.0 - 1.0)
     let confidence: Double
+    /// Number of individual items in one serving (e.g., 8 for an 8-count nugget). Defaults to 1.
+    let servingCount: Double
+    /// Unit for the serving count (e.g., "Nuggets", "Pieces"). Defaults to "Serving".
+    let servingCountUnit: String
 }
 
 // MARK: - Responses API Request/Response Types
@@ -133,9 +135,10 @@ private struct NutritionSearchResponse: Decodable {
     let fat: Double
     let protein: Double
     let calories: Double
-    let servingSize: String
     let sourceURL: String
     let confidence: Double
+    let servingCount: Double
+    let servingCountUnit: String
 }
 
 // MARK: - OpenAI Responses Service
@@ -281,8 +284,9 @@ final class OpenAIResponsesService {
         - Total fat in grams
         - Protein in grams
         - Calories
-        - Serving size
         - The URL of the webpage where you found the nutrition facts (sourceURL)
+        - servingCount: How many individual items are in one serving (e.g., 8 for an 8-count nugget, 1 for a sandwich)
+        - servingCountUnit: The unit for counting (e.g., "Nuggets", "Pieces", or "Serving" if not countable)
 
         IMPORTANT: For menuItemName, return ONLY the menu item name as it appears on the menu, \
         without including the restaurant or brand name. For example, return "Hash Browns" not \
@@ -363,17 +367,22 @@ final class OpenAIResponsesService {
                 "fat": .number(description: "Total fat in grams"),
                 "protein": .number(description: "Protein in grams"),
                 "calories": .number(description: "Total calories"),
-                "servingSize": .string(description: "Serving size description (e.g., '1 sandwich (245g)')"),
                 "sourceURL": .string(
                     description: "The URL of the webpage where the nutrition facts were found (e.g., the restaurant's official nutrition page)"
                 ),
                 "confidence": .number(
                     description: "Confidence that the result matches the query (0.0-1.0). Use lower values if the exact item wasn't found."
+                ),
+                "servingCount": .number(
+                    description: "Number of individual items in one serving (e.g., 8 for an 8-count nugget, 1 for a single sandwich). Use 1 if not applicable."
+                ),
+                "servingCountUnit": .string(
+                    description: "Unit for the serving count (e.g., 'Nuggets', 'Pieces'). Use 'Serving' if not countable."
                 )
             ],
             required: [
-                "restaurantName", "menuItemName", "carbs", "fat", "protein", "calories", "servingSize", "sourceURL",
-                "confidence"
+                "restaurantName", "menuItemName", "carbs", "fat", "protein", "calories", "sourceURL",
+                "confidence", "servingCount", "servingCountUnit"
             ],
             additionalProperties: false
         )
@@ -466,9 +475,10 @@ final class OpenAIResponsesService {
             fat: nutrition.fat,
             protein: nutrition.protein,
             calories: nutrition.calories,
-            servingSize: nutrition.servingSize,
             sourceURL: finalSourceURL,
-            confidence: nutrition.confidence
+            confidence: nutrition.confidence,
+            servingCount: nutrition.servingCount,
+            servingCountUnit: nutrition.servingCountUnit
         )
     }
 }
