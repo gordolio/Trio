@@ -10445,6 +10445,7 @@
       }
     },
     "%lld h" : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -79300,6 +79301,7 @@
       }
     },
     "Decreasing this setting may result in fewer FPU entries with larger carb values." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -81106,6 +81108,7 @@
       }
     },
     "Default: 8 hours" : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -136965,6 +136968,7 @@
       }
     },
     "Increasing this setting may result in more FPU entries with smaller carb values." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -142504,6 +142508,7 @@
       }
     },
     "It is one factor used in combination with the Fat and Protein Delay, Spread Interval, and Fat and Protein Factor to create the FPU entries." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -160463,6 +160468,7 @@
       }
     },
     "Maximum Duration" : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -211551,6 +211557,7 @@
       }
     },
     "Set the maximum timeframe to extend FPUs." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -244617,6 +244624,7 @@
       }
     },
     "This sets the maximum length of time that Fat and Protein Carb Equivalents (FPUs) will be extended over from a single Fat and/or Protein bolus calcultor entry." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
