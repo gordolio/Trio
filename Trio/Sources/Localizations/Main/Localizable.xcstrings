@@ -16368,6 +16368,7 @@
       }
     },
     "• Maximum Duration" : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -61727,6 +61728,7 @@
       }
     },
     "Carb entries will be fully decayed by the number of hours specified as Max Meal Absorption Time. Meals that are high in fat and/or protein can have long lasting effects on BG levels. To allow such late meal effects to be considered by the carb decay model, a longer Max Meal Absorption Time than the default 6 hours can be set." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -61840,6 +61842,88 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "碳水化合物輸入將根據最大餐點吸收時間中指定的小時數完全衰減。高脂肪和/或蛋白質的餐點對血糖水平的影響可能會持續較長時間。為了讓晚餐的影響考慮到碳水化合物衰減模型，可以設定比預設的 6 小時更長的最大餐點吸收時間。"
+          }
+        }
+      }
+    },
+    "Carb entries will be fully decayed by the number of hours specified as Max Meal Absorption Time. Meals that are high in fat and/or protein can have long lasting effects on glucose levels. To allow such late meal effects to be considered by the carb decay model, a longer Max Meal Absorption Time than the default 6 hours can be set." : {
+      "localizations" : {
+        "da" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Carb indgange vil blive helt henfaldet med det antal timer angivet som Max Meal Absorption Time. Måltider, der er højt i fedt og/eller protein, kan have langvarige virkninger på glukose-niveauer. For at gøre det muligt at overveje sådanne virkninger af sent måltid ved hjælp af carb henfaldsmodellen en længere Max Meal Absorption Tid end standard 6 timer kan indstilles."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Kohlenhydrate werden nach der als 'Maximale Absorptionszeit' der Mahlzeit angegebenen Anzahl von Stunden vollständig abgebaut. Mahlzeiten mit hohem Fett- und/oder Eiweißgehalt können lang anhaltende Auswirkungen auf den Glukosewert haben. Damit solche späten Mahlzeiten vom Kohlenhydratabbaumodell berücksichtigt werden können, kann eine längere Maximale Absorptionszeit als die standardmäßigen 6 Stunden eingestellt werden."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Las entradas de carbohidratos se reducirán completamente por el número de horas especificadas como Tiempo Máximo de Absorción de Comidas. Las comidas altas en grasa y/o proteína pueden tener efectos duraderos en los niveles de glucosa. Para permitir que tales efectos de comidas tardías sean considerados por el modelo de descomposición de los glúcidos se puede establecer un tiempo máximo de absorción de la comida que el predeterminado de 6 horas."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Les glucides enregistrés seront considérées comme totalement assimilés après le nombre d'heures défini dans le Temps maximal d’absorption des repas.\nLes repas riches en lipides et/ou en protéines peuvent avoir des effets prolongés sur la glycémie.\nPour que ces effets tardifs soient pris en compte par le modèle de décroissance des glucides, il est possible d’augmenter le Temps maximal d’absorption des repas au-delà de la valeur par défaut de 6 heures."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Le voci di Carb saranno completamente decadute dal numero di ore specificato come Tempo di Assorbimento Pasto Massimo. I pasti ad alto contenuto di grassi e/o proteine possono avere effetti duraturi sui livelli di glucosio. Per consentire che tali effetti di pasto tardivo siano presi in considerazione dal modello di carb decay, è possibile impostare un tempo di assorbimento pasto massimo più lungo di quello predefinito di 6 ore."
+          }
+        },
+        "nb-NO" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Karbohydrater vil bli fullstendig tatt opp etter antall timer spesifisert som \"Maks tid for opptak av måltid\". Måltider som inneholder mye fett og/eller protein kan ha langvarige effekter på glukosenivået. For å tillate at slike sene måltidseffekter vurderes av karbohydratnedbrytningsmodellen, kan du sette en større \"Maks tid for opptak av måltid\" enn standard 6 timer."
+          }
+        },
+        "nl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Koolhydraten invoer zal volledig verval zijn door het aantal uren dat is opgegeven als Max Meal Absorptie Tijd. Maaltijden met een hoog vetgehalte en/of eiwitgehalte kunnen langdurige gevolgen hebben voor het glucose niveau. Het model van koolhydraten verval maakt het mogelijk dergelijke gevolgen van te late maaltijd in overweging te nemen. een langere maaltijd absorptietijd dan de standaard 6 uur kan worden ingesteld."
+          }
+        },
+        "pl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wpisy węglowodanów zostaną całkowicie rozłożone przez liczbę godzin określoną jako maksymalny czas wchłaniania. Pożywienie o dużej zawartości tłuszczu i (lub) białka może mieć długotrwały wpływ na poziom glukozy. Aby umożliwić uwzględnienie takiego wpływu późnego posiłku w modelu rozpadu węglowodanów, można ustawić dłuższy maksymalny czas wchłaniania posiłku niż domyślnie 6 godzin."
+          }
+        },
+        "pt-PT" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "As entradas de Carbo serão totalmente destruídas pelo número de horas especificadas como o Tempo Máximo de Absorção de Refeias. As refeições que são elevadas em gordura e/ou proteínas podem ter efeitos duradouros nos níveis de glicose. Para permitir que esses efeitos de farinha tardia sejam considerados pelo modelo do decaimento de carboidratos, um maior tempo máximo de absorção das refeições do que o padrão 6 horas podem ser definidas."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Записи о Карбе будут полностью погашены на количество часов, указанное в качестве времени абсорбции Макс. еды. Высокие пищи, содержащие жир и/или белки, могут оказывать длительное воздействие на уровни глюкозы. а) обеспечить возможность использования такого позднего пищевого эффекта при распаде углеводов, длиннее максимальное время абсорбции еды, чем может быть установлено 6 часов."
+          }
+        },
+        "sv" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kolhydratposter kommer att vara helt nedbrutna inom det antal timmar som anges som maximal måltidsabsorptionstid. Måltider med högt fettinnehåll och/eller protein kan ha långvariga effekter på glukosnivåerna. För att ta hänsyn till sådana sena måltidseffekter i kolhydratnedbrytningsmodellen kan en längre maximal måltidsabsorptionstid än standard 6 timmar ställas in."
+          }
+        },
+        "vi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lượng carb nhập vào sẽ được phân rã hoàn toàn theo số giờ được chỉ định trong mục Thời gian hấp thụ bữa ăn tối đa (Max Meal Absorption Time). Các bữa ăn giàu chất béo và/hoặc chất đạm có thể gây ảnh hưởng kéo dài đến mức đường huyết. Để mô hình phân rã carb có thể xem xét các tác động muộn này của bữa ăn, bạn có thể thiết lập thời gian hấp thụ tối đa dài hơn mức mặc định là 6 giờ."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "碳水化合物輸入將根據最大餐點吸收時間中指定的小時數完全衰減。高脂肪和/或蛋白質的餐點對葡萄糖水平的影響可能會持續較長時間。為了讓晚餐的影響考慮到碳水化合物衰減模型，可以設定比預設的 6 小時更長的最大餐點吸收時間。"
           }
         }
       }
@@ -79420,6 +79504,7 @@
       }
     },
     "Decreasing this setting may result in more FPU entries with smaller carb values." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -107006,6 +107091,9 @@
           }
         }
       }
+    },
+    "Entries are capped at 33 grams each, with up to three entries, for a max total of 99 grams." : {
+
     },
     "Error" : {
       "comment" : "Error alert title\nError title",
@@ -136850,6 +136938,7 @@
       }
     },
     "Increasing this setting may result in fewer FPU entries with larger carb values." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -237179,6 +237268,7 @@
       }
     },
     "The shorter the interval, the smoother the correlating dosing result." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
