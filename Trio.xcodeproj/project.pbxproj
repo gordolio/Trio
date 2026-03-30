@@ -2541,6 +2541,8 @@
 				DD6B7CB32C7B71F700B75029 /* ForecastDisplayType.swift */,
 				DD9ECB692CA99F6C00AA7C45 /* CommandPayload.swift */,
 				DDD6D4D22CDE90720029439A /* EstimatedA1cDisplayUnit.swift */,
+				C2BA6B982F758E7600348E6A /* NotificationIdentifiers.swift */,
+				AD3D28EFB64C432F48F5F0C4 /* CalibrationTestState.swift */,
 				CA4F586CF37541FDD7D0DA0F /* GlucoseTabletBrand.swift */,
 			);
 			path = Models;
