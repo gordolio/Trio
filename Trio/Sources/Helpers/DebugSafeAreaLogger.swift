@@ -105,7 +105,7 @@ struct DebugShakeExportModifier: ViewModifier {
             }
             .sheet(isPresented: $showShare) {
                 if let url = logFileURL {
-                    ShareSheet(activityItems: [url])
+                    Debug882ShareSheet(activityItems: [url])
                         .presentationDetents([.medium])
                 }
             }
@@ -125,7 +125,7 @@ struct DebugShakeExportModifier: ViewModifier {
 }
 
 // UIActivityViewController wrapper for SwiftUI
-struct ShareSheet: UIViewControllerRepresentable {
+struct Debug882ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
 
     func makeUIViewController(context _: Context) -> UIActivityViewController {

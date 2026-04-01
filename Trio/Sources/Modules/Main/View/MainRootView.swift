@@ -38,8 +38,8 @@ extension Main {
                 .sheet(item: $state.secondaryModal) { wrapper in
                     wrapper.view
                 }
-                .onChange(of: state.modal) { oldVal, newVal in
-                    if newVal == nil, oldVal != nil {
+                .onReceive(state.$modal) { newVal in
+                    if newVal == nil {
                         // Sheet just dismissed — log the parent safe area
                         debugLog882("🔵", "Modal dismissed, checking parent safe area...")
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
