@@ -1167,13 +1167,19 @@ extension Home {
                         .onAppear {
                             debugBottomInset = geo.safeAreaInsets.bottom
                             debugTopInset = geo.safeAreaInsets.top
-                            debugLog882("🟢", "HomeRootView initial safe area — top: \(geo.safeAreaInsets.top), bottom: \(geo.safeAreaInsets.bottom), leading: \(geo.safeAreaInsets.leading), trailing: \(geo.safeAreaInsets.trailing)")
+                            debugLog882(
+                                "🟢",
+                                "HomeRootView initial safe area — top: \(geo.safeAreaInsets.top), bottom: \(geo.safeAreaInsets.bottom), leading: \(geo.safeAreaInsets.leading), trailing: \(geo.safeAreaInsets.trailing)"
+                            )
                         }
                         .onChange(of: geo.safeAreaInsets.bottom) { oldVal, newVal in
                             debugBottomInset = newVal
                             debugInsetChangeCount += 1
                             debugBugDetected = newVal < 10
-                            debugLog882("🔴", "HomeRootView bottom inset CHANGED: \(oldVal) → \(newVal) (change #\(debugInsetChangeCount))")
+                            debugLog882(
+                                "🔴",
+                                "HomeRootView bottom inset CHANGED: \(oldVal) → \(newVal) (change #\(debugInsetChangeCount))"
+                            )
 
                             // Dump the VC hierarchy when the inset changes to catch the bug
                             if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -1211,7 +1217,10 @@ extension Home {
         private static func debugDumpVCHierarchy(_ vc: UIViewController, indent: String = "") {
             let safeArea = vc.view.safeAreaInsets
             let additional = vc.additionalSafeAreaInsets
-            debugLog882("📋", "VC \(indent)\(type(of: vc)) — safeArea(top:\(safeArea.top) bot:\(safeArea.bottom)) additional(top:\(additional.top) bot:\(additional.bottom))")
+            debugLog882(
+                "📋",
+                "VC \(indent)\(type(of: vc)) — safeArea(top:\(safeArea.top) bot:\(safeArea.bottom)) additional(top:\(additional.top) bot:\(additional.bottom))"
+            )
             for child in vc.children {
                 debugDumpVCHierarchy(child, indent: indent + "  ")
             }

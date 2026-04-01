@@ -1,6 +1,3 @@
-// DEBUG: Temporary file for issue #882 safe area debugging.
-// Remove this entire file once the bug is resolved.
-
 import Foundation
 import SwiftUI
 import UIKit
@@ -73,7 +70,7 @@ func debugLog882(_ tag: String, _ message: String) {
 // MARK: - Shake detection
 
 extension UIWindow {
-    open override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+    override open func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
         super.motionEnded(motion, with: event)
         if motion == .motionShake {
             Foundation.NotificationCenter.default.post(
@@ -131,11 +128,11 @@ struct DebugShakeExportModifier: ViewModifier {
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
 
-    func makeUIViewController(context: Context) -> UIActivityViewController {
+    func makeUIViewController(context _: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
     }
 
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+    func updateUIViewController(_: UIActivityViewController, context _: Context) {}
 }
 
 extension View {

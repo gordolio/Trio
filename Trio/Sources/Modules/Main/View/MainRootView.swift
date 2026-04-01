@@ -19,7 +19,10 @@ extension Main {
                                 GeometryReader { sheetGeo in
                                     Color.clear
                                         .onAppear {
-                                            debugLog882("🟣", "Sheet OPENED (\(modal.screen)) — safe area top: \(sheetGeo.safeAreaInsets.top), bottom: \(sheetGeo.safeAreaInsets.bottom)")
+                                            debugLog882(
+                                                "🟣",
+                                                "Sheet OPENED (\(modal.screen)) — safe area top: \(sheetGeo.safeAreaInsets.top), bottom: \(sheetGeo.safeAreaInsets.bottom)"
+                                            )
                                         }
                                         .onChange(of: sheetGeo.safeAreaInsets.bottom) { oldVal, newVal in
                                             debugLog882("🟣", "Sheet bottom inset CHANGED: \(oldVal) → \(newVal)")
