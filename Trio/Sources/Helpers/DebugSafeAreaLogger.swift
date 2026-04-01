@@ -88,51 +88,28 @@ extension Notification.Name {
 // MARK: - Share sheet modifier
 
 struct DebugShakeExportModifier: ViewModifier {
-    @State private var showShare = false
-    @State private var logFileURL: URL?
-    @State private var showSaved = false
-
     func body(content: Content) -> some View {
         content
             .onReceive(
                 Foundation.NotificationCenter.default.publisher(for: .debug882DeviceShaken)
             ) { _ in
                 if let url = DebugSafeAreaLogger.shared.saveToFile() {
-                    logFileURL = url
-                    showShare = true
                     debugLog882("📱", "Shake detected — log saved to \(url.lastPathComponent)")
-                }
-            }
-            .sheet(isPresented: $showShare) {
-                if let url = logFileURL {
-                    Debug882ShareSheet(activityItems: [url])
-                        .presentationDetents([.medium])
-                }
-            }
-            .overlay(alignment: .top) {
-                if showSaved {
-                    Text("Debug log saved!")
-                        .font(.caption.bold())
-                        .padding(8)
-                        .background(.green.opacity(0.9))
-                        .foregroundStyle(.white)
-                        .cornerRadius(8)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .padding(.top, 100)
+
+                    // Present UIActivityViewController directly from UIKit
+                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                       let rootVC = windowScene.windows.first?.rootViewController
+                    {
+                        var topVC = rootVC
+                        while let presented = topVC.presentedViewController {
+                            topVC = presented
+                        }
+                        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+                        topVC.present(activityVC, animated: true)
+                    }
                 }
             }
     }
-}
-
-// UIActivityViewController wrapper for SwiftUI
-struct Debug882ShareSheet: UIViewControllerRepresentable {
-    let activityItems: [Any]
-
-    func makeUIViewController(context _: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_: UIActivityViewController, context _: Context) {}
 }
 
 extension View {
