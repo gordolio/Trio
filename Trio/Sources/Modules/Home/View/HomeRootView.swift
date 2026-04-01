@@ -1004,6 +1004,7 @@ extension Home {
             }
             .navigationTitle("Home")
             .navigationBarHidden(true)
+            .ignoresSafeArea(.keyboard)
             .blur(radius: state.isLoopStatusPresented ? 3 : 0)
             .sheet(isPresented: $state.isLoopStatusPresented) {
                 LoopStatusView(state: state)
@@ -1144,6 +1145,13 @@ extension Home {
                 }
         }
 
+        // MARK: - DEBUG #882 safe area tracking
+
+        @State private var debugBottomInset: CGFloat = -1
+        @State private var debugTopInset: CGFloat = -1
+        @State private var debugInsetChangeCount: Int = 0
+        @State private var debugBugDetected: Bool = false
+
         var body: some View {
             ZStack(alignment: .center) {
                 tabBar()
@@ -1151,6 +1159,61 @@ extension Home {
                 if state.waitForSuggestion {
                     CustomProgressView(text: String(localized: "Updating IOB...", comment: "Progress text when updating IOB"))
                 }
+            }
+            // DEBUG #882: Monitor safe area insets at the HomeRootView body level
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear {
+                            debugBottomInset = geo.safeAreaInsets.bottom
+                            debugTopInset = geo.safeAreaInsets.top
+                            debugLog882("🟢", "HomeRootView initial safe area — top: \(geo.safeAreaInsets.top), bottom: \(geo.safeAreaInsets.bottom), leading: \(geo.safeAreaInsets.leading), trailing: \(geo.safeAreaInsets.trailing)")
+                        }
+                        .onChange(of: geo.safeAreaInsets.bottom) { oldVal, newVal in
+                            debugBottomInset = newVal
+                            debugInsetChangeCount += 1
+                            debugBugDetected = newVal < 10
+                            debugLog882("🔴", "HomeRootView bottom inset CHANGED: \(oldVal) → \(newVal) (change #\(debugInsetChangeCount))")
+
+                            // Dump the VC hierarchy when the inset changes to catch the bug
+                            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                               let window = windowScene.windows.first,
+                               let rootVC = window.rootViewController
+                            {
+                                Self.debugDumpVCHierarchy(rootVC)
+                            }
+                        }
+                        .onChange(of: geo.safeAreaInsets.top) { oldVal, newVal in
+                            debugTopInset = newVal
+                            debugLog882("🟠", "HomeRootView top inset CHANGED: \(oldVal) → \(newVal)")
+                        }
+                }
+            )
+            // DEBUG #882: Visible overlay showing safe area state
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("⊤\(String(format: "%.1f", debugTopInset)) ⊥\(String(format: "%.1f", debugBottomInset))")
+                    Text("changes: \(debugInsetChangeCount)")
+                }
+                .font(.caption2.monospaced())
+                .padding(4)
+                .background(.black.opacity(0.7))
+                .foregroundStyle(debugBugDetected ? .red : .green)
+                .cornerRadius(4)
+                .padding(.top, 55)
+                .padding(.leading, 4)
+                .allowsHitTesting(false)
+            }
+            .debugShakeExport()
+        }
+
+        /// DEBUG #882: Dump the full VC hierarchy with safe area info
+        private static func debugDumpVCHierarchy(_ vc: UIViewController, indent: String = "") {
+            let safeArea = vc.view.safeAreaInsets
+            let additional = vc.additionalSafeAreaInsets
+            debugLog882("📋", "VC \(indent)\(type(of: vc)) — safeArea(top:\(safeArea.top) bot:\(safeArea.bottom)) additional(top:\(additional.top) bot:\(additional.bottom))")
+            for child in vc.children {
+                debugDumpVCHierarchy(child, indent: indent + "  ")
             }
         }
     }
