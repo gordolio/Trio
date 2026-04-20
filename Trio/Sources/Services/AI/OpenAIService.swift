@@ -351,7 +351,7 @@ struct OpenAICarbEstimateResponse {
 // MARK: - OpenAI Service
 
 /// Service for interacting with OpenAI Vision API to analyze food images
-final class OpenAIService {
+final class OpenAIService: AIProviderService {
     static let shared = OpenAIService()
 
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenAIService")
@@ -970,10 +970,10 @@ final class OpenAIService {
                         throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
                     }
 
-                    let parser = OpenAIStreamingParser()
+                    let parser = StructuredJSONStreamParser()
 
                     for try await line in bytes.lines {
-                        if let partialResult = parser.parseLine(line) {
+                        if let partialResult = parser.parseOpenAILine(line) {
                             continuation.yield(partialResult)
 
                             if partialResult.isComplete {
@@ -1140,14 +1140,6 @@ final class OpenAIService {
     }
 
     // MARK: - Nutrition Lookup Intent Classification
-
-    /// Result of classifying whether a user message is requesting a nutrition lookup
-    struct NutritionLookupIntent: Decodable {
-        /// Whether the user is asking to look up/find/search for published nutrition data
-        let isNutritionLookup: Bool
-        /// The menu item name to look up (if applicable)
-        let menuItemName: String
-    }
 
     /// Classifies whether a user's chat message is requesting a published nutrition lookup.
     /// Uses a lightweight GPT call to determine intent and extract the item name.

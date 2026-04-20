@@ -786,6 +786,14 @@
 		FE66D16B291F74F8005D6F77 /* Bundle+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE66D16A291F74F8005D6F77 /* Bundle+Extensions.swift */; };
 		FEFFA7A22929FE49007B8193 /* UIDevice+Extensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFFA7A12929FE49007B8193 /* UIDevice+Extensions.swift */; };
 		FF5B0C3309F99DD99C52A31C /* NutritionFactsMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */; };
+		BF010000000000000000AA01 /* AIProviderType.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF010000000000000000AA02 /* AIProviderType.swift */; };
+		BF020000000000000000AA01 /* AIProviderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF020000000000000000AA02 /* AIProviderService.swift */; };
+		BF030000000000000000AA01 /* ClaudeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF030000000000000000AA02 /* ClaudeService.swift */; };
+		BF040000000000000000AA01 /* ClaudeResponsesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF040000000000000000AA02 /* ClaudeResponsesService.swift */; };
+		BF050000000000000000AA01 /* AIServiceSettingsDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF050000000000000000AA02 /* AIServiceSettingsDataFlow.swift */; };
+		BF060000000000000000AA01 /* AIServiceSettingsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF060000000000000000AA02 /* AIServiceSettingsProvider.swift */; };
+		BF070000000000000000AA01 /* AIServiceSettingsStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF070000000000000000AA02 /* AIServiceSettingsStateModel.swift */; };
+		BF080000000000000000AA01 /* AIServiceSettingsRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF080000000000000000AA02 /* AIServiceSettingsRootView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1670,6 +1678,14 @@
 		FE41E4D529463EE20047FD55 /* NightscoutPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightscoutPreferences.swift; sourceTree = "<group>"; };
 		FE66D16A291F74F8005D6F77 /* Bundle+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Bundle+Extensions.swift"; sourceTree = "<group>"; };
 		FEFFA7A12929FE49007B8193 /* UIDevice+Extensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UIDevice+Extensions.swift"; sourceTree = "<group>"; };
+		BF010000000000000000AA02 /* AIProviderType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderType.swift; sourceTree = "<group>"; };
+		BF020000000000000000AA02 /* AIProviderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderService.swift; sourceTree = "<group>"; };
+		BF030000000000000000AA02 /* ClaudeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeService.swift; sourceTree = "<group>"; };
+		BF040000000000000000AA02 /* ClaudeResponsesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeResponsesService.swift; sourceTree = "<group>"; };
+		BF050000000000000000AA02 /* AIServiceSettingsDataFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServiceSettingsDataFlow.swift; sourceTree = "<group>"; };
+		BF060000000000000000AA02 /* AIServiceSettingsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServiceSettingsProvider.swift; sourceTree = "<group>"; };
+		BF070000000000000000AA02 /* AIServiceSettingsStateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServiceSettingsStateModel.swift; sourceTree = "<group>"; };
+		BF080000000000000000AA02 /* AIServiceSettingsRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServiceSettingsRootView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -2037,6 +2053,7 @@
 				3811DE1A25C9D48300A708ED /* Main */,
 				5031FE61F63C2A8A8B7674DD /* ManualTempBasal */,
 				19D466A129AA2B0A004D5F33 /* MealSettings */,
+				BF090000000000000000AA01 /* AIServiceSettings */,
 				D533BF261CDC1C3F871E7BFD /* NightscoutConfig */,
 				BD47FD142D88AACC0043966B /* Onboarding */,
 				99C01B871ACAB3F32CE755C7 /* PumpConfig */,
@@ -2975,8 +2992,31 @@
 				69E86DCEB88BD4A8749F152B /* AIAssistedCarbEntryMetadata.swift */,
 				8304AAD2D3DC6C425B0EC566 /* OpenAIResponsesService.swift */,
 				69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */,
+				BF010000000000000000AA02 /* AIProviderType.swift */,
+				BF020000000000000000AA02 /* AIProviderService.swift */,
+				BF030000000000000000AA02 /* ClaudeService.swift */,
+				BF040000000000000000AA02 /* ClaudeResponsesService.swift */,
 			);
 			path = AI;
+			sourceTree = "<group>";
+		};
+		BF090000000000000000AA01 /* AIServiceSettings */ = {
+			isa = PBXGroup;
+			children = (
+				BF050000000000000000AA02 /* AIServiceSettingsDataFlow.swift */,
+				BF060000000000000000AA02 /* AIServiceSettingsProvider.swift */,
+				BF070000000000000000AA02 /* AIServiceSettingsStateModel.swift */,
+				BF0A0000000000000000AA01 /* View */,
+			);
+			path = AIServiceSettings;
+			sourceTree = "<group>";
+		};
+		BF0A0000000000000000AA01 /* View */ = {
+			isa = PBXGroup;
+			children = (
+				BF080000000000000000AA02 /* AIServiceSettingsRootView.swift */,
+			);
+			path = View;
 			sourceTree = "<group>";
 		};
 		99C01B871ACAB3F32CE755C7 /* PumpConfig */ = {
@@ -4980,6 +5020,14 @@
 				4B0241911913C56C42CB08E4 /* OpenTreatmentIntent.swift in Sources */,
 				1FE9DDEA4241B6767CFB5850 /* ScanFoodIntent.swift in Sources */,
 				2EE9A7A536D5D74E5772041D /* OpenAIResponsesService.swift in Sources */,
+				BF010000000000000000AA01 /* AIProviderType.swift in Sources */,
+				BF020000000000000000AA01 /* AIProviderService.swift in Sources */,
+				BF030000000000000000AA01 /* ClaudeService.swift in Sources */,
+				BF040000000000000000AA01 /* ClaudeResponsesService.swift in Sources */,
+				BF050000000000000000AA01 /* AIServiceSettingsDataFlow.swift in Sources */,
+				BF060000000000000000AA01 /* AIServiceSettingsProvider.swift in Sources */,
+				BF070000000000000000AA01 /* AIServiceSettingsStateModel.swift in Sources */,
+				BF080000000000000000AA01 /* AIServiceSettingsRootView.swift in Sources */,
 				FF5B0C3309F99DD99C52A31C /* NutritionFactsMerger.swift in Sources */,
 				92F42779FFF0601D3895042D /* CalibrationTestStored+CoreDataClass.swift in Sources */,
 				2ADD5066B7B6BD1316327E89 /* CalibrationTestStored+CoreDataProperties.swift in Sources */,

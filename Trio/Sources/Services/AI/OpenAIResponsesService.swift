@@ -145,7 +145,7 @@ private struct NutritionSearchResponse: Decodable {
 
 /// Service for restaurant food detection and published nutrition lookup.
 /// Uses the OpenAI Chat Completions API (classifier) and Responses API (web search).
-final class OpenAIResponsesService {
+final class OpenAIResponsesService: AIResponsesProviderService {
     static let shared = OpenAIResponsesService()
 
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenAIResponsesService")

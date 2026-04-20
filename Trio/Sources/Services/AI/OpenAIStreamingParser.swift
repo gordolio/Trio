@@ -16,10 +16,18 @@ struct PartialFoodAnalysisResult: Equatable {
     var isComplete: Bool
 }
 
-/// Parses OpenAI streaming (SSE) responses and extracts partial food analysis results
-/// using incremental JSON parsing.
-final class OpenAIStreamingParser {
-    private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenAIStreamingParser")
+/// Backwards-compatible alias for the provider-agnostic parser.
+typealias OpenAIStreamingParser = StructuredJSONStreamParser
+
+/// Parses streaming (SSE) responses from any AI provider and extracts partial food
+/// analysis results using incremental JSON parsing.
+///
+/// The core parser operates on an accumulated *content string* — i.e. whatever JSON
+/// fragments the LLM has emitted so far. SSE adapters (`parseOpenAILine`,
+/// `parseAnthropicLine`) pull the content fragment out of provider-specific event
+/// envelopes and feed it into `feed(contentDelta:)`.
+final class StructuredJSONStreamParser {
+    private let log = OSLog(subsystem: "com.loopkit.Loop", category: "StructuredJSONStreamParser")
     private let decoder = JSONDecoder()
 
     /// Known field types for food item objects — used to assign defaults to dangling keys
@@ -40,55 +48,113 @@ final class OpenAIStreamingParser {
         isComplete: false
     )
 
-    // MARK: - SSE Parsing
+    // MARK: - Core Content Feed (provider-agnostic)
 
-    /// Parses an SSE line and returns a partial result if new content was extracted.
-    /// - Parameter line: A single line from the SSE stream
-    /// - Returns: Updated partial result, or nil if this line didn't produce new content
-    func parseLine(_ line: String) -> PartialFoodAnalysisResult? {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Appends a content fragment to the accumulated JSON buffer and attempts a
+    /// partial parse. Returns the updated partial result if parsing produced new
+    /// content, or nil if the fragment didn't change the parsed state.
+    func feed(contentDelta content: String) -> PartialFoodAnalysisResult? {
+        guard !content.isEmpty else { return nil }
 
-        // Check for stream end
-        if trimmed == "data: [DONE]" {
-            var result = lastResult
-            result.isComplete = true
+        guard accumulatedContent.count + content.count <= Self.maxAccumulatedLength else {
+            os_log("Stream accumulated content exceeded max length, ignoring chunk", log: log, type: .error)
+            return nil
+        }
+        accumulatedContent += content
+
+        if let result = attemptPartialParse() {
             lastResult = result
-            os_log(
-                "SSE stream complete: %d items, confidence: %.2f",
-                log: log,
-                type: .info,
-                result.foodItems.count,
-                result.overallConfidence
-            )
             return result
         }
+        return nil
+    }
 
-        // Extract data payload
+    /// Marks the stream as complete and returns the final partial result with
+    /// `isComplete = true`.
+    func finish() -> PartialFoodAnalysisResult {
+        var result = lastResult
+        result.isComplete = true
+        lastResult = result
+        os_log(
+            "Stream complete: %d items, confidence: %.2f",
+            log: log,
+            type: .info,
+            result.foodItems.count,
+            result.overallConfidence
+        )
+        return result
+    }
+
+    // MARK: - OpenAI SSE Adapter
+
+    /// Parses an SSE line from the OpenAI Chat Completions streaming format.
+    /// - Parameter line: A single line from the SSE stream
+    /// - Returns: Updated partial result, or nil if this line didn't produce new content
+    func parseOpenAILine(_ line: String) -> PartialFoodAnalysisResult? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmed == "data: [DONE]" {
+            return finish()
+        }
+
         guard trimmed.hasPrefix("data: ") else { return nil }
         let jsonPayload = String(trimmed.dropFirst(6))
 
         guard let payloadData = jsonPayload.data(using: .utf8) else { return nil }
 
-        // Decode the SSE chunk
         guard let chunk = try? decoder.decode(OpenAIStreamChunk.self, from: payloadData),
               let content = chunk.choices.first?.delta.content,
               !content.isEmpty
         else { return nil }
 
-        // Accumulate content (with safety cap)
-        guard accumulatedContent.count + content.count <= Self.maxAccumulatedLength else {
-            os_log("SSE accumulated content exceeded max length, ignoring chunk", log: log, type: .error)
+        return feed(contentDelta: content)
+    }
+
+    // MARK: - Anthropic SSE Adapter
+
+    /// Parses one event from Anthropic's Messages streaming format.
+    /// Anthropic SSE events come as pairs of `event: <name>` + `data: <json>` lines.
+    /// Pass each `data:` line with the most recent preceding event name.
+    ///
+    /// - Parameters:
+    ///   - event: The event name (e.g., "content_block_delta", "message_stop").
+    ///   - dataLine: The corresponding `data:` line (including the "data: " prefix)
+    ///     or just the JSON payload.
+    /// - Returns: Updated partial result, or nil if this event didn't produce new content.
+    func parseAnthropicEvent(event: String, dataLine: String) -> PartialFoodAnalysisResult? {
+        // Normalize to just the JSON payload
+        let trimmed = dataLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        let jsonPayload: String
+        if trimmed.hasPrefix("data: ") {
+            jsonPayload = String(trimmed.dropFirst(6))
+        } else {
+            jsonPayload = trimmed
+        }
+
+        switch event {
+        case "message_stop":
+            return finish()
+
+        case "content_block_delta":
+            guard let payloadData = jsonPayload.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+                  let delta = obj["delta"] as? [String: Any]
+            else { return nil }
+
+            // For forced tool use with structured outputs, the JSON arrives as
+            // `input_json_delta` → `partial_json` chunks. For plain text, it's
+            // `text_delta` → `text`; we accept either.
+            if let partial = delta["partial_json"] as? String, !partial.isEmpty {
+                return feed(contentDelta: partial)
+            }
+            if let text = delta["text"] as? String, !text.isEmpty {
+                return feed(contentDelta: text)
+            }
+            return nil
+
+        default:
             return nil
         }
-        accumulatedContent += content
-
-        // Attempt partial JSON parse
-        if let result = attemptPartialParse() {
-            lastResult = result
-            return result
-        }
-
-        return nil
     }
 
     /// Reset parser state for a new stream

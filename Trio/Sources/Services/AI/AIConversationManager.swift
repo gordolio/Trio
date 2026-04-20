@@ -295,7 +295,7 @@ final class AIConversationManager: ObservableObject {
         )
 
         do {
-            let response = try await OpenAIService.shared.updateSingleItem(
+            let response = try await AIServiceRegistry.chat.updateSingleItem(
                 imageData: imageData,
                 currentItems: currentItems,
                 editedItemId: itemId,
@@ -380,7 +380,7 @@ final class AIConversationManager: ObservableObject {
             }
 
             // Standard conversation turn (no lookup needed)
-            let response = try await OpenAIService.shared.conversationTurn(
+            let response = try await AIServiceRegistry.chat.conversationTurn(
                 imageData: imageData,
                 currentItems: currentItems,
                 conversationHistory: messages,
@@ -446,7 +446,7 @@ final class AIConversationManager: ObservableObject {
         imageData _: Data
     ) async throws -> Bool {
         // Classify intent
-        let intent = try await OpenAIService.shared.classifyNutritionLookupIntent(
+        let intent = try await AIServiceRegistry.chat.classifyNutritionLookupIntent(
             userMessage: text,
             currentItems: currentItems,
             restaurantName: restaurantName
@@ -463,7 +463,7 @@ final class AIConversationManager: ObservableObject {
         )
 
         // Search for published nutrition via web search (Responses API)
-        let result = try await OpenAIResponsesService.shared.searchPublishedNutrition(
+        let result = try await AIServiceRegistry.responses.searchPublishedNutrition(
             restaurantName: restaurantName,
             menuItemName: intent.menuItemName
         )

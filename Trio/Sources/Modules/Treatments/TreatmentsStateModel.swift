@@ -750,7 +750,7 @@ extension Treatments {
                     }
                     do {
                         print("🍽️ [NutritionLookup] Classifier starting for: \"\(desc)\"")
-                        let classification = try await OpenAIResponsesService.shared
+                        let classification = try await AIServiceRegistry.responses
                             .classifyRestaurantItem(description: desc)
                         print(
                             "🍽️ [NutritionLookup] Classifier result: isRestaurant=\(classification.isRestaurantItem), " +
@@ -769,7 +769,7 @@ extension Treatments {
                             "🍽️ [NutritionLookup] Searching published nutrition for " +
                                 "\(classification.restaurantName) — \(classification.menuItemName)..."
                         )
-                        let result = try await OpenAIResponsesService.shared
+                        let result = try await AIServiceRegistry.responses
                             .searchPublishedNutrition(
                                 restaurantName: classification.restaurantName,
                                 menuItemName: classification.menuItemName
@@ -791,7 +791,7 @@ extension Treatments {
 
                 // Vision analysis (existing streaming path, runs concurrently)
                 print("🍽️ [NutritionLookup] Vision analysis starting (concurrent with classifier)")
-                let stream = OpenAIService.shared.analyzeFoodStreaming(
+                let stream = AIServiceRegistry.chat.analyzeFoodStreaming(
                     imageData: imageData,
                     userDescription: description
                 )

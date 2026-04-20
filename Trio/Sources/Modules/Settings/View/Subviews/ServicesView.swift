@@ -30,6 +30,14 @@ struct ServicesView: BaseView {
                 }
             )
             .listRowBackground(Color.chart)
+
+            Section(
+                header: Text("AI"),
+                content: {
+                    Text("AI Provider").navigationLink(to: .aiServiceSettings, from: self)
+                }
+            )
+            .listRowBackground(Color.chart)
         }
         .scrollContentBackground(.hidden)
         .background(appState.trioBackgroundColor(for: colorScheme))
