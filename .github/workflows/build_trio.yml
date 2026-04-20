@@ -218,6 +218,10 @@ jobs:
       - name: Configure OpenAI API Key
         run: echo "OPENAI_API_KEY = ${{ secrets.OPENAI_API_KEY }}" >> ConfigOverride.xcconfig
 
+      # Inject Anthropic API key into ConfigOverride.xcconfig for AI carb estimation
+      - name: Configure Anthropic API Key
+        run: echo "ANTHROPIC_API_KEY = ${{ secrets.ANTHROPIC_API_KEY }}" >> ConfigOverride.xcconfig
+
       # Patch Fastlane Match to not print tables
       - name: Patch Match Tables
         run: |
