@@ -15,4 +15,14 @@ enum AIProviderType: String, JSON, CaseIterable, Identifiable {
             return String(localized: "Claude (Anthropic)")
         }
     }
+
+    /// Shorter label used in compact UI like tab bars where horizontal space is tight.
+    var shortDisplayName: String {
+        switch self {
+        case .openai:
+            return String(localized: "ChatGPT")
+        case .claude:
+            return String(localized: "Claude")
+        }
+    }
 }

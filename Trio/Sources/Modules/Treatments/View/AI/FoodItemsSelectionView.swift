@@ -24,6 +24,14 @@ enum NutrientDisplayMode: CaseIterable {
     }
 }
 
+/// Metadata for a single provider tab shown above the food items list in multi-provider
+/// comparison mode. Passing an empty array hides the tab bar entirely.
+struct FoodProviderTab: Identifiable, Equatable {
+    let provider: AIProviderType
+    let isAnalyzing: Bool
+    var id: AIProviderType { provider }
+}
+
 /// A collapsible view for displaying and selecting individual food items from AI analysis
 /// Now supports inline editing of item descriptions and shimmer animations during recalculation
 struct FoodItemsSelectionView: View {
@@ -32,6 +40,15 @@ struct FoodItemsSelectionView: View {
 
     /// IDs of items currently being recalculated (shows shimmer animation)
     let pendingItemIds: Set<UUID>
+
+    /// Provider tabs shown above the header. Empty = single-provider mode, no tab bar.
+    let providerTabs: [FoodProviderTab]
+
+    /// The currently-selected provider tab. Ignored when `providerTabs` is empty.
+    let selectedProvider: AIProviderType?
+
+    /// Called when user taps a provider tab
+    let onSelectProvider: ((AIProviderType) -> Void)?
 
     /// Called when user toggles an item's checkbox
     let onToggleItem: (UUID) -> Void
@@ -65,6 +82,9 @@ struct FoodItemsSelectionView: View {
         selection: Binding<FoodItemSelection?>,
         isExpanded: Binding<Bool>,
         pendingItemIds: Set<UUID> = [],
+        providerTabs: [FoodProviderTab] = [],
+        selectedProvider: AIProviderType? = nil,
+        onSelectProvider: ((AIProviderType) -> Void)? = nil,
         onToggleItem: @escaping (UUID) -> Void,
         onEditItem: ((UUID, String) -> Void)? = nil,
         onOpenChat: (() -> Void)? = nil,
@@ -74,6 +94,9 @@ struct FoodItemsSelectionView: View {
         _selection = selection
         _isExpanded = isExpanded
         self.pendingItemIds = pendingItemIds
+        self.providerTabs = providerTabs
+        self.selectedProvider = selectedProvider
+        self.onSelectProvider = onSelectProvider
         self.onToggleItem = onToggleItem
         self.onEditItem = onEditItem
         self.onOpenChat = onOpenChat
@@ -84,6 +107,10 @@ struct FoodItemsSelectionView: View {
     var body: some View {
         if let selection = selection {
             VStack(spacing: 0) {
+                if providerTabs.count > 1 {
+                    providerTabBar
+                }
+
                 // Collapsed header row
                 collapsedHeader(selection: selection)
 
@@ -98,6 +125,56 @@ struct FoodItemsSelectionView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Provider Tab Bar
+
+    private var providerTabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(providerTabs) { tab in
+                providerTabButton(tab)
+            }
+        }
+        .padding(.vertical, 4)
+        // Parent views (e.g. AIFoodAnalysisView) wrap food-item count changes in
+        // `withAnimation`; switching tabs changes the item count so that ambient
+        // animation was cascading into the tab bar and making the tabs themselves
+        // look like they were sliding. Strip any inherited animation here — the tab
+        // bar should switch selection crisply with no layout motion.
+        .transaction { $0.animation = nil }
+    }
+
+    private func providerTabButton(_ tab: FoodProviderTab) -> some View {
+        let isSelected = tab.provider == selectedProvider
+        return Button(action: {
+            commitAnyPendingEdit(except: nil)
+            onSelectProvider?(tab.provider)
+        }) {
+            HStack(spacing: 6) {
+                // Fixed-size slot so the spinner appearing/disappearing doesn't
+                // reflow the tab's layout.
+                ZStack {
+                    if tab.isAnalyzing {
+                        ProgressView()
+                            .controlSize(.mini)
+                    }
+                }
+                .frame(width: 14, height: 14)
+
+                // Constant weight keeps the text metrics stable across selection changes.
+                Text(tab.provider.shortDisplayName)
+                    .font(.footnote.weight(.medium))
+                    .foregroundColor(isSelected ? .primary : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color(.secondarySystemFill) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Nutrient Helpers
@@ -352,8 +429,9 @@ struct FoodItemsSelectionView: View {
 
     // MARK: - Editing Helpers
 
-    /// Commits any pending edit for a different item (used when tapping other interactive elements)
-    private func commitAnyPendingEdit(except itemId: UUID) {
+    /// Commits any pending edit for a different item (used when tapping other interactive elements).
+    /// Pass `nil` to commit any pending edit regardless of which item it belongs to.
+    private func commitAnyPendingEdit(except itemId: UUID?) {
         if let editingId = editingItemId, editingId != itemId {
             if let editingItem = selection?.response.foodItems.first(where: { $0.id == editingId }) {
                 commitEdit(for: editingItem)

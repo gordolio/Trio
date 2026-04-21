@@ -227,7 +227,7 @@ final class OpenAIResponsesService: AIResponsesProviderService {
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             os_log("Classifier API error: status %d", log: log, type: .error, httpResponse.statusCode)
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
 
         let chatResponse = try decoder.decode(OpenAIChatResponse.self, from: data)
@@ -327,7 +327,7 @@ final class OpenAIResponsesService: AIResponsesProviderService {
             if let errorBody = String(data: data, encoding: .utf8) {
                 os_log("Error body: %{public}@", log: log, type: .error, errorBody)
             }
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
 
         return try parseNutritionSearchResponse(data)

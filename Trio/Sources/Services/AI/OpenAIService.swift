@@ -11,6 +11,10 @@ enum OpenAIServiceError: LocalizedError {
     case invalidResponse(statusCode: Int)
     case decodingError(Error)
     case noContentInResponse
+    /// The provider's account is out of credit. OpenAI signals this with HTTP 429 +
+    /// `error.code == "insufficient_quota"`; Anthropic uses HTTP 400 + `error.type ==
+    /// "insufficient_balance_error"`.
+    case insufficientCredits
 
     var errorDescription: String? {
         switch self {
@@ -32,8 +36,40 @@ enum OpenAIServiceError: LocalizedError {
             return NSLocalizedString("Unable to parse the AI response", comment: "Error when response parsing fails")
         case .noContentInResponse:
             return NSLocalizedString("No content returned from AI", comment: "Error when AI returns empty response")
+        case .insufficientCredits:
+            return NSLocalizedString(
+                "The AI provider is out of credits.",
+                comment: "Error shown when an AI provider responds with an out-of-credits signal"
+            )
         }
     }
+}
+
+/// Inspects an HTTP error body for the provider-specific "out of credits" signals
+/// (OpenAI: 429 + `insufficient_quota`; Anthropic: 400 + `insufficient_balance_error`).
+/// Falls back to `.invalidResponse(statusCode:)` for every other non-2xx response.
+func mapAIHTTPError(statusCode: Int, body: Data) -> OpenAIServiceError {
+    if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+       let error = json["error"] as? [String: Any]
+    {
+        let type = (error["type"] as? String) ?? ""
+        let code = (error["code"] as? String) ?? ""
+        let message = ((error["message"] as? String) ?? "").lowercased()
+
+        // Anthropic billing (HTTP 400).
+        if statusCode == 400 {
+            if type == "insufficient_balance_error" || type == "account_billing_error" ||
+                message.contains("credit balance")
+            {
+                return .insufficientCredits
+            }
+        }
+        // OpenAI billing (HTTP 429 piggybacked on rate-limit codes).
+        if statusCode == 429, code == "insufficient_quota" {
+            return .insufficientCredits
+        }
+    }
+    return .invalidResponse(statusCode: statusCode)
 }
 
 // MARK: - OpenAI API Request Types (Codable)
@@ -441,7 +477,7 @@ final class OpenAIService: AIProviderService {
             if let errorBody = String(data: data, encoding: .utf8) {
                 os_log("Error body: %{public}@", log: log, type: .error, errorBody)
             }
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
 
         return try parseMultiItemResponse(data)
@@ -609,7 +645,7 @@ final class OpenAIService: AIProviderService {
             if let errorBody = String(data: data, encoding: .utf8) {
                 os_log("Error body: %{public}@", log: log, type: .error, errorBody)
             }
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
 
         return try parseLegacyResponse(data)
@@ -770,7 +806,7 @@ final class OpenAIService: AIProviderService {
             if let errorBody = String(data: data, encoding: .utf8) {
                 os_log("Error body: %{public}@", log: log, type: .error, errorBody)
             }
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
 
         return try parseMultiItemResponseWithReasoning(data)
@@ -967,7 +1003,9 @@ final class OpenAIService: AIProviderService {
                             type: .error,
                             httpResponse.statusCode
                         )
-                        throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+                        var errorBody = Data()
+                        for try await byte in bytes { errorBody.append(byte) }
+                        throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: errorBody)
                     }
 
                     let parser = StructuredJSONStreamParser()
@@ -1078,7 +1116,7 @@ final class OpenAIService: AIProviderService {
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             os_log("OpenAI API error: status %d", log: log, type: .error, httpResponse.statusCode)
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
 
         return try parseSingleItemUpdateResponse(data, itemId: editedItemId)
@@ -1349,7 +1387,7 @@ final class OpenAIService: AIProviderService {
 
         guard (200 ... 299).contains(httpResponse.statusCode) else {
             os_log("OpenAI API error: status %d", log: log, type: .error, httpResponse.statusCode)
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
 
         return try parseConversationResponse(data, originalItems: currentItems)

@@ -157,7 +157,7 @@ final class ClaudeResponsesService: AIResponsesProviderService {
             if let errorBody = String(data: data, encoding: .utf8) {
                 os_log("Error body: %{public}@", log: log, type: .error, errorBody)
             }
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
         do { return try decoder.decode(Response.self, from: data) }
         catch { throw OpenAIServiceError.decodingError(error) }

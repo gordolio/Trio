@@ -58,14 +58,25 @@ protocol AIResponsesProviderService {
 /// the setting in the UI takes effect immediately without having to restart the app.
 enum AIServiceRegistry {
     static var chat: AIProviderService {
-        switch currentProvider() {
+        chat(for: currentProvider())
+    }
+
+    static var responses: AIResponsesProviderService {
+        responses(for: currentProvider())
+    }
+
+    /// Explicit provider lookup used by the multi-provider ("send to all") path so each
+    /// analysis task targets the provider it was fanned out for, regardless of the
+    /// persisted `TrioSettings.aiProvider`.
+    static func chat(for provider: AIProviderType) -> AIProviderService {
+        switch provider {
         case .openai: return OpenAIService.shared
         case .claude: return ClaudeService.shared
         }
     }
 
-    static var responses: AIResponsesProviderService {
-        switch currentProvider() {
+    static func responses(for provider: AIProviderType) -> AIResponsesProviderService {
+        switch provider {
         case .openai: return OpenAIResponsesService.shared
         case .claude: return ClaudeResponsesService.shared
         }

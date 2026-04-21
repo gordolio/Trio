@@ -30,6 +30,20 @@ extension AIServiceSettings {
                 .listRowBackground(Color.chart)
 
                 Section(
+                    header: Text("Compare Providers"),
+                    footer: Text(
+                        "When enabled, each food image is analyzed by every available provider in parallel. You can switch between results with the tabs above the food list to compare estimates before confirming."
+                    ),
+                    content: {
+                        Toggle(
+                            "Send to all providers simultaneously",
+                            isOn: $state.sendToAllAIProvidersSimultaneously
+                        )
+                    }
+                )
+                .listRowBackground(Color.chart)
+
+                Section(
                     header: Text("API Key Status"),
                     content: {
                         keyStatusRow(

@@ -151,16 +151,46 @@ extension Treatments {
         /// Restaurant name from the published result, used for matching during reject
         private var publishedRestaurantName: String?
 
+        // MARK: - Multi-Provider Comparison Mode
+
+        /// Per-provider analysis slots. When multi-provider mode is off, only the single configured
+        /// provider appears here. The `foodItemSelection` / `conversationManager` / `premergeVisionItems`
+        /// / `publishedRestaurantName` values above mirror the slot for `displayedProvider`.
+        var foodItemSelections: [AIProviderType: FoodItemSelection] = [:]
+        var conversationManagers: [AIProviderType: AIConversationManager] = [:]
+        var perProviderAnalyzing: [AIProviderType: Bool] = [:]
+        var perProviderErrors: [AIProviderType: String] = [:]
+        var perProviderPremergeVisionItems: [AIProviderType: [AIFoodItem]] = [:]
+        var perProviderPublishedRestaurantName: [AIProviderType: String] = [:]
+
+        /// Providers the current analysis was dispatched to, in display order.
+        /// Empty when no analysis is in flight / complete.
+        var activeProviders: [AIProviderType] = []
+
+        /// Which provider's results are currently shown in the UI.
+        /// Only meaningful when `activeProviders.count > 1` (multi-provider mode).
+        var displayedProvider: AIProviderType?
+
         /// Whether we're in AI mode (photo captured or analysis complete)
         var isInAIMode: Bool {
             capturedImageData != nil || foodItemSelection != nil || isAnalyzingFood
         }
 
         var isAIAvailable: Bool {
-            guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenAIAPIKey") as? String,
-                  !apiKey.isEmpty,
-                  apiKey != "$(OPENAI_API_KEY)"
-            else { return false }
+            AIProviderType.allCases.contains(where: isProviderAvailable)
+        }
+
+        /// Whether the given provider has an API key configured in the build.
+        func isProviderAvailable(_ provider: AIProviderType) -> Bool {
+            let (infoKey, placeholder): (String, String)
+            switch provider {
+            case .openai:
+                (infoKey, placeholder) = ("OpenAIAPIKey", "$(OPENAI_API_KEY)")
+            case .claude:
+                (infoKey, placeholder) = ("AnthropicAPIKey", "$(ANTHROPIC_API_KEY)")
+            }
+            guard let value = Bundle.main.object(forInfoDictionaryKey: infoKey) as? String,
+                  !value.isEmpty, value != placeholder else { return false }
             return true
         }
 
@@ -724,81 +754,103 @@ extension Treatments {
 
         // MARK: - AI-Assisted Food Analysis
 
-        /// Analyzes a food image using AI and pre-fills the carb entry form with multi-item support.
-        /// Runs a restaurant classifier in parallel with vision analysis. If the description mentions
-        /// a restaurant/chain item, published nutrition facts are searched and merged with vision results.
+        /// Analyzes a food image using AI. When the user has enabled "send to all providers
+        /// simultaneously", this fans out to every configured provider in parallel so the user
+        /// can compare results. Otherwise only the configured provider is used.
         func analyzeFood(imageData: Data, description: String? = nil) async {
+            let sendToAll = settingsManager.settings.sendToAllAIProvidersSimultaneously
+            let configuredProvider = settingsManager.settings.aiProvider
+            let providers: [AIProviderType] = {
+                if sendToAll {
+                    let available = AIProviderType.allCases.filter(isProviderAvailable)
+                    return available.isEmpty ? [configuredProvider] : available
+                } else {
+                    return [configuredProvider]
+                }
+            }()
+
             await MainActor.run {
                 isAnalyzingFood = true
                 aiError = nil
                 foodItemSelection = nil
                 conversationManager = nil
+                premergeVisionItems = nil
+                publishedRestaurantName = nil
+                foodItemSelections.removeAll()
+                conversationManagers.removeAll()
+                perProviderErrors.removeAll()
+                perProviderPremergeVisionItems.removeAll()
+                perProviderPublishedRestaurantName.removeAll()
+                perProviderAnalyzing = Dictionary(uniqueKeysWithValues: providers.map { ($0, true) })
+                activeProviders = providers
+                displayedProvider = providers.contains(configuredProvider) ? configuredProvider : providers.first
                 capturedImageData = imageData
                 pendingImageData = imageData
             }
 
+            await withTaskGroup(of: Void.self) { group in
+                for provider in providers {
+                    group.addTask { [weak self] in
+                        await self?.runAnalysis(for: provider, imageData: imageData, description: description)
+                    }
+                }
+            }
+
+            await MainActor.run {
+                isAnalyzingFood = false
+                print("🍽️ [NutritionLookup] All provider analyses complete ✅")
+            }
+        }
+
+        /// Runs a single provider's analysis and writes the result into its per-provider slot.
+        /// If this provider is the currently-displayed one, the top-level `foodItemSelection`
+        /// / `conversationManager` mirrors are also updated so the existing UI code keeps working.
+        private func runAnalysis(
+            for provider: AIProviderType,
+            imageData: Data,
+            description: String?
+        ) async {
+            let chatService = AIServiceRegistry.chat(for: provider)
+            let responsesService = AIServiceRegistry.responses(for: provider)
+
             do {
-                // Launch restaurant classifier + nutrition search concurrently with vision analysis.
-                // The classifier is fast (~300ms with gpt-4o-mini, text-only) and runs in parallel.
-                // If it fails or finds no restaurant item, we silently fall back to vision-only.
-                print("🍽️ [NutritionLookup] Starting food analysis. Description: \(description ?? "<none>")")
+                print("🍽️ [\(provider.displayName)] Starting food analysis. Description: \(description ?? "<none>")")
 
                 let publishedNutritionTask: Task<PublishedNutritionResult?, Never> = Task {
                     guard let desc = description, !desc.isEmpty else {
-                        print("🍽️ [NutritionLookup] Classifier skipped — no description provided")
                         return nil
                     }
                     do {
-                        print("🍽️ [NutritionLookup] Classifier starting for: \"\(desc)\"")
-                        let classification = try await AIServiceRegistry.responses
-                            .classifyRestaurantItem(description: desc)
-                        print(
-                            "🍽️ [NutritionLookup] Classifier result: isRestaurant=\(classification.isRestaurantItem), " +
-                                "restaurant=\"\(classification.restaurantName)\", " +
-                                "item=\"\(classification.menuItemName)\", " +
-                                "confidence=\(String(format: "%.2f", classification.confidence))"
-                        )
+                        let classification = try await responsesService.classifyRestaurantItem(description: desc)
                         guard classification.isRestaurantItem,
                               !classification.restaurantName.isEmpty,
                               !classification.menuItemName.isEmpty
                         else {
-                            print("🍽️ [NutritionLookup] Classifier: not a restaurant item — using vision only")
                             return nil
                         }
-                        print(
-                            "🍽️ [NutritionLookup] Searching published nutrition for " +
-                                "\(classification.restaurantName) — \(classification.menuItemName)..."
-                        )
-                        let result = try await AIServiceRegistry.responses
-                            .searchPublishedNutrition(
-                                restaurantName: classification.restaurantName,
-                                menuItemName: classification.menuItemName
-                            )
-                        print(
-                            "🍽️ [NutritionLookup] Published nutrition found: " +
-                                "carbs=\(Int(result.carbs))g, fat=\(Int(result.fat))g, " +
-                                "protein=\(Int(result.protein))g, calories=\(Int(result.calories)), " +
-                                "servingCount=\(Int(result.servingCount)) \(result.servingCountUnit), " +
-                                "confidence=\(String(format: "%.2f", result.confidence)), " +
-                                "source=\"\(result.sourceURL)\""
+                        let result = try await responsesService.searchPublishedNutrition(
+                            restaurantName: classification.restaurantName,
+                            menuItemName: classification.menuItemName
                         )
                         return result
                     } catch {
-                        print("🍽️ [NutritionLookup] Classifier/search failed (non-fatal): \(error.localizedDescription)")
+                        print("🍽️ [\(provider.displayName)] Classifier/search failed (non-fatal): \(error.localizedDescription)")
                         return nil
                     }
                 }
 
-                // Vision analysis (existing streaming path, runs concurrently)
-                print("🍽️ [NutritionLookup] Vision analysis starting (concurrent with classifier)")
-                let stream = AIServiceRegistry.chat.analyzeFoodStreaming(
+                let stream = chatService.analyzeFoodStreaming(
                     imageData: imageData,
                     userDescription: description
                 )
 
                 let manager = AIConversationManager()
+                manager.providerOverride = provider
                 await MainActor.run {
-                    conversationManager = manager
+                    conversationManagers[provider] = manager
+                    if displayedProvider == provider {
+                        conversationManager = manager
+                    }
                 }
 
                 let visionResponse = try await manager.initializeStreaming(
@@ -812,46 +864,28 @@ extension Treatments {
                             overallConfidence: 0
                         )
                         let selection = FoodItemSelection(response: response)
-                        self.foodItemSelection = selection
+                        self.foodItemSelections[provider] = selection
+                        if self.displayedProvider == provider {
+                            self.foodItemSelection = selection
+                        }
                     }
                 )
-                print(
-                    "🍽️ [NutritionLookup] Vision analysis complete: \(visionResponse.foodItems.count) items detected"
-                )
-                for item in visionResponse.foodItems {
-                    print(
-                        "🍽️ [NutritionLookup]   Vision item: \(item.emoji ?? "") \(item.name) — " +
-                            "carbs=\(Int(item.carbs))g, fat=\(Int(item.fat))g, protein=\(Int(item.protein))g"
-                    )
-                }
 
-                // Wait for the published nutrition result (already running concurrently)
-                print("🍽️ [NutritionLookup] Waiting for classifier/search result...")
                 let publishedResult = await publishedNutritionTask.value
 
-                // Save vision items before merge for fallback if user rejects published nutrition
                 await MainActor.run {
-                    premergeVisionItems = visionResponse.foodItems
-                    publishedRestaurantName = publishedResult?.restaurantName
+                    perProviderPremergeVisionItems[provider] = visionResponse.foodItems
+                    perProviderPublishedRestaurantName[provider] = publishedResult?.restaurantName
+                    if displayedProvider == provider {
+                        premergeVisionItems = visionResponse.foodItems
+                        publishedRestaurantName = publishedResult?.restaurantName
+                    }
                 }
 
-                // Merge published facts with vision items
                 let mergedItems = NutritionFactsMerger.merge(
                     publishedResult: publishedResult,
                     visionItems: visionResponse.foodItems
                 )
-                if publishedResult != nil {
-                    print("🍽️ [NutritionLookup] Merge complete: \(mergedItems.count) items after merge")
-                    for item in mergedItems {
-                        let sourceTag = item.source == .published ? "📋 PUBLISHED" : "👁 estimated"
-                        print(
-                            "🍽️ [NutritionLookup]   [\(sourceTag)] \(item.emoji ?? "") \(item.name) — " +
-                                "carbs=\(Int(item.carbs))g, fat=\(Int(item.fat))g, protein=\(Int(item.protein))g"
-                        )
-                    }
-                } else {
-                    print("🍽️ [NutritionLookup] No published nutrition found — using vision results only")
-                }
 
                 await MainActor.run {
                     let mergedResponse = AIFoodItemsResponse(
@@ -859,9 +893,7 @@ extension Treatments {
                         overallConfidence: visionResponse.overallConfidence
                     )
 
-                    // Update conversation manager with merged items and published info
                     if mergedItems != visionResponse.foodItems {
-                        print("🍽️ [NutritionLookup] Updating conversation manager with merged items")
                         manager.replaceItems(
                             mergedItems,
                             restaurantName: publishedResult?.restaurantName,
@@ -870,19 +902,84 @@ extension Treatments {
                     }
 
                     let selection = FoodItemSelection(response: mergedResponse)
-                    withAnimation(.easeInOut(duration: 0.35)) {
-                        foodItemSelection = selection
-                    }
+                    foodItemSelections[provider] = selection
+                    perProviderAnalyzing[provider] = false
 
-                    updateFormFromSelection()
-                    isAnalyzingFood = false
-                    print("🍽️ [NutritionLookup] Analysis complete ✅")
+                    if displayedProvider == provider {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            foodItemSelection = selection
+                        }
+                        updateFormFromSelection()
+                    }
+                    print("🍽️ [\(provider.displayName)] Analysis complete")
                 }
             } catch {
                 await MainActor.run {
-                    aiError = error.localizedDescription
-                    isAnalyzingFood = false
+                    perProviderAnalyzing[provider] = false
+                    let message = providerFacingErrorMessage(for: error, provider: provider)
+                    perProviderErrors[provider] = message
+                    // Surface the error only if every active provider has failed (nothing to show),
+                    // or if this is the displayed provider and the user has nothing to look at.
+                    let allFailed = activeProviders.allSatisfy { foodItemSelections[$0] == nil }
+                    if allFailed || (displayedProvider == provider && foodItemSelection == nil) {
+                        aiError = message
+                    }
                 }
+            }
+        }
+
+        /// Maps a provider error into a user-facing string. Surfaces a clear "out of credits"
+        /// message when the response body matched one of the known billing signals
+        /// (OpenAI: 429 + `insufficient_quota`; Anthropic: 400 + `insufficient_balance_error`).
+        /// For generic HTTP failures we prefix the provider name so the user knows which one failed.
+        private func providerFacingErrorMessage(for error: Error, provider: AIProviderType) -> String {
+            if case OpenAIServiceError.insufficientCredits = error {
+                return String(
+                    format: String(
+                        localized: "%@ is out of credits. Please top up your account before analyzing more images.",
+                        comment: "Alert shown when a provider responds with an out-of-credits signal"
+                    ),
+                    provider.displayName
+                )
+            }
+            if case let OpenAIServiceError.invalidResponse(statusCode) = error {
+                switch statusCode {
+                case 401,
+                     403:
+                    return String(
+                        format: String(
+                            localized: "%@ rejected the API key (status %d). Check the key configured in ConfigOverride.xcconfig.",
+                            comment: "Alert shown when a provider returns HTTP 401/403"
+                        ),
+                        provider.displayName, statusCode
+                    )
+                case 429:
+                    return String(
+                        format: String(
+                            localized: "%@ is currently rate-limiting requests. Please try again in a moment.",
+                            comment: "Alert shown when a provider returns HTTP 429 without an insufficient_quota code"
+                        ),
+                        provider.displayName
+                    )
+                default:
+                    return "\(provider.displayName): \(error.localizedDescription)"
+                }
+            }
+            return "\(provider.displayName): \(error.localizedDescription)"
+        }
+
+        /// Switches which provider's results are displayed in the food item list + form.
+        /// Mirrors the provider's per-provider slot into the top-level `foodItemSelection` /
+        /// `conversationManager` and recomputes the bolus form from the new selection.
+        @MainActor func switchDisplayedProvider(to provider: AIProviderType) {
+            guard displayedProvider != provider else { return }
+            displayedProvider = provider
+            foodItemSelection = foodItemSelections[provider]
+            conversationManager = conversationManagers[provider]
+            premergeVisionItems = perProviderPremergeVisionItems[provider]
+            publishedRestaurantName = perProviderPublishedRestaurantName[provider]
+            if foodItemSelection != nil {
+                updateFormFromSelection()
             }
         }
 
@@ -934,6 +1031,9 @@ extension Treatments {
         @MainActor func updateServingCount(for itemId: UUID, count: Double) {
             guard foodItemSelection != nil else { return }
             foodItemSelection?.userServingCounts[itemId] = count
+            if let provider = displayedProvider, let updated = foodItemSelection {
+                foodItemSelections[provider] = updated
+            }
             updateFormFromSelection()
         }
 
@@ -942,6 +1042,9 @@ extension Treatments {
             guard foodItemSelection != nil else { return }
             foodItemSelection?.toggleSelection(for: itemId)
             conversationManager?.toggleSelection(for: itemId)
+            if let provider = displayedProvider, let updated = foodItemSelection {
+                foodItemSelections[provider] = updated
+            }
             updateFormFromSelection()
         }
 
@@ -1008,6 +1111,9 @@ extension Treatments {
             withAnimation(.easeInOut(duration: 0.35)) {
                 foodItemSelection = newSelection
             }
+            if let provider = displayedProvider {
+                foodItemSelections[provider] = newSelection
+            }
 
             conversationManager?.replaceItems(newItems)
             updateFormFromSelection()
@@ -1029,6 +1135,14 @@ extension Treatments {
             pendingImageData = nil
             premergeVisionItems = nil
             publishedRestaurantName = nil
+            foodItemSelections.removeAll()
+            conversationManagers.removeAll()
+            perProviderAnalyzing.removeAll()
+            perProviderErrors.removeAll()
+            perProviderPremergeVisionItems.removeAll()
+            perProviderPublishedRestaurantName.removeAll()
+            activeProviders.removeAll()
+            displayedProvider = nil
         }
 
         /// Edit a food item's description and recalculate its carbs
@@ -1060,6 +1174,9 @@ extension Treatments {
                     newSelection.selectedItemIds = selection.selectedItemIds
                     newSelection.userServingCounts = selection.userServingCounts
                     foodItemSelection = newSelection
+                    if let provider = displayedProvider {
+                        foodItemSelections[provider] = newSelection
+                    }
                 }
             }
 
@@ -1088,6 +1205,9 @@ extension Treatments {
                 }
             }
             foodItemSelection = selection
+            if let provider = displayedProvider {
+                foodItemSelections[provider] = selection
+            }
 
             applySelection(selection, userModified: true)
         }
@@ -1095,6 +1215,9 @@ extension Treatments {
         /// Accept values from the conversation manager (called when user taps Accept in chat)
         @MainActor func acceptConversationValues(_ selection: FoodItemSelection) {
             foodItemSelection = selection
+            if let provider = displayedProvider {
+                foodItemSelections[provider] = selection
+            }
             conversationManager?.selectedItemIds = selection.selectedItemIds
             applySelection(selection, userModified: true)
         }

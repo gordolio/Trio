@@ -92,6 +92,18 @@ struct AIFoodAnalysisView: View {
                         selection: $state.foodItemSelection,
                         isExpanded: $isFoodItemsExpanded,
                         pendingItemIds: state.pendingItemIds,
+                        providerTabs: state.activeProviders.count > 1
+                            ? state.activeProviders.map { provider in
+                                FoodProviderTab(
+                                    provider: provider,
+                                    isAnalyzing: state.perProviderAnalyzing[provider] ?? false
+                                )
+                            }
+                            : [],
+                        selectedProvider: state.displayedProvider,
+                        onSelectProvider: { provider in
+                            state.switchDisplayedProvider(to: provider)
+                        },
                         onToggleItem: { itemId in
                             state.toggleFoodItem(itemId)
                         },

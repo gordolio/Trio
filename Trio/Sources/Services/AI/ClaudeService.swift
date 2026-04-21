@@ -240,7 +240,7 @@ final class ClaudeService: AIProviderService {
             if let errorBody = String(data: data, encoding: .utf8) {
                 os_log("Error body: %{public}@", log: log, type: .error, errorBody)
             }
-            throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
         }
         do {
             return try decoder.decode(AnthropicMessageResponse.self, from: data)
@@ -646,7 +646,9 @@ final class ClaudeService: AIProviderService {
                             "Anthropic streaming API error: status %d",
                             log: self.log, type: .error, httpResponse.statusCode
                         )
-                        throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode)
+                        var errorBody = Data()
+                        for try await byte in bytes { errorBody.append(byte) }
+                        throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: errorBody)
                     }
 
                     let parser = StructuredJSONStreamParser()

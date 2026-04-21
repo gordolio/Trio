@@ -46,6 +46,25 @@ final class AIConversationManager: ObservableObject {
     /// Source URL for published nutrition data
     var publishedSourceURL: String?
 
+    /// When set, every AI call this manager makes is routed to the specified provider
+    /// instead of the globally-selected one. Used by the multi-provider comparison mode
+    /// so each per-provider manager keeps talking to its own backend.
+    var providerOverride: AIProviderType?
+
+    private var chatService: AIProviderService {
+        if let providerOverride = providerOverride {
+            return AIServiceRegistry.chat(for: providerOverride)
+        }
+        return AIServiceRegistry.chat
+    }
+
+    private var responsesService: AIResponsesProviderService {
+        if let providerOverride = providerOverride {
+            return AIServiceRegistry.responses(for: providerOverride)
+        }
+        return AIServiceRegistry.responses
+    }
+
     // MARK: - Computed Properties
 
     /// Total carbs for selected items
@@ -295,7 +314,7 @@ final class AIConversationManager: ObservableObject {
         )
 
         do {
-            let response = try await AIServiceRegistry.chat.updateSingleItem(
+            let response = try await chatService.updateSingleItem(
                 imageData: imageData,
                 currentItems: currentItems,
                 editedItemId: itemId,
@@ -380,7 +399,7 @@ final class AIConversationManager: ObservableObject {
             }
 
             // Standard conversation turn (no lookup needed)
-            let response = try await AIServiceRegistry.chat.conversationTurn(
+            let response = try await chatService.conversationTurn(
                 imageData: imageData,
                 currentItems: currentItems,
                 conversationHistory: messages,
@@ -446,7 +465,7 @@ final class AIConversationManager: ObservableObject {
         imageData _: Data
     ) async throws -> Bool {
         // Classify intent
-        let intent = try await AIServiceRegistry.chat.classifyNutritionLookupIntent(
+        let intent = try await chatService.classifyNutritionLookupIntent(
             userMessage: text,
             currentItems: currentItems,
             restaurantName: restaurantName
@@ -463,7 +482,7 @@ final class AIConversationManager: ObservableObject {
         )
 
         // Search for published nutrition via web search (Responses API)
-        let result = try await AIServiceRegistry.responses.searchPublishedNutrition(
+        let result = try await responsesService.searchPublishedNutrition(
             restaurantName: restaurantName,
             menuItemName: intent.menuItemName
         )
