@@ -124,7 +124,36 @@ struct FoodItemsSelectionView: View {
                     }
                 }
             }
+        } else if providerTabs.count > 1 {
+            // Selected provider hasn't been queried yet (lazy multi-provider mode).
+            // Keep the tab bar visible so the user can switch back, and show a
+            // placeholder spinner where the results will appear.
+            VStack(spacing: 0) {
+                providerTabBar
+                loadingPlaceholder
+            }
         }
+    }
+
+    private var loadingPlaceholder: some View {
+        let isLoading = providerTabs.first(where: { $0.provider == selectedProvider })?.isAnalyzing == true
+        return HStack(spacing: 8) {
+            if isLoading {
+                AnimatedSparkleIcon(isAnimating: true)
+                Text("Analyzing\u{2026}", comment: "Placeholder shown while the selected AI provider is being queried")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+            } else {
+                Text(
+                    "No results from this provider.",
+                    comment: "Placeholder when the selected AI provider tab failed and returned no results"
+                )
+                .font(.body)
+                .foregroundColor(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 24)
     }
 
     // MARK: - Provider Tab Bar

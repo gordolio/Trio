@@ -24,8 +24,8 @@ struct AIFoodAnalysisView: View {
                     action: { showPhotoSourcePicker = true }
                 )
                 .padding(.bottom, 4)
-            } else if let imageData = state.capturedImageData,
-                      state.foodItemSelection == nil, state.isAnalyzingFood
+            } else if state.foodItemSelection == nil, state.foodItemSelections.isEmpty,
+                      let imageData = state.capturedImageData, state.isAnalyzingFood
             {
                 // Description input + analyzing overlay (before any items have streamed in)
                 ZStack {
@@ -59,8 +59,8 @@ struct AIFoodAnalysisView: View {
                         analysisOverlay
                     }
                 }
-            } else if let imageData = state.capturedImageData,
-                      state.foodItemSelection == nil, !state.isAnalyzingFood
+            } else if state.foodItemSelection == nil, state.foodItemSelections.isEmpty,
+                      let imageData = state.capturedImageData, !state.isAnalyzingFood
             {
                 // Description input (not yet analyzing, no results)
                 FoodDescriptionInputView(
@@ -85,7 +85,7 @@ struct AIFoodAnalysisView: View {
                         }
                     }
                 )
-            } else if state.foodItemSelection != nil {
+            } else if state.foodItemSelection != nil || !state.foodItemSelections.isEmpty {
                 // Food items selection tree (shown during streaming and after completion)
                 VStack(spacing: 0) {
                     FoodItemsSelectionView(

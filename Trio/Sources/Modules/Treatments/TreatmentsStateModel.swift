@@ -145,6 +145,7 @@ extension Treatments {
         var aiAssistedMetadata: AIAssistedCarbEntryMetadata?
         private var originalAICarbsQuantity: Double?
         private var pendingImageData: Data?
+        private var pendingAnalysisDescription: String?
 
         /// Vision items saved before merge, used as fallback when user rejects published nutrition
         private var premergeVisionItems: [AIFoodItem]?
@@ -755,12 +756,13 @@ extension Treatments {
         // MARK: - AI-Assisted Food Analysis
 
         /// Analyzes a food image using AI. When the user has enabled "send to all providers
-        /// simultaneously", this fans out to every configured provider in parallel so the user
-        /// can compare results. Otherwise only the configured provider is used.
+        /// simultaneously", the other providers are offered as tabs but only queried lazily
+        /// when the user switches to them — we don't burn tokens on providers the user may
+        /// never look at. Only the configured provider is queried up front.
         func analyzeFood(imageData: Data, description: String? = nil) async {
             let sendToAll = settingsManager.settings.sendToAllAIProvidersSimultaneously
             let configuredProvider = settingsManager.settings.aiProvider
-            let providers: [AIProviderType] = {
+            let tabs: [AIProviderType] = {
                 if sendToAll {
                     let available = AIProviderType.allCases.filter(isProviderAvailable)
                     return available.isEmpty ? [configuredProvider] : available
@@ -768,6 +770,7 @@ extension Treatments {
                     return [configuredProvider]
                 }
             }()
+            let initialProvider = tabs.contains(configuredProvider) ? configuredProvider : (tabs.first ?? configuredProvider)
 
             await MainActor.run {
                 isAnalyzingFood = true
@@ -781,24 +784,20 @@ extension Treatments {
                 perProviderErrors.removeAll()
                 perProviderPremergeVisionItems.removeAll()
                 perProviderPublishedRestaurantName.removeAll()
-                perProviderAnalyzing = Dictionary(uniqueKeysWithValues: providers.map { ($0, true) })
-                activeProviders = providers
-                displayedProvider = providers.contains(configuredProvider) ? configuredProvider : providers.first
+                // Only the initial provider is marked analyzing; other tabs stay dormant
+                // and will be kicked off from `switchDisplayedProvider(to:)` on demand.
+                perProviderAnalyzing = Dictionary(uniqueKeysWithValues: tabs.map { ($0, $0 == initialProvider) })
+                activeProviders = tabs
+                displayedProvider = initialProvider
                 capturedImageData = imageData
                 pendingImageData = imageData
+                pendingAnalysisDescription = description
             }
 
-            await withTaskGroup(of: Void.self) { group in
-                for provider in providers {
-                    group.addTask { [weak self] in
-                        await self?.runAnalysis(for: provider, imageData: imageData, description: description)
-                    }
-                }
-            }
+            await runAnalysis(for: initialProvider, imageData: imageData, description: description)
 
             await MainActor.run {
-                isAnalyzingFood = false
-                print("🍽️ [NutritionLookup] All provider analyses complete ✅")
+                isAnalyzingFood = perProviderAnalyzing.values.contains(true)
             }
         }
 
@@ -918,10 +917,9 @@ extension Treatments {
                     perProviderAnalyzing[provider] = false
                     let message = providerFacingErrorMessage(for: error, provider: provider)
                     perProviderErrors[provider] = message
-                    // Surface the error only if every active provider has failed (nothing to show),
-                    // or if this is the displayed provider and the user has nothing to look at.
-                    let allFailed = activeProviders.allSatisfy { foodItemSelections[$0] == nil }
-                    if allFailed || (displayedProvider == provider && foodItemSelection == nil) {
+                    // Only surface errors for the provider the user is currently looking at —
+                    // a background/dormant provider failing silently shouldn't pop an alert.
+                    if displayedProvider == provider, foodItemSelection == nil {
                         aiError = message
                     }
                 }
@@ -971,6 +969,8 @@ extension Treatments {
         /// Switches which provider's results are displayed in the food item list + form.
         /// Mirrors the provider's per-provider slot into the top-level `foodItemSelection` /
         /// `conversationManager` and recomputes the bolus form from the new selection.
+        /// If the target provider hasn't been queried yet (lazy multi-provider mode), this
+        /// kicks off its analysis now.
         @MainActor func switchDisplayedProvider(to provider: AIProviderType) {
             guard displayedProvider != provider else { return }
             displayedProvider = provider
@@ -980,6 +980,22 @@ extension Treatments {
             publishedRestaurantName = perProviderPublishedRestaurantName[provider]
             if foodItemSelection != nil {
                 updateFormFromSelection()
+                return
+            }
+            // Lazy-query: if this tab has never been analyzed, kick it off now.
+            let hasBeenQueried = perProviderAnalyzing[provider] == true ||
+                perProviderErrors[provider] != nil
+            guard !hasBeenQueried, let imageData = pendingImageData else { return }
+            perProviderAnalyzing[provider] = true
+            isAnalyzingFood = true
+            aiError = nil
+            let description = pendingAnalysisDescription
+            Task { [weak self] in
+                await self?.runAnalysis(for: provider, imageData: imageData, description: description)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.isAnalyzingFood = self.perProviderAnalyzing.values.contains(true)
+                }
             }
         }
 
