@@ -105,33 +105,37 @@ struct FoodItemsSelectionView: View {
     }
 
     var body: some View {
-        if let selection = selection {
+        // Keep a single outer VStack so `providerTabBar` retains a stable view
+        // identity when the selected provider flips between having results and
+        // being a lazy placeholder — otherwise the tab bar gets re-inserted on
+        // every switch and the ambient animation slides the tabs around.
+        if selection != nil || providerTabs.count > 1 {
             VStack(spacing: 0) {
                 if providerTabs.count > 1 {
                     providerTabBar
                 }
 
-                // Collapsed header row
-                collapsedHeader(selection: selection)
+                if let selection {
+                    collapsedHeader(selection: selection)
 
-                // Expanded content
-                if isExpanded {
-                    expandedContent(selection: selection)
+                    if isExpanded {
+                        expandedContent(selection: selection)
 
-                    // Refine with AI button
-                    if onOpenChat != nil {
-                        refineWithAIButton
+                        if onOpenChat != nil {
+                            refineWithAIButton
+                        }
                     }
+                } else {
+                    loadingPlaceholder
                 }
             }
-        } else if providerTabs.count > 1 {
-            // Selected provider hasn't been queried yet (lazy multi-provider mode).
-            // Keep the tab bar visible so the user can switch back, and show a
-            // placeholder spinner where the results will appear.
-            VStack(spacing: 0) {
-                providerTabBar
-                loadingPlaceholder
-            }
+            // Strip ambient animations cascading in from the parent (e.g. the
+            // Treatments form's implicit layout animations, or withAnimation
+            // wrappers in TreatmentsStateModel) so they don't slide the tab
+            // bar around when the inner content swaps. Internal withAnimation
+            // calls (shimmer, sparkle, expand toggle) create their own
+            // transactions and survive this.
+            .transaction { $0.animation = nil }
         }
     }
 
