@@ -43625,7 +43625,7 @@
       "comment" : "Button label for AI-assisted food analysis"
     },
     "Analyzing…" : {
-
+      "comment" : "Placeholder shown while the selected AI provider is being queried"
     },
     "Animated Background" : {
       "extractionState" : "manual",
@@ -66683,6 +66683,9 @@
           }
         }
       }
+    },
+    "ChatGPT" : {
+
     },
     "Check" : {
 
@@ -171987,6 +171990,9 @@
           }
         }
       }
+    },
+    "No results from this provider." : {
+      "comment" : "Placeholder when the selected AI provider tab failed and returned no results"
     },
     "No Sensor Detected" : {
       "comment" : "No Sensor Detected",

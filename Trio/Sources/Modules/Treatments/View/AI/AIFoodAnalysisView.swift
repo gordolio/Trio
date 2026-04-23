@@ -142,10 +142,14 @@ struct AIFoodAnalysisView: View {
                                 .foregroundColor(.secondary)
                         }
                         .padding(.vertical, 4)
-                        .transition(.opacity)
                     }
                 }
-                .transition(.opacity)
+                // Strip any ambient animation cascading into this subtree (Form's
+                // implicit animations, parent .animation modifiers, etc.) so that
+                // switching provider tabs doesn't slide the tab bar around.
+                // Internal animations (shimmer, sparkle, expand toggle) start their
+                // own transactions and are unaffected.
+                .transaction { $0.animation = nil }
                 .onChange(of: state.foodItemSelection?.response.foodItems.count) { _, _ in
                     // Auto-expand when first items stream in
                     if state.isAnalyzingFood, !isFoodItemsExpanded {

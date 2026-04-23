@@ -905,9 +905,10 @@ extension Treatments {
                     perProviderAnalyzing[provider] = false
 
                     if displayedProvider == provider {
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            foodItemSelection = selection
-                        }
+                        // No withAnimation here — an animated swap of foodItemSelection
+                        // cascades a layout animation into the provider tab bar above
+                        // and makes the tabs slide vertically on completion.
+                        foodItemSelection = selection
                         updateFormFromSelection()
                     }
                     print("🍽️ [\(provider.displayName)] Analysis complete")
@@ -973,28 +974,51 @@ extension Treatments {
         /// kicks off its analysis now.
         @MainActor func switchDisplayedProvider(to provider: AIProviderType) {
             guard displayedProvider != provider else { return }
-            displayedProvider = provider
-            foodItemSelection = foodItemSelections[provider]
-            conversationManager = conversationManagers[provider]
-            premergeVisionItems = perProviderPremergeVisionItems[provider]
-            publishedRestaurantName = perProviderPublishedRestaurantName[provider]
+            // Disable animations at the source so SwiftUI/Form doesn't attach
+            // an ambient transition (slide/opacity) to the resulting view-tree
+            // diff. Tab switches must be visually instantaneous — including the
+            // form-field updates triggered by `updateFormFromSelection`, since
+            // they share the same Section as the tab bar and a List row-height
+            // change there will pull the tab bar with it.
+            var txn = Transaction()
+            txn.disablesAnimations = true
+
+            withTransaction(txn) {
+                displayedProvider = provider
+                foodItemSelection = foodItemSelections[provider]
+                conversationManager = conversationManagers[provider]
+                premergeVisionItems = perProviderPremergeVisionItems[provider]
+                publishedRestaurantName = perProviderPublishedRestaurantName[provider]
+            }
+
             if foodItemSelection != nil {
-                updateFormFromSelection()
+                withTransaction(txn) {
+                    updateFormFromSelection()
+                }
                 return
             }
+
             // Lazy-query: if this tab has never been analyzed, kick it off now.
             let hasBeenQueried = perProviderAnalyzing[provider] == true ||
                 perProviderErrors[provider] != nil
             guard !hasBeenQueried, let imageData = pendingImageData else { return }
-            perProviderAnalyzing[provider] = true
-            isAnalyzingFood = true
-            aiError = nil
+
+            withTransaction(txn) {
+                perProviderAnalyzing[provider] = true
+                isAnalyzingFood = true
+                aiError = nil
+            }
+
             let description = pendingAnalysisDescription
             Task { [weak self] in
                 await self?.runAnalysis(for: provider, imageData: imageData, description: description)
                 await MainActor.run {
                     guard let self else { return }
-                    self.isAnalyzingFood = self.perProviderAnalyzing.values.contains(true)
+                    var endTxn = Transaction()
+                    endTxn.disablesAnimations = true
+                    withTransaction(endTxn) {
+                        self.isAnalyzingFood = self.perProviderAnalyzing.values.contains(true)
+                    }
                 }
             }
         }
