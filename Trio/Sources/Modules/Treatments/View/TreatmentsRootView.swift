@@ -205,9 +205,23 @@ extension Treatments {
             }
         }
 
+        private enum ScrollAnchor: Hashable {
+            case carbs, fatProtein, bolus
+        }
+
+        private func scrollAnchor(for field: FocusedField?) -> ScrollAnchor? {
+            switch field {
+            case .carbs: return .carbs
+            case .fat, .protein: return .fatProtein
+            case .bolus: return .bolus
+            case .none: return nil
+            }
+        }
+
         var body: some View {
             ZStack(alignment: .center) {
                 VStack {
+                    ScrollViewReader { proxy in
                     List {
                         // Calibration-in-progress banner
                         if state.isCalibrationActive {
@@ -249,9 +263,11 @@ extension Treatments {
                             }
 
                             carbsTextField()
+                                .id(ScrollAnchor.carbs)
 
                             if state.useFPUconversion {
                                 proteinAndFat()
+                                    .id(ScrollAnchor.fatProtein)
 
                                 if showFatProteinOrderBanner {
                                     HStack {
@@ -414,6 +430,7 @@ extension Treatments {
                                         }
                                     }
                             }
+                            .id(ScrollAnchor.bolus)
 
                             HStack {
                                 Text("External Insulin")
@@ -425,6 +442,16 @@ extension Treatments {
                         treatmentButton
                     }
                     .listSectionSpacing(sectionSpacing)
+                    .onChange(of: focusedField) { _, newValue in
+                        guard let anchor = scrollAnchor(for: newValue) else { return }
+                        // Delay slightly so the keyboard's frame change settles before we scroll.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            withAnimation {
+                                proxy.scrollTo(anchor, anchor: .top)
+                            }
+                        }
+                    }
+                    }
                 }
                 .blur(radius: state.isAwaitingDeterminationResult ? 5 : 0)
 
