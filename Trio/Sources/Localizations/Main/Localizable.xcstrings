@@ -4822,6 +4822,9 @@
         }
       }
     },
+    "– –" : {
+
+    },
     ", %lld%%" : {
       "localizations" : {
         "bg" : {
@@ -101348,6 +101351,9 @@
           }
         }
       }
+    },
+    "Drives the outer-ring + tag on the home screen's glucose bobble." : {
+
     },
     "Due to how the curve is calculated when using the Sigmoid Formula, increasing this setting has a different impact on the steepness of the curve than in the standard logarithmic Dynamic ISF calculation. Use caution when adjusting this setting." : {
       "localizations" : {
@@ -215062,6 +215068,9 @@
         }
       }
     },
+    "Scenario" : {
+
+    },
     "Schedule " : {
       "extractionState" : "manual",
       "localizations" : {
@@ -220266,6 +220275,9 @@
           }
         }
       }
+    },
+    "Sensor Lifecycle Scenario" : {
+
     },
     "Sensor might have temporarily stopped, fallen off or is too cold or too warm" : {
       "comment" : "ensor might have temporarily stopped, fallen off or is too cold or too warm",

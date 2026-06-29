@@ -55,6 +55,10 @@ extension CGMSettings {
         @State private var now = Date()
         private let previewTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
+        /// Drives the synthetic `cgmStatusHighlight`
+        @State private var simulatedScenarioRaw: String = UserDefaults.standard
+            .string(forKey: "GlucoseSimulator.simulatedScenario") ?? SimulatedSensorScenario.runningNormally.rawValue
+
         // Refresh state from UserDefaults on view appear (handles returning to this screen after changes)
         private func initializeSimulatorSettings() {
             // Re-read all values from UserDefaults/OscillatingGenerator to pick up any external changes
@@ -348,6 +352,37 @@ extension CGMSettings {
                         .foregroundStyle(Color.secondary)
                         .lineLimit(nil)
                         .padding(.bottom)
+                    }
+                }.listRowBackground(Color.chart)
+
+                Section(
+                    header: Text("Sensor Lifecycle Scenario"),
+                    footer: Text(
+                        "Drives the outer-ring + tag on the home screen's glucose bobble."
+                    )
+                ) {
+                    Picker("Scenario", selection: $simulatedScenarioRaw) {
+                        ForEach(SimulatedSensorScenario.allCases) { scenario in
+                            Text(scenario.displayName).tag(scenario.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .onChange(of: simulatedScenarioRaw) { _, newValue in
+                        UserDefaults.standard.set(newValue, forKey: "GlucoseSimulator.simulatedScenario")
+                        // Push the change through the active simulator
+                        // instance so subjects emit immediately.
+                        if let scenario = SimulatedSensorScenario(rawValue: newValue),
+                           let sim = resolver.resolve(FetchGlucoseManager.self)?.glucoseSource as? GlucoseSimulatorSource
+                        {
+                            sim.applySimulatedScenario(scenario)
+                        }
+                    }
+
+                    if let scenario = SimulatedSensorScenario(rawValue: simulatedScenarioRaw) {
+                        Text(scenario.devNotes)
+                            .font(.footnote)
+                            .foregroundStyle(Color.secondary)
+                            .lineLimit(nil)
                     }
                 }.listRowBackground(Color.chart)
 
