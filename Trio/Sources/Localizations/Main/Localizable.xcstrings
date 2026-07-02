@@ -81930,7 +81930,7 @@
       }
     },
     "d" : {
-      "comment" : "abbreviation for days",
+      "comment" : "Abbreviation for Days\nabbreviation for days",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -133056,7 +133056,7 @@
       }
     },
     "h" : {
-      "comment" : "abbreviation for hours\nh",
+      "comment" : "Abbreviation for Hours\nabbreviation for hours\nh",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
