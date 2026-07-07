@@ -174,9 +174,14 @@ platform :ios do
         platform:   "IOS"
       )
       existing = bundle_id.get_capabilities.map(&:capability_type)
-      capabilities.reject { |c| existing.include?(c) }.each do |cap|
-        bundle_id.create_capability(cap)
+      missing = capabilities.reject { |c| existing.include?(c) }
+      missing.each do |cap|
+        bundle_id.update_capability(cap, enabled: true)
       end
+
+      updated = bundle_id.get_capabilities.map(&:capability_type)
+      still_missing = capabilities.reject { |c| updated.include?(c) }
+      UI.user_error!("Missing capabilities after update: #{still_missing.join(', ')}") unless still_missing.empty?
     end
 
     configure_bundle_id("Trio", "#{BUNDLE_ID}", [
