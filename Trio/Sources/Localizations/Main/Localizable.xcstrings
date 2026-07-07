@@ -27312,6 +27312,9 @@
         }
       }
     },
+    "About Quick-Pick Boluses" : {
+      "comment" : "Info sheet title for quick-pick boluses feature"
+    },
     "About the Process" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -79386,6 +79389,9 @@
         }
       }
     },
+    "Could not authenticate" : {
+      "comment" : "Alert title when biometric auth fails for quick-pick boluses"
+    },
     "Could not calculate eventual glucose. Sensitivity: %@, Deviation: %@" : {
       "localizations" : {
         "en" : {
@@ -106985,6 +106991,9 @@
         }
       }
     },
+    "Enable Quick-Pick Boluses" : {
+      "comment" : "Toggle label for the quick-pick boluses feature setting"
+    },
     "Enable Reduced Bolus Option" : {
       "localizations" : {
         "bg" : {
@@ -116447,9 +116456,6 @@
         }
       }
     },
-    "EXPERIMENTAL FEATURE! Enables new, fully Swift-based algorithm version." : {
-      "comment" : "Use Swift Oref mini hint"
-    },
     "Expiration Reminder" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -118853,6 +118859,9 @@
           }
         }
       }
+    },
+    "Face ID or Touch ID did not succeed. The bolus was not enacted." : {
+      "comment" : "Alert body when biometric auth fails for quick-pick boluses"
     },
     "Factory Calibration Parameters" : {
       "extractionState" : "manual",
@@ -132316,6 +132325,7 @@
       }
     },
     "Got it!" : {
+      "comment" : "Dismiss button for Quick-Pick Boluses info sheet",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -158830,6 +158840,9 @@
         }
       }
     },
+    "Long-press the + button on the home screen to enact a quick-pick bolus." : {
+      "comment" : "Mini hint for the enable quick-pick boluses toggle"
+    },
     "Loop at %@ failed." : {
       "localizations" : {
         "bg" : {
@@ -180941,6 +180954,9 @@
     },
     "No profile; cannot determine basal." : {
 
+    },
+    "No bolus history yet" : {
+      "comment" : "Alert title when no quick-pick boluses history exists"
     },
     "No recent oref algorithm determination." : {
       "localizations" : {
@@ -205572,6 +205588,15 @@
         }
       }
     },
+    "Quick-Pick Boluses" : {
+      "comment" : "Title of the quick-pick boluses sheet"
+    },
+    "Quick-Pick Boluses learns from your manual boluses over time. Once you've delivered a few boluses, it will suggest amounts based on what you typically enact at this time of day." : {
+      "comment" : "Alert body explaining that quick-pick boluses history is empty"
+    },
+    "Quick-Pick Boluses looks at your manual boluses from the past 90 days and suggests the amounts you most commonly enact at this time of day.\n\nIt gives more weight to boluses from similar times of day, and treats weekdays and weekends separately. Older entries gradually count less.\n\nTap a suggestion to select it, then slide to confirm. Your normal Face ID or Touch ID approval always applies." : {
+      "comment" : "Info sheet body explaining how quick-pick boluses scoring works"
+    },
     "Raise target glucose when Autosens Ratio is less than 1." : {
       "localizations" : {
         "bg" : {
@@ -228384,6 +228409,12 @@
         }
       }
     },
+    "Slide to confirm your selected amount. Face ID or Touch ID is always required before the bolus is enacted." : {
+      "comment" : "Verbose hint for enable quick-pick boluses toggle, part 2"
+    },
+    "Slide to Enact Bolus" : {
+      "comment" : "Slide to confirm label for quick-pick boluses"
+    },
     "Slope" : {
       "comment" : "v",
       "localizations" : {
@@ -239732,6 +239763,9 @@
           }
         }
       }
+    },
+    "Switches back to the legacy JavaScript-based algorithm version." : {
+      "comment" : "Use JavaScript Oref mini hint"
     },
     "Synth" : {
       "comment" : "Display name for the synth alarm sound.",
@@ -253344,9 +253378,6 @@
           }
         }
       }
-    },
-    "This feature is EXPERIMENTAL and not yet cleared for general use." : {
-
     },
     "This feature resets the Autosens Ratio to neutral when you rewind your pump on the assumption that this corresponds to a site change." : {
       "localizations" : {
@@ -269702,6 +269733,9 @@
         }
       }
     },
+    "Trio now uses a fully Swift-based version of the algorithm (Oref) by default. It's faster, more accurate and improves Trio for everyone." : {
+
+    },
     "Trio Personalization" : {
       "localizations" : {
         "bg" : {
@@ -278162,6 +278196,9 @@
         }
       }
     },
+    "Use JavaScript Oref" : {
+      "comment" : "Use JavaScript Oref"
+    },
     "Use local glucose server" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -278424,9 +278461,6 @@
           }
         }
       }
-    },
-    "Use Swift Oref" : {
-      "comment" : "Use Swift Oref"
     },
     "Use the diagnostics-sharing chooser above. Pick \"Crash Reports Only\" to keep crash reporting but disable telemetry, or \"Disable Sharing\" to turn off both. Changes take effect immediately." : {
 
@@ -283831,9 +283865,6 @@
         }
       }
     },
-    "We're building a faster and more maintainable Swift version of the algorithm (Oref) that runs in Trio. It's faster, more accurate and improves Trio for everyone." : {
-
-    },
     "Weak (+25)" : {
 
     },
@@ -285355,6 +285386,9 @@
     "When enabled, each food image is analyzed by every available provider in parallel. You can switch between results with the tabs above the food list to compare estimates before confirming." : {
 
     },
+    "When enabled, long-pressing the + button on the home screen opens a Quick-Pick Boluses sheet. It suggests up to three bolus amounts based on your bolus history at similar times of day, weighted by recency and day type (weekday vs. weekend)." : {
+      "comment" : "Verbose hint for enable quick-pick boluses toggle, part 1"
+    },
     "When enabled, Super Micro Boluses (SMBs) will always be allowed if dosing calculations determine insulin is needed via the SMB delivery method, except when a high Temp Target is set." : {
       "localizations" : {
         "bg" : {
@@ -285975,7 +286009,7 @@
         }
       }
     },
-    "When enabled, Trio will no longer use the old JavaScript-based algorithm that runs virtualized on your phone. Instead, it will use a fully Swift-based algorithm." : {
+    "When enabled, Trio will instead use the legacy JavaScript-based algorithm that runs virtualized on your phone. Only enable this if you encounter issues with the Swift-based algorithm." : {
 
     },
     "When Remote Control is enabled, you can send boluses, overrides, temporary targets, carbs, and other commands to Trio via push notifications." : {
@@ -292160,6 +292194,9 @@
           }
         }
       }
+    },
+    "Your most-used bolus amounts at similar times on similar days. Tap one to pick it." : {
+      "comment" : "Subtitle of the quick-pick boluses pill row"
     },
     "Your phone or app is not enabled for NFC communications, which is needed to pair to libre2 sensors" : {
       "extractionState" : "manual",
