@@ -1,3 +1,4 @@
+import LoopKit
 import LoopKitUI
 import SwiftUI
 import Swinject
@@ -59,6 +60,26 @@ extension CGMSettings {
         @State private var simulatedScenarioRaw: String = UserDefaults.standard
             .string(forKey: "GlucoseSimulator.simulatedScenario") ?? SimulatedSensorScenario.runningNormally.rawValue
 
+        /// Routes "open URL failed" warnings through `TrioAlertManager` so
+        /// they share the same in-app banner UI as the rest of the alert
+        /// pipeline (no more SwiftMessages roundtrip).
+        private func warnOpenFailed(identifier: String, title: String, body: String) {
+            let content = Alert.Content(
+                title: title,
+                body: body,
+                acknowledgeActionButtonLabel: String(localized: "OK")
+            )
+            let alert = Alert(
+                identifier: Alert.Identifier(managerIdentifier: "trio.cgmSettings", alertIdentifier: identifier),
+                foregroundContent: content,
+                backgroundContent: content,
+                trigger: .immediate,
+                interruptionLevel: .active,
+                sound: nil
+            )
+            resolver.resolve(TrioAlertManager.self)?.issueAlert(alert)
+        }
+
         // Refresh state from UserDefaults on view appear (handles returning to this screen after changes)
         private func initializeSimulatorSettings() {
             // Re-read all values from UserDefaults/OscillatingGenerator to pick up any external changes
@@ -93,11 +114,11 @@ extension CGMSettings {
                                 Button {
                                     UIApplication.shared.open(appURL, options: [:]) { success in
                                         if !success {
-                                            self.router.alertMessage
-                                                .send(MessageContent(
-                                                    content: "Unable to open the app",
-                                                    type: .warning
-                                                ))
+                                            warnOpenFailed(
+                                                identifier: "cgm.app.open.failed",
+                                                title: String(localized: "Open failed"),
+                                                body: String(localized: "Unable to open the app")
+                                            )
                                         }
                                     }
                                 }
@@ -246,11 +267,11 @@ extension CGMSettings {
                         Button {
                             UIApplication.shared.open(url, options: [:]) { success in
                                 if !success {
-                                    self.router.alertMessage
-                                        .send(MessageContent(
-                                            content: "No URL available",
-                                            type: .warning
-                                        ))
+                                    warnOpenFailed(
+                                        identifier: "nightscout.open.failed",
+                                        title: String(localized: "Open failed"),
+                                        body: String(localized: "No URL available")
+                                    )
                                 }
                             }
                         }
