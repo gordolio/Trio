@@ -174,23 +174,16 @@ platform :ios do
         platform:   "IOS"
       )
       existing = bundle_id.get_capabilities.map(&:capability_type)
-      missing = capabilities.reject { |c| existing.include?(c) }
-      Spaceship::ConnectAPI.client.provisioning_request_client.instance_variable_set(:@current_team_id, "#{TEAMID}") unless missing.empty?
-      missing.each do |cap|
-        bundle_id.update_capability(cap, enabled: true)
+      capabilities.reject { |c| existing.include?(c) }.each do |cap|
+        bundle_id.create_capability(cap)
       end
-
-      updated = bundle_id.get_capabilities.map(&:capability_type)
-      still_missing = capabilities.reject { |c| updated.include?(c) }
-      UI.user_error!("Missing capabilities after update: #{still_missing.join(', ')}") unless still_missing.empty?
     end
 
     configure_bundle_id("Trio", "#{BUNDLE_ID}", [
       Spaceship::ConnectAPI::BundleIdCapability::Type::APP_GROUPS,
       Spaceship::ConnectAPI::BundleIdCapability::Type::HEALTHKIT,
       Spaceship::ConnectAPI::BundleIdCapability::Type::NFC_TAG_READING,
-      Spaceship::ConnectAPI::BundleIdCapability::Type::PUSH_NOTIFICATIONS,
-      Spaceship::ConnectAPI::BundleIdCapability::Type::USERNOTIFICATIONS_TIMESENSITIVE
+      Spaceship::ConnectAPI::BundleIdCapability::Type::PUSH_NOTIFICATIONS
     ])
 
     configure_bundle_id("Trio Watch Complication", "#{BUNDLE_ID}.watchkitapp.TrioWatchComplication", [
