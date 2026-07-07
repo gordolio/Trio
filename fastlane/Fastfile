@@ -175,6 +175,7 @@ platform :ios do
       )
       existing = bundle_id.get_capabilities.map(&:capability_type)
       missing = capabilities.reject { |c| existing.include?(c) }
+      Spaceship::ConnectAPI.client.provisioning_request_client.instance_variable_set(:@current_team_id, "#{TEAMID}") unless missing.empty?
       missing.each do |cap|
         bundle_id.update_capability(cap, enabled: true)
       end
