@@ -294,7 +294,7 @@ extension CarbRatioCalibration {
 
             // Auto-refresh when new determinations arrive (updates IOB/COB)
             coreDataPublisher =
-                changedObjectsOnManagedObjectContextDidSavePublisher(observing: .inserted)
+                CoreDataStack.shared.entityChangePublisher
                     .receive(on: DispatchQueue.main)
                     .share()
                     .eraseToAnyPublisher()
