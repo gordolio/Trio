@@ -272,3 +272,12 @@ jobs:
           path: |
             artifacts
             buildlog
+
+  notify_release_notes:
+    name: Notify release notes
+    needs: build
+    if: ${{ always() && needs.build.result == 'success' && vars.RELEASE_NOTES_ENABLED == 'true' }}
+    uses: ./.github/workflows/notify_release_notes.yml
+    with:
+      source_run_id: ${{ github.run_id }}
+    secrets: inherit

@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BDA100012F80000000000001 /* BuildReleaseNotesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA100032F80000000000001 /* BuildReleaseNotesClient.swift */; };
+		BDA100022F80000000000001 /* BuildReleaseNotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA100042F80000000000001 /* BuildReleaseNotesView.swift */; };
 		00B4CF9DD4CCC22F174FEB33 /* CarbRatioCalibrationRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F381A1A8A4F0F7BB7A45CF /* CarbRatioCalibrationRootView.swift */; };
 		05F64B11B90BD79D88539991 /* FoodItemsSelectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3AD10798820B9AABB6A09A2 /* FoodItemsSelectionView.swift */; };
 		D59D911479724734A9D83E90 /* PublishedBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200525D6E07D4639B5197A8E /* PublishedBadge.swift */; };
@@ -1079,6 +1081,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BDA100032F80000000000001 /* BuildReleaseNotesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildReleaseNotesClient.swift; sourceTree = "<group>"; };
+		BDA100042F80000000000001 /* BuildReleaseNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildReleaseNotesView.swift; sourceTree = "<group>"; };
 		072D110FB0FE1823106BAC66 /* AIFoodItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIFoodItem.swift; sourceTree = "<group>"; };
 		0BD64AD8EFB63AA31811755D /* CarbRatioCalibrationProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CarbRatioCalibrationProvider.swift; sourceTree = "<group>"; };
 		124B3C1CF26757DCAEEC9BDE /* ChatCarbSummaryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatCarbSummaryView.swift; sourceTree = "<group>"; };
@@ -4171,6 +4175,7 @@
 		DD1745112C54168300211FAC /* Subviews */ = {
 			isa = PBXGroup;
 			children = (
+				BDA100042F80000000000001 /* BuildReleaseNotesView.swift */,
 				DDCE790E2D6F97F7000A4D7A /* SubmodulesView.swift */,
 				DD1745122C54169400211FAC /* DevicesView.swift */,
 				DD1745142C54388A00211FAC /* TherapySettingsView.swift */,
@@ -4465,6 +4470,7 @@
 			isa = PBXGroup;
 			children = (
 				DDA9AC082D672CEB00E6F1A9 /* AppVersionChecker.swift */,
+				BDA100032F80000000000001 /* BuildReleaseNotesClient.swift */,
 			);
 			path = AppVersionChecker;
 			sourceTree = "<group>";
@@ -5117,6 +5123,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BDA100012F80000000000001 /* BuildReleaseNotesClient.swift in Sources */,
+				BDA100022F80000000000001 /* BuildReleaseNotesView.swift in Sources */,
 				F87C744A2F3AA31B00019C66 /* FoodScannerOverlayView.swift in Sources */,
 				FA69EFEA92BB69DFC080EC7B /* OpenAIService.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* OpenAIStreamingParser.swift in Sources */,

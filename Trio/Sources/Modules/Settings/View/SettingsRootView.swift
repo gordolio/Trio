@@ -173,6 +173,8 @@ extension Settings {
                                     }
                                 }
                             }
+
+                            BuildReleaseNotesLink(commitSHA: buildDetails.trioCommitSHA)
                         }
                     ).listRowBackground(Color.chart)
 
