@@ -35,6 +35,15 @@ private enum BuildReleaseNotesState {
         }
         return Array(builds[..<seenIndex])
     }
+
+    static func buildTitle(_ notes: BuildReleaseNotes) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: notes.metadata.buildDate) else {
+            return "Build \(notes.metadata.shortSha)"
+        }
+        return "Build \(notes.metadata.shortSha) · \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
 }
 
 extension Settings {
@@ -105,22 +114,10 @@ private struct BuildReleaseNotesView: View {
                 .listRowBackground(Color.clear)
             } else {
                 ForEach(Array(builds.enumerated()), id: \.offset) { index, notes in
-                    Section {
-                        noteContent(notes)
-                    } header: {
-                        HStack {
-                            Text(buildTitle(notes))
-                            if isInstalledBuild(notes) {
-                                Text("This Build")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                            if index < unseenCount {
-                                Text("New")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.red)
-                            }
-                        }
+                    NavigationLink {
+                        BuildDetailView(notes: notes)
+                    } label: {
+                        buildRow(notes, isUnseen: index < unseenCount)
                     }
                     .listRowBackground(Color.chart)
                 }
@@ -151,29 +148,89 @@ private struct BuildReleaseNotesView: View {
         unseenCountAtLoad ?? BuildReleaseNotesState.unseenBuilds(in: builds, after: lastSeenSHA).count
     }
 
-    @ViewBuilder private func noteContent(_ notes: BuildReleaseNotes) -> some View {
-        if notes.highlights.isNotEmpty {
-            categoryTitle("Highlights")
-            noteItems(notes.highlights)
-        }
-
-        ForEach(
-            Array(notes.categories.filter { $0.category != "highlights" }.enumerated()),
-            id: \.offset
-        ) { _, category in
-            let items = category.items.filter { !$0.highlight }
-            if items.isNotEmpty {
-                categoryTitle(category.title)
-                noteItems(items)
+    @ViewBuilder private func buildRow(_ notes: BuildReleaseNotes, isUnseen: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(BuildReleaseNotesState.buildTitle(notes))
+                    .font(.subheadline.weight(.semibold))
+                if isInstalledBuild(notes) {
+                    tag("This Build", color: Color.accentColor)
+                }
+                if isUnseen {
+                    tag("New", color: .red)
+                }
+            }
+            let titles = summaryTitles(notes)
+            if titles.isEmpty {
+                Text("No user-facing changes")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(titles.enumerated()), id: \.offset) { _, title in
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("•")
+                        Text(title)
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
             }
         }
+        .padding(.vertical, 2)
     }
 
-    private func categoryTitle(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .textCase(.uppercase)
+    private func tag(_ text: LocalizedStringKey, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(color)
+    }
+
+    /// High-level summary for the list: the title of each highlight/change, without bullet detail.
+    private func summaryTitles(_ notes: BuildReleaseNotes) -> [String] {
+        let highlightTitles = notes.highlights.map(\.title)
+        let categoryTitles = notes.categories
+            .filter { $0.category != "highlights" }
+            .flatMap { $0.items.filter { !$0.highlight }.map(\.title) }
+        return highlightTitles + categoryTitles
+    }
+
+    private func isInstalledBuild(_ notes: BuildReleaseNotes) -> Bool {
+        notes.metadata.shortSha.lowercased() == BuildReleaseNotesState.shortSHA(BuildDetails.shared.trioCommitSHA)
+    }
+}
+
+private struct BuildDetailView: View {
+    let notes: BuildReleaseNotes
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        List {
+            if notes.highlights.isNotEmpty {
+                Section("Highlights") {
+                    noteItems(notes.highlights)
+                }
+                .listRowBackground(Color.chart)
+            }
+
+            ForEach(
+                Array(notes.categories.filter { $0.category != "highlights" }.enumerated()),
+                id: \.offset
+            ) { _, category in
+                let items = category.items.filter { !$0.highlight }
+                if items.isNotEmpty {
+                    Section(category.title) {
+                        noteItems(items)
+                    }
+                    .listRowBackground(Color.chart)
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(appState.trioBackgroundColor(for: colorScheme))
+        .navigationTitle(BuildReleaseNotesState.buildTitle(notes))
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     @ViewBuilder private func noteItems(_ items: [BuildReleaseNotes.Item]) -> some View {
@@ -202,18 +259,5 @@ private struct BuildReleaseNotesView: View {
             }
             .padding(.vertical, 2)
         }
-    }
-
-    private func buildTitle(_ notes: BuildReleaseNotes) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = formatter.date(from: notes.metadata.buildDate) else {
-            return "Build \(notes.metadata.shortSha)"
-        }
-        return "Build \(notes.metadata.shortSha) · \(date.formatted(date: .abbreviated, time: .omitted))"
-    }
-
-    private func isInstalledBuild(_ notes: BuildReleaseNotes) -> Bool {
-        notes.metadata.shortSha.lowercased() == BuildReleaseNotesState.shortSHA(BuildDetails.shared.trioCommitSHA)
     }
 }
