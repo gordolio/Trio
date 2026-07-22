@@ -35,7 +35,10 @@ extension Settings {
                     .listRowBackground(Color.chart)
                 }
 
-                ForEach(Array(notes.categories.filter { $0.category != "highlights" }.enumerated()), id: \.offset) { _, category in
+                ForEach(
+                    Array(notes.categories.filter { $0.category != "highlights" }.enumerated()),
+                    id: \.offset
+                ) { _, category in
                     let items = category.items.filter { !$0.highlight }
                     if items.isNotEmpty {
                         Section(category.title) {
@@ -69,7 +72,7 @@ extension Settings {
                             .foregroundStyle(.orange)
                     }
                     if let source = item.sources.first {
-                        Link(destination: source.url) {
+                        SwiftUI.Link(destination: source.url) {
                             Label("View source on GitHub", systemImage: "arrow.up.right.square")
                                 .font(.footnote)
                         }
