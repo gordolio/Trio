@@ -42,7 +42,7 @@ actor BuildReleaseNotesClient {
     static let shared = BuildReleaseNotesClient()
 
     private let baseURL = URL(
-        string: "https://raw.githubusercontent.com/gordolio/Trio-release-notes/main/public/"
+        string: "https://raw.githubusercontent.com/gordolio/Trio-release-notes/main/public/builds.jsonl"
     )!
     private var cachedBuilds: [BuildReleaseNotes]?
 
@@ -51,63 +51,52 @@ actor BuildReleaseNotesClient {
             return cachedBuilds
         }
 
-        guard let latest = await fetch(relativePath: "latest.json") else {
-            return []
-        }
-
-        var builds = [latest]
-        var visited = Set([latest.metadata.shortSha.lowercased()])
-        var current = latest
-
-        while builds.count < limit,
-              let previousBuiltSha = current.metadata.previousBuiltSha,
-              let previousShortSha = shortSHA(previousBuiltSha),
-              visited.insert(previousShortSha).inserted,
-              let previous = await fetch(
-                  relativePath: "builds/\(previousShortSha).json",
-                  expectedShortSHA: previousShortSha
-              )
-        {
-            builds.append(previous)
-            current = previous
-        }
-
-        cachedBuilds = builds
-        return builds
-    }
-
-    private func fetch(relativePath: String, expectedShortSHA: String? = nil) async -> BuildReleaseNotes? {
-        let url = baseURL.appendingPathComponent(relativePath)
-
         do {
-            var request = URLRequest(url: url)
+            var request = URLRequest(url: baseURL)
             request.cachePolicy = .reloadIgnoringLocalCacheData
             request.timeoutInterval = 10
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse,
                   httpResponse.statusCode == 200,
-                  data.count <= 2 * 1024 * 1024
+                  data.count <= 20 * 1024 * 1024,
+                  let text = String(data: data, encoding: .utf8)
             else {
-                return nil
+                return []
             }
 
-            let notes = try JSONDecoder().decode(BuildReleaseNotes.self, from: data)
-            let sourceURLs = notes.highlights.flatMap(\.sources) + notes.categories.flatMap { category in
-                category.items.flatMap(\.sources)
+            let decoder = JSONDecoder()
+            var builds: [BuildReleaseNotes] = []
+            for line in text.split(whereSeparator: \.isNewline) {
+                guard let lineData = line.data(using: .utf8),
+                      let notes = try? decoder.decode(BuildReleaseNotes.self, from: lineData)
+                else {
+                    continue
+                }
+                guard isValid(notes) else {
+                    continue
+                }
+                builds.append(notes)
+                if builds.count >= limit {
+                    break
+                }
             }
-            guard notes.schemaVersion == "2",
-                  shortSHA(notes.metadata.shortSha) != nil,
-                  expectedShortSHA == nil || notes.metadata.shortSha.lowercased() == expectedShortSHA,
-                  sourceURLs.allSatisfy({ $0.url.scheme == "https" && $0.url.host == "github.com" })
-            else {
-                return nil
-            }
-            return notes
+
+            cachedBuilds = builds
+            return builds
         } catch is CancellationError {
-            return nil
+            return []
         } catch {
-            return nil
+            return []
         }
+    }
+
+    private func isValid(_ notes: BuildReleaseNotes) -> Bool {
+        let sourceURLs = notes.highlights.flatMap(\.sources) + notes.categories.flatMap { category in
+            category.items.flatMap(\.sources)
+        }
+        return notes.schemaVersion == "2" &&
+            shortSHA(notes.metadata.shortSha) != nil &&
+            sourceURLs.allSatisfy { $0.url.scheme == "https" && $0.url.host == "github.com" }
     }
 
     private func shortSHA(_ sha: String) -> String? {

@@ -110,6 +110,11 @@ private struct BuildReleaseNotesView: View {
                     } header: {
                         HStack {
                             Text(buildTitle(notes))
+                            if isInstalledBuild(notes) {
+                                Text("This Build")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Color.accentColor)
+                            }
                             if index < unseenCount {
                                 Text("New")
                                     .font(.caption2.weight(.bold))
@@ -206,5 +211,9 @@ private struct BuildReleaseNotesView: View {
             return "Build \(notes.metadata.shortSha)"
         }
         return "Build \(notes.metadata.shortSha) · \(date.formatted(date: .abbreviated, time: .omitted))"
+    }
+
+    private func isInstalledBuild(_ notes: BuildReleaseNotes) -> Bool {
+        notes.metadata.shortSha.lowercased() == BuildReleaseNotesState.shortSHA(BuildDetails.shared.trioCommitSHA)
     }
 }
