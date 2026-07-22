@@ -44,6 +44,48 @@ private enum BuildReleaseNotesState {
         }
         return "Build \(notes.metadata.shortSha) · \(date.formatted(date: .abbreviated, time: .omitted))"
     }
+
+    static func buildDate(_ notes: BuildReleaseNotes) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: notes.metadata.buildDate)
+    }
+
+    /// A group of builds that share the same calendar month, newest month first.
+    struct MonthGroup: Identifiable {
+        let id: String
+        let title: String
+        let builds: [BuildReleaseNotes]
+    }
+
+    /// Groups builds (already newest-first) into calendar-month sections, preserving order.
+    static func monthGroups(_ builds: [BuildReleaseNotes]) -> [MonthGroup] {
+        let keyFormatter = DateFormatter()
+        keyFormatter.locale = Locale(identifier: "en_US_POSIX")
+        keyFormatter.dateFormat = "yyyy-MM"
+
+        let titleFormatter = DateFormatter()
+        titleFormatter.locale = Locale.current
+        titleFormatter.setLocalizedDateFormatFromTemplate("MMMM yyyy")
+
+        var order: [String] = []
+        var byKey: [String: (title: String, builds: [BuildReleaseNotes])] = [:]
+
+        for notes in builds {
+            let date = buildDate(notes)
+            let key = date.map { keyFormatter.string(from: $0) } ?? "unknown"
+            let title = date.map { titleFormatter.string(from: $0) } ?? String(localized: "Earlier Builds")
+            if byKey[key] == nil {
+                byKey[key] = (title, [])
+                order.append(key)
+            }
+            byKey[key]?.builds.append(notes)
+        }
+
+        return order.map { key in
+            MonthGroup(id: key, title: byKey[key]!.title, builds: byKey[key]!.builds)
+        }
+    }
 }
 
 extension Settings {
@@ -91,7 +133,7 @@ extension Settings {
 private struct BuildReleaseNotesView: View {
     @AppStorage(BuildReleaseNotesState.lastSeenSHAKey) private var lastSeenSHA = ""
     @State private var builds: [BuildReleaseNotes]
-    @State private var unseenCountAtLoad: Int? = nil
+    @State private var unseenSHAsAtLoad: Set<String>? = nil
 
     let markSeenOnLoad: Bool
 
@@ -113,13 +155,17 @@ private struct BuildReleaseNotesView: View {
                 )
                 .listRowBackground(Color.clear)
             } else {
-                ForEach(Array(builds.enumerated()), id: \.offset) { index, notes in
-                    NavigationLink {
-                        BuildDetailView(notes: notes)
-                    } label: {
-                        buildRow(notes, isUnseen: index < unseenCount)
+                ForEach(BuildReleaseNotesState.monthGroups(builds)) { group in
+                    Section(group.title) {
+                        ForEach(Array(group.builds.enumerated()), id: \.offset) { _, notes in
+                            NavigationLink {
+                                BuildDetailView(notes: notes)
+                            } label: {
+                                buildRow(notes, isUnseen: unseenSHAs.contains(notes.metadata.shortSha.lowercased()))
+                            }
+                            .listRowBackground(Color.chart)
+                        }
                     }
-                    .listRowBackground(Color.chart)
                 }
             }
         }
@@ -137,22 +183,32 @@ private struct BuildReleaseNotesView: View {
                     installedSHA: BuildDetails.shared.trioCommitSHA
                 )
             }
-            unseenCountAtLoad = BuildReleaseNotesState.unseenBuilds(in: builds, after: lastSeenSHA).count
+            unseenSHAsAtLoad = Set(
+                BuildReleaseNotesState.unseenBuilds(in: builds, after: lastSeenSHA)
+                    .map { $0.metadata.shortSha.lowercased() }
+            )
             if markSeenOnLoad, let newest = builds.first {
                 lastSeenSHA = newest.metadata.shortSha.lowercased()
             }
         }
     }
 
-    private var unseenCount: Int {
-        unseenCountAtLoad ?? BuildReleaseNotesState.unseenBuilds(in: builds, after: lastSeenSHA).count
+    private var unseenSHAs: Set<String> {
+        unseenSHAsAtLoad ?? Set(
+            BuildReleaseNotesState.unseenBuilds(in: builds, after: lastSeenSHA)
+                .map { $0.metadata.shortSha.lowercased() }
+        )
     }
 
     @ViewBuilder private func buildRow(_ notes: BuildReleaseNotes, isUnseen: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(BuildReleaseNotesState.buildTitle(notes))
+                Text(rowDate(notes))
                     .font(.subheadline.weight(.semibold))
+                Text(notes.metadata.shortSha)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
                 if isInstalledBuild(notes) {
                     tag("This Build", color: Color.accentColor)
                 }
@@ -166,7 +222,8 @@ private struct BuildReleaseNotesView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(Array(titles.enumerated()), id: \.offset) { _, title in
+                let shown = titles.prefix(summaryLimit)
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, title in
                     HStack(alignment: .top, spacing: 6) {
                         Text("•")
                         Text(title)
@@ -174,9 +231,23 @@ private struct BuildReleaseNotesView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 }
+                if titles.count > summaryLimit {
+                    Text("+\(titles.count - summaryLimit) more")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                }
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private let summaryLimit = 3
+
+    private func rowDate(_ notes: BuildReleaseNotes) -> String {
+        guard let date = BuildReleaseNotesState.buildDate(notes) else {
+            return "Build"
+        }
+        return date.formatted(.dateTime.month(.abbreviated).day())
     }
 
     private func tag(_ text: LocalizedStringKey, color: Color) -> some View {
