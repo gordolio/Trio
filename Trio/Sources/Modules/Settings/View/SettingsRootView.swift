@@ -174,7 +174,7 @@ extension Settings {
                                 }
                             }
 
-                            BuildReleaseNotesLink(commitSHA: buildDetails.trioCommitSHA)
+                            BuildReleaseNotesLink()
                         }
                     ).listRowBackground(Color.chart)
 
