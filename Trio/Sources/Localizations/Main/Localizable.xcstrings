@@ -5722,6 +5722,9 @@
         }
       }
     },
+    "· %@" : {
+
+    },
     "“Trio” Would Like to Use Bluetooth" : {
       "localizations" : {
         "bg" : {
@@ -20149,6 +20152,9 @@
         }
       }
     },
+    "+%lld more" : {
+
+    },
     "+6" : {
       "localizations" : {
         "bg" : {
@@ -32839,9 +32845,6 @@
         }
       }
     },
-    "Add Mock Garmin Watch" : {
-
-    },
     "Add Omnipod" : {
       "comment" : "Add Omnipod pump",
       "extractionState" : "manual",
@@ -37651,6 +37654,18 @@
         }
       }
     },
+    "AI" : {
+
+    },
+    "AI Analysis Error" : {
+
+    },
+    "AI Estimate" : {
+      "comment" : "Label for AI-generated carb estimate"
+    },
+    "AI Provider" : {
+
+    },
     "Alarm" : {
       "comment" : "Name of a critical-alarm sound file.",
       "localizations" : {
@@ -37775,18 +37790,6 @@
           }
         }
       }
-    },
-    "AI" : {
-
-    },
-    "AI Analysis Error" : {
-
-    },
-    "AI Estimate" : {
-      "comment" : "Label for AI-generated carb estimate"
-    },
-    "AI Provider" : {
-
     },
     "Alarms" : {
       "extractionState" : "manual",
@@ -59813,6 +59816,12 @@
         }
       }
     },
+    "Begin Calibration Prep?" : {
+
+    },
+    "Begin Prep" : {
+
+    },
     "Behavior" : {
       "localizations" : {
         "bg" : {
@@ -60185,12 +60194,6 @@
           }
         }
       }
-    },
-    "Begin Calibration Prep?" : {
-
-    },
-    "Begin Prep" : {
-
     },
     "Beta (TestFlight) Expires" : {
       "localizations" : {
@@ -67514,6 +67517,18 @@
         }
       }
     },
+    "Calibration" : {
+
+    },
+    "Calibration In Progress" : {
+
+    },
+    "Calibration Info" : {
+
+    },
+    "Calibration test timed out. Conditions did not stabilize within %lld minutes." : {
+
+    },
     "Calibration unavailable" : {
       "localizations" : {
         "bg" : {
@@ -67637,18 +67652,6 @@
           }
         }
       }
-    },
-    "Calibration" : {
-
-    },
-    "Calibration In Progress" : {
-
-    },
-    "Calibration Info" : {
-
-    },
-    "Calibration test timed out. Conditions did not stabilize within %lld minutes." : {
-
     },
     "Calibrationinfo" : {
       "extractionState" : "manual",
@@ -68413,9 +68416,6 @@
         }
       }
     },
-    "Cancel Calibration Test?" : {
-
-    },
     "Cancel bolus" : {
       "comment" : "A button that cancels a bolus.",
       "localizations" : {
@@ -68540,6 +68540,9 @@
           }
         }
       }
+    },
+    "Cancel Calibration Test?" : {
+
     },
     "Cancel override" : {
       "localizations" : {
@@ -75750,6 +75753,12 @@
         }
       }
     },
+    "Checking Conditions" : {
+
+    },
+    "Checking if conditions are right for calibration" : {
+
+    },
     "Chime" : {
       "comment" : "Name of a sound file.",
       "localizations" : {
@@ -75874,12 +75883,6 @@
           }
         }
       }
-    },
-    "Checking Conditions" : {
-
-    },
-    "Checking if conditions are right for calibration" : {
-
     },
     "Choose a value that covers your highest insulin needs — think about a correction for a very high glucose reading plus your biggest meal bolus. This gives Trio room to work while keeping you safe." : {
       "localizations" : {
@@ -112905,6 +112908,9 @@
         }
       }
     },
+    "Earlier Builds" : {
+
+    },
     "Edit" : {
       "localizations" : {
         "bg" : {
@@ -123101,7 +123107,7 @@
       }
     },
     "Error" : {
-      "comment" : "Error alert title\nError title",
+      "comment" : "Error alert title",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -134499,6 +134505,9 @@
         }
       }
     },
+    "For calibration testing, use a quiet glucose trace so preflight checks pass. Reduce amplitude to ≤10 and noise to 0." : {
+
+    },
     "For everyday heads-up notifications. These behave like a standard banner — they stay quiet when your phone is silenced or a Focus is on. Examples: an algorithm error, a sensor expiration reminder, or a time-zone change being detected." : {
       "localizations" : {
         "bg" : {
@@ -134622,9 +134631,6 @@
           }
         }
       }
-    },
-    "For calibration testing, use a quiet glucose trace so preflight checks pass. Reduce amplitude to ≤10 and noise to 0." : {
-
     },
     "For example, at a temp target of %@ %@, your basal is reduced to 50%%, but this scales depending on the target (e.g., 75%% at %@ %@, 60%% at %@ %@)." : {
       "localizations" : {
@@ -141523,6 +141529,9 @@
         }
       }
     },
+    "Glucose During Test" : {
+
+    },
     "Glucose Error" : {
       "localizations" : {
         "bg" : {
@@ -141646,9 +141655,6 @@
           }
         }
       }
-    },
-    "Glucose During Test" : {
-
     },
     "Glucose forecast is very low." : {
       "localizations" : {
@@ -149869,6 +149875,9 @@
         }
       }
     },
+    "Highlights" : {
+
+    },
     "History" : {
       "comment" : "Header",
       "localizations" : {
@@ -152149,6 +152158,9 @@
           }
         }
       }
+    },
+    "Human review recommended" : {
+
     },
     "I have read and accept the" : {
       "localizations" : {
@@ -191456,6 +191468,12 @@
         }
       }
     },
+    "Network error: %@" : {
+      "comment" : "Network error with description"
+    },
+    "New" : {
+
+    },
     "NEW" : {
       "localizations" : {
         "bg" : {
@@ -191579,9 +191597,6 @@
           }
         }
       }
-    },
-    "Network error: %@" : {
-      "comment" : "Network error with description"
     },
     "New Basal Profile =\n(Current Basal Profile) × (Autosens Ratio)" : {
       "localizations" : {
@@ -192211,6 +192226,9 @@
         }
       }
     },
+    "Next (5 min)" : {
+
+    },
     "Night only" : {
       "comment" : "A label for \"Night only\".",
       "localizations" : {
@@ -192460,9 +192478,6 @@
           }
         }
       }
-    },
-    "Next (5 min)" : {
-
     },
     "Nightscout" : {
       "localizations" : {
@@ -195227,9 +195242,6 @@
         }
       }
     },
-    "No items selected" : {
-      "comment" : "Text shown when no food items are selected"
-    },
     "No glucose status; cannot determine basal." : {
       "localizations" : {
         "bg" : {
@@ -195477,6 +195489,9 @@
           }
         }
       }
+    },
+    "No items selected" : {
+      "comment" : "Text shown when no food items are selected"
     },
     "No Libre Transmitter Selected" : {
       "comment" : "No Libre Transmitter Selected",
@@ -196485,6 +196500,9 @@
         }
       }
     },
+    "No Release Notes Available" : {
+
+    },
     "No Reminder" : {
       "comment" : "Value text for no expiration reminder",
       "extractionState" : "manual",
@@ -197379,6 +197397,9 @@
           }
         }
       }
+    },
+    "No user-facing changes" : {
+
     },
     "Noise:" : {
       "localizations" : {
@@ -204059,6 +204080,9 @@
         }
       }
     },
+    "Observing" : {
+
+    },
     "Occlusion" : {
       "localizations" : {
         "bg" : {
@@ -204182,9 +204206,6 @@
           }
         }
       }
-    },
-    "Observing" : {
-
     },
     "of" : {
       "comment" : "Bolus progress view",
@@ -207323,9 +207344,6 @@
     "OpenAI" : {
 
     },
-    "OpenAI API key is not configured" : {
-      "comment" : "Error when OpenAI API key is missing"
-    },
     "OpenAPS main settings" : {
       "comment" : "Headers for settings -----------------------",
       "extractionState" : "manual",
@@ -207850,6 +207868,9 @@
           }
         }
       }
+    },
+    "OpenRouter API key is not configured" : {
+      "comment" : "Error when OpenRouter API key is missing"
     },
     "Opens the camera to scan food in Trio" : {
       "localizations" : {
@@ -214572,6 +214593,9 @@
         }
       }
     },
+    "Photo Library" : {
+
+    },
     "Pick a duration to mute every Trio alarm. Critical alerts (e.g. occlusion, urgent low) still pierce the snooze." : {
       "localizations" : {
         "bg" : {
@@ -214695,9 +214719,6 @@
           }
         }
       }
-    },
-    "Photo Library" : {
-
     },
     "Pick Treatment" : {
       "localizations" : {
@@ -227319,6 +227340,9 @@
     "Reject" : {
       "comment" : "Button to reject published nutrition value and use AI estimate instead"
     },
+    "Release notes will appear here after they are generated." : {
+
+    },
     "ReliOn glucose tablets, 4g carbs each" : {
 
     },
@@ -228192,9 +228216,6 @@
           }
         }
       }
-    },
-    "Remove All Devices" : {
-
     },
     "Remove Last" : {
       "localizations" : {
@@ -237915,7 +237936,7 @@
         }
       }
     },
-    "Selects which AI service powers the AI-assisted carb entry features. API keys for both providers are set in ConfigOverride.xcconfig at build time; they are not configurable in the app." : {
+    "Selects which model runs first for AI-assisted carb entry. Both models are accessed through OpenRouter." : {
 
     },
     "Send to all providers simultaneously" : {
@@ -247656,12 +247677,6 @@
           }
         }
       }
-    },
-    "Simulator only - for testing UI workflow" : {
-
-    },
-    "Simulator Testing" : {
-
     },
     "Skip Bolus screen after carbs" : {
       "comment" : "Do you want to show bolus screen after added carbs?",
@@ -274049,6 +274064,9 @@
         }
       }
     },
+    "This Build" : {
+
+    },
     "This cap prevents the system from overestimating how much insulin is needed when carb absorption isn't visible, offering a safeguard for accurate dosing." : {
       "localizations" : {
         "bg" : {
@@ -283128,6 +283146,12 @@
         }
       }
     },
+    "Time Remaining" : {
+
+    },
+    "Time to Test" : {
+
+    },
     "Time-Sensitive" : {
       "localizations" : {
         "bg" : {
@@ -283251,12 +283275,6 @@
           }
         }
       }
-    },
-    "Time Remaining" : {
-
-    },
-    "Time to Test" : {
-
     },
     "Timed Out" : {
 
@@ -305957,6 +305975,9 @@
     "View Results" : {
 
     },
+    "View source on GitHub" : {
+
+    },
     "W" : {
       "comment" : "Abbreviation for week",
       "localizations" : {
@@ -310223,6 +310244,9 @@
         }
       }
     },
+    "What's New" : {
+
+    },
     "What's NOT limited:" : {
       "localizations" : {
         "bg" : {
@@ -310843,7 +310867,7 @@
         }
       }
     },
-    "When enabled, each food image is analyzed by every available provider in parallel. You can switch between results with the tabs above the food list to compare estimates before confirming." : {
+    "When enabled, both models appear as tabs. The selected model runs first; the other loads when you open its tab." : {
 
     },
     "When enabled, long-pressing the + button on the home screen opens a Quick-Pick Boluses sheet. It suggests up to three bolus amounts based on your bolus history at similar times of day, weighted by recency and day type (weekday vs. weekend)." : {
