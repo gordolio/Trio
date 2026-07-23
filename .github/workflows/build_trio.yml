@@ -250,6 +250,50 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
+      # Preserve the exact built commit for release notes without publishing the IPA
+      - name: Extract release notes build metadata
+        shell: bash
+        run: |
+          metadata_entry=""
+          metadata_count=0
+
+          while IFS= read -r entry; do
+            case "$entry" in
+              Payload/*.app/BuildDetails.plist)
+                relative_path="${entry#Payload/}"
+                if [ "${relative_path#*/}" = "BuildDetails.plist" ]; then
+                  metadata_entry="$entry"
+                  metadata_count=$((metadata_count + 1))
+                fi
+                ;;
+            esac
+          done < <(unzip -Z1 Trio.ipa)
+
+          if [ "$metadata_count" -ne 1 ]; then
+            echo "::error::Expected one app BuildDetails.plist in Trio.ipa, found $metadata_count."
+            exit 1
+          fi
+
+          embedded_metadata="$RUNNER_TEMP/Trio-BuildDetails.plist"
+          unzip -p Trio.ipa "$metadata_entry" > "$embedded_metadata"
+
+          commit_sha=$(/usr/libexec/PlistBuddy -c "Print :com-trio-commit-sha" "$embedded_metadata")
+          if [[ ! "$commit_sha" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+            echo "::error::BuildDetails.plist contains an invalid commit SHA."
+            exit 1
+          fi
+
+          build_date=$(/usr/libexec/PlistBuddy -c "Print :com-trio-build-date" "$embedded_metadata")
+          if [ -z "$build_date" ]; then
+            echo "::error::BuildDetails.plist does not contain a build date."
+            exit 1
+          fi
+
+          mkdir -p release-notes
+          plutil -create xml1 release-notes/BuildDetails.plist
+          plutil -insert com-trio-commit-sha -string "$commit_sha" release-notes/BuildDetails.plist
+          plutil -insert com-trio-build-date -string "$build_date" release-notes/BuildDetails.plist
+
       # Upload to TestFlight
       - name: Fastlane upload to TestFlight
         run: bundle exec fastlane release
@@ -261,15 +305,13 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
-      # Upload diagnostics without publishing the built application
-      - name: Upload build log and symbol artifacts
-        if: always()
+      # Publish only the non-sensitive metadata required by Trio-release-notes
+      - name: Upload release notes metadata
         uses: actions/upload-artifact@v6
         with:
-          name: build-artifacts
-          path: |
-            buildlog
-            artifacts/*.dSYM.zip
+          name: release-notes-metadata
+          path: release-notes/BuildDetails.plist
+          retention-days: 90
 
   notify_release_notes:
     name: Notify release notes
