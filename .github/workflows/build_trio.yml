@@ -214,13 +214,11 @@ jobs:
           # Several patches may be added per submodule.
           # Adding comments (#) is strongly recommended to easily tell the individual patches apart.
 
-      # Inject OpenAI API key into ConfigOverride.xcconfig for AI carb estimation
-      - name: Configure OpenAI API Key
-        run: echo "OPENAI_API_KEY = ${{ secrets.OPENAI_API_KEY }}" >> ConfigOverride.xcconfig
-
-      # Inject Anthropic API key into ConfigOverride.xcconfig for AI carb estimation
-      - name: Configure Anthropic API Key
-        run: echo "ANTHROPIC_API_KEY = ${{ secrets.ANTHROPIC_API_KEY }}" >> ConfigOverride.xcconfig
+      # Inject OpenRouter API key into ConfigOverride.xcconfig for AI carb estimation
+      - name: Configure OpenRouter API Key
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: printf '%s\n' "OPENROUTER_API_KEY = $OPENROUTER_API_KEY" >> ConfigOverride.xcconfig
 
       # Patch Fastlane Match to not print tables
       - name: Patch Match Tables
@@ -263,15 +261,15 @@ jobs:
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
 
-      # Upload Build artifacts
-      - name: Upload build log, IPA and Symbol artifacts
+      # Upload diagnostics without publishing the built application
+      - name: Upload build log and symbol artifacts
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: build-artifacts
           path: |
-            artifacts
             buildlog
+            artifacts/*.dSYM.zip
 
   notify_release_notes:
     name: Notify release notes

@@ -21,7 +21,7 @@
 		1FE9DDEA4241B6767CFB5850 /* ScanFoodIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE64D6C6E38DDE8C69942019 /* ScanFoodIntent.swift */; };
 		209E2A74CF8986BC64BB2B7D /* PhotoPickerWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */; };
 		2ADD5066B7B6BD1316327E89 /* CalibrationTestStored+CoreDataProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E9634AEAF5898C5078A5900 /* CalibrationTestStored+CoreDataProperties.swift */; };
-		2EE9A7A536D5D74E5772041D /* OpenAIResponsesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8304AAD2D3DC6C425B0EC566 /* OpenAIResponsesService.swift */; };
+		2EE9A7A536D5D74E5772041D /* OpenRouterResponsesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8304AAD2D3DC6C425B0EC566 /* OpenRouterResponsesService.swift */; };
 		31F4662FE919CE32C59B3B77 /* ObservationPhaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB33289344B40A5E9D637F64 /* ObservationPhaseView.swift */; };
 		34555E855AB3A41E8A1B0A6E /* GlucoseTabletBrand.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA4F586CF37541FDD7D0DA0F /* GlucoseTabletBrand.swift */; };
 		4B0241911913C56C42CB08E4 /* OpenTreatmentIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4797697E4FED0E86A8A64713 /* OpenTreatmentIntent.swift */; };
@@ -49,13 +49,11 @@
 		E9FBCE100D261468CBF9829D /* AIFoodAnalysisView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3AD49EC5007797FF5BA635C /* AIFoodAnalysisView.swift */; };
 		EE4FE75BEE70938C1DEF4244 /* PrepPhaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC80617EBB3738D990D60BE1 /* PrepPhaseView.swift */; };
 		F87C744A2F3AA31B00019C66 /* FoodScannerOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F87C74492F3AA31B00019C66 /* FoodScannerOverlayView.swift */; };
-		FA69EFEA92BB69DFC080EC7B /* OpenAIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8138ABAF0E8FF1F359D3EF4B /* OpenAIService.swift */; };
+		FA69EFEA92BB69DFC080EC7B /* OpenRouterService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8138ABAF0E8FF1F359D3EF4B /* OpenRouterService.swift */; };
 		FC598BB084F20B54CB964389 /* AnimatedRainbowButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B036683B506036C4E32D829 /* AnimatedRainbowButton.swift */; };
 		FF5B0C3309F99DD99C52A31C /* NutritionFactsMerger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */; };
 		BF010000000000000000AA01 /* AIProviderType.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF010000000000000000AA02 /* AIProviderType.swift */; };
 		BF020000000000000000AA01 /* AIProviderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF020000000000000000AA02 /* AIProviderService.swift */; };
-		BF030000000000000000AA01 /* ClaudeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF030000000000000000AA02 /* ClaudeService.swift */; };
-		BF040000000000000000AA01 /* ClaudeResponsesService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF040000000000000000AA02 /* ClaudeResponsesService.swift */; };
 		BF050000000000000000AA01 /* AIServiceSettingsDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF050000000000000000AA02 /* AIServiceSettingsDataFlow.swift */; };
 		BF060000000000000000AA01 /* AIServiceSettingsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF060000000000000000AA02 /* AIServiceSettingsProvider.swift */; };
 		BF070000000000000000AA01 /* AIServiceSettingsStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF070000000000000000AA02 /* AIServiceSettingsStateModel.swift */; };
@@ -1105,9 +1103,9 @@
 		6B036683B506036C4E32D829 /* AnimatedRainbowButton.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AnimatedRainbowButton.swift; sourceTree = "<group>"; };
 		6F929A88F581348966326C99 /* ChatMessageView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatMessageView.swift; sourceTree = "<group>"; };
 		76ADE9AA5EAC327B90E4E393 /* CarbRatioCalibrationDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CarbRatioCalibrationDataFlow.swift; sourceTree = "<group>"; };
-		8138ABAF0E8FF1F359D3EF4B /* OpenAIService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenAIService.swift; sourceTree = "<group>"; };
+		8138ABAF0E8FF1F359D3EF4B /* OpenRouterService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenRouterService.swift; sourceTree = "<group>"; };
 		82F381A1A8A4F0F7BB7A45CF /* CarbRatioCalibrationRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CarbRatioCalibrationRootView.swift; sourceTree = "<group>"; };
-		8304AAD2D3DC6C425B0EC566 /* OpenAIResponsesService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenAIResponsesService.swift; sourceTree = "<group>"; };
+		8304AAD2D3DC6C425B0EC566 /* OpenRouterResponsesService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenRouterResponsesService.swift; sourceTree = "<group>"; };
 		A3AD10798820B9AABB6A09A2 /* FoodItemsSelectionView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FoodItemsSelectionView.swift; sourceTree = "<group>"; };
 		200525D6E07D4639B5197A8E /* PublishedBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublishedBadge.swift; sourceTree = "<group>"; };
 		AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShimmerModifier.swift; sourceTree = "<group>"; };
@@ -1128,8 +1126,6 @@
 		F87C74492F3AA31B00019C66 /* FoodScannerOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodScannerOverlayView.swift; sourceTree = "<group>"; };
 		BF010000000000000000AA02 /* AIProviderType.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderType.swift; sourceTree = "<group>"; };
 		BF020000000000000000AA02 /* AIProviderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderService.swift; sourceTree = "<group>"; };
-		BF030000000000000000AA02 /* ClaudeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeService.swift; sourceTree = "<group>"; };
-		BF040000000000000000AA02 /* ClaudeResponsesService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeResponsesService.swift; sourceTree = "<group>"; };
 		BF050000000000000000AA02 /* AIServiceSettingsDataFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServiceSettingsDataFlow.swift; sourceTree = "<group>"; };
 		BF060000000000000000AA02 /* AIServiceSettingsProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServiceSettingsProvider.swift; sourceTree = "<group>"; };
 		BF070000000000000000AA02 /* AIServiceSettingsStateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServiceSettingsStateModel.swift; sourceTree = "<group>"; };
@@ -2166,18 +2162,16 @@
 		85795A8FCBF951AD76106BE8 /* AI */ = {
 			isa = PBXGroup;
 			children = (
-				8138ABAF0E8FF1F359D3EF4B /* OpenAIService.swift */,
+				8138ABAF0E8FF1F359D3EF4B /* OpenRouterService.swift */,
 				D6E7F8091A2B3C4D5E6F7081 /* OpenAIStreamingParser.swift */,
 				072D110FB0FE1823106BAC66 /* AIFoodItem.swift */,
 				E7CD8AAFDC0C1AA493AA6E14 /* AIConversationManager.swift */,
 				1C4CCC5F9597354AF264E8E0 /* AIConversationMessage.swift */,
 				69E86DCEB88BD4A8749F152B /* AIAssistedCarbEntryMetadata.swift */,
-				8304AAD2D3DC6C425B0EC566 /* OpenAIResponsesService.swift */,
+				8304AAD2D3DC6C425B0EC566 /* OpenRouterResponsesService.swift */,
 				69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */,
 				BF010000000000000000AA02 /* AIProviderType.swift */,
 				BF020000000000000000AA02 /* AIProviderService.swift */,
-				BF030000000000000000AA02 /* ClaudeService.swift */,
-				BF040000000000000000AA02 /* ClaudeResponsesService.swift */,
 			);
 			path = AI;
 			sourceTree = "<group>";
@@ -5126,7 +5120,7 @@
 				BDA100012F80000000000001 /* BuildReleaseNotesClient.swift in Sources */,
 				BDA100022F80000000000001 /* BuildReleaseNotesView.swift in Sources */,
 				F87C744A2F3AA31B00019C66 /* FoodScannerOverlayView.swift in Sources */,
-				FA69EFEA92BB69DFC080EC7B /* OpenAIService.swift in Sources */,
+				FA69EFEA92BB69DFC080EC7B /* OpenRouterService.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* OpenAIStreamingParser.swift in Sources */,
 				79B3A48E1C04DD133DA21350 /* AIFoodItem.swift in Sources */,
 				8335CFC1A2CF0B617C928406 /* AIConversationManager.swift in Sources */,
@@ -5149,11 +5143,9 @@
 				E9FBCE100D261468CBF9829D /* AIFoodAnalysisView.swift in Sources */,
 				4B0241911913C56C42CB08E4 /* OpenTreatmentIntent.swift in Sources */,
 				1FE9DDEA4241B6767CFB5850 /* ScanFoodIntent.swift in Sources */,
-				2EE9A7A536D5D74E5772041D /* OpenAIResponsesService.swift in Sources */,
+				2EE9A7A536D5D74E5772041D /* OpenRouterResponsesService.swift in Sources */,
 				BF010000000000000000AA01 /* AIProviderType.swift in Sources */,
 				BF020000000000000000AA01 /* AIProviderService.swift in Sources */,
-				BF030000000000000000AA01 /* ClaudeService.swift in Sources */,
-				BF040000000000000000AA01 /* ClaudeResponsesService.swift in Sources */,
 				BF050000000000000000AA01 /* AIServiceSettingsDataFlow.swift in Sources */,
 				BF060000000000000000AA01 /* AIServiceSettingsProvider.swift in Sources */,
 				BF070000000000000000AA01 /* AIServiceSettingsStateModel.swift in Sources */,

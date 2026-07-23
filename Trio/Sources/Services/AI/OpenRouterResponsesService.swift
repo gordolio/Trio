@@ -41,90 +41,64 @@ struct PublishedNutritionResult: Codable {
     let servingCountUnit: String
 }
 
-// MARK: - Responses API Request/Response Types
+// MARK: - OpenRouter Web Search Types
 
-/// Request body for the OpenAI Responses API
-private struct ResponsesAPIRequest: Encodable {
+private struct OpenRouterWebSearchRequest: Encodable {
     let model: String
-    let tools: [ResponsesAPITool]
-    let input: String
-    let text: ResponsesAPITextFormat?
+    let messages: [OpenAIMessage]
+    let maxTokens: Int
+    let responseFormat: OpenAIResponseFormat
+    let tools: [OpenRouterServerTool]
 
-    init(model: String, tools: [ResponsesAPITool], input: String, text: ResponsesAPITextFormat? = nil) {
-        self.model = model
-        self.tools = tools
-        self.input = input
-        self.text = text
+    enum CodingKeys: String, CodingKey {
+        case model
+        case messages
+        case maxTokens = "max_tokens"
+        case responseFormat = "response_format"
+        case tools
     }
 }
 
-/// Tool definition for the Responses API
-private struct ResponsesAPITool: Encodable {
+private struct OpenRouterServerTool: Encodable {
     let type: String
+    let parameters: OpenRouterWebSearchParameters
 }
 
-/// Text format specification for the Responses API
-private struct ResponsesAPITextFormat: Encodable {
-    let format: ResponsesAPIFormat
+private struct OpenRouterWebSearchParameters: Encodable {
+    let engine: String
+    let maxResults: Int
+
+    enum CodingKeys: String, CodingKey {
+        case engine
+        case maxResults = "max_results"
+    }
 }
 
-/// Format within the text specification
-private struct ResponsesAPIFormat: Encodable {
+private struct OpenRouterChatResponse: Decodable {
+    let choices: [OpenRouterChoice]
+}
+
+private struct OpenRouterChoice: Decodable {
+    let message: OpenRouterResponseMessage
+}
+
+private struct OpenRouterResponseMessage: Decodable {
+    let content: String?
+    let annotations: [OpenRouterAnnotation]?
+}
+
+private struct OpenRouterAnnotation: Decodable {
     let type: String
-    let name: String
-    let strict: Bool
-    let schema: JSONSchemaDefinition
+    let urlCitation: OpenRouterURLCitation?
 
     enum CodingKeys: String, CodingKey {
         case type
-        case name
-        case strict
-        case schema
+        case urlCitation = "url_citation"
     }
 }
 
-/// Root response from the Responses API
-private struct ResponsesAPIResponse: Decodable {
-    let id: String
-    let output: [ResponsesAPIOutputItem]
-    let status: String
-}
-
-/// An output item in the Responses API response
-private struct ResponsesAPIOutputItem: Decodable {
-    let type: String
-    let content: [ResponsesAPIContent]?
-
-    enum CodingKeys: String, CodingKey {
-        case type
-        case content
-    }
-}
-
-/// Content within a Responses API output item
-private struct ResponsesAPIContent: Decodable {
-    let type: String
-    let text: String?
-    let annotations: [ResponsesAPIAnnotation]?
-
-    enum CodingKeys: String, CodingKey {
-        case type
-        case text
-        case annotations
-    }
-}
-
-/// An annotation (citation) in the Responses API response
-private struct ResponsesAPIAnnotation: Decodable {
-    let type: String
-    let url: String?
-    let title: String?
-
-    enum CodingKeys: String, CodingKey {
-        case type
-        case url
-        case title
-    }
+private struct OpenRouterURLCitation: Decodable {
+    let url: String
 }
 
 /// Internal response structure for parsing the nutrition search result
@@ -141,30 +115,30 @@ private struct NutritionSearchResponse: Decodable {
     let servingCountUnit: String
 }
 
-// MARK: - OpenAI Responses Service
+// MARK: - OpenRouter Responses Service
 
 /// Service for restaurant food detection and published nutrition lookup.
-/// Uses the OpenAI Chat Completions API (classifier) and Responses API (web search).
-final class OpenAIResponsesService: AIResponsesProviderService {
-    static let shared = OpenAIResponsesService()
+final class OpenRouterResponsesService: AIResponsesProviderService {
+    static let shared = OpenRouterResponsesService()
 
-    private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenAIResponsesService")
+    private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenRouterResponsesService")
     private let session: URLSession
-    private let chatEndpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
-    private let responsesEndpoint = URL(string: "https://api.openai.com/v1/responses")!
+    private let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let primaryModel = "openai/gpt-4o"
+    private let classifierModel = "openai/gpt-4o-mini"
 
     init(session: URLSession = .shared) {
         self.session = session
     }
 
     private func getAPIKey() throws -> String {
-        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenAIAPIKey") as? String,
+        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
               !apiKey.isEmpty,
-              apiKey != "$(OPENAI_API_KEY)"
+              apiKey != "$(OPENROUTER_API_KEY)"
         else {
-            os_log("OpenAI API key not configured", log: log, type: .error)
+            os_log("OpenRouter API key not configured", log: log, type: .error)
             throw OpenAIServiceError.missingAPIKey
         }
         return apiKey
@@ -179,7 +153,7 @@ final class OpenAIResponsesService: AIResponsesProviderService {
 
         os_log("Classifying description for restaurant item: %{public}@", log: log, type: .info, description)
 
-        var request = URLRequest(url: chatEndpoint)
+        var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -201,7 +175,7 @@ final class OpenAIResponsesService: AIResponsesProviderService {
         """
 
         let chatRequest = OpenAIChatRequest(
-            model: "gpt-4o-mini",
+            model: classifierModel,
             messages: [
                 OpenAIMessage(role: "system", content: [.text(systemPrompt)]),
                 OpenAIMessage(role: "user", content: [.text(description)])
@@ -254,7 +228,7 @@ final class OpenAIResponsesService: AIResponsesProviderService {
 
     // MARK: - Agent 2: Published Nutrition Searcher
 
-    /// Searches for published nutrition facts using the OpenAI Responses API with web_search tool.
+    /// Searches for published nutrition facts using OpenRouter's web-search server tool.
     func searchPublishedNutrition(
         restaurantName: String,
         menuItemName: String
@@ -267,7 +241,7 @@ final class OpenAIResponsesService: AIResponsesProviderService {
             restaurantName, menuItemName
         )
 
-        var request = URLRequest(url: responsesEndpoint)
+        var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -300,21 +274,27 @@ final class OpenAIResponsesService: AIResponsesProviderService {
         return your best match with a lower confidence score.
         """
 
-        let responsesRequest = ResponsesAPIRequest(
-            model: "gpt-4o",
-            tools: [ResponsesAPITool(type: "web_search")],
-            input: inputPrompt,
-            text: ResponsesAPITextFormat(
-                format: ResponsesAPIFormat(
-                    type: "json_schema",
+        let searchRequest = OpenRouterWebSearchRequest(
+            model: primaryModel,
+            messages: [OpenAIMessage(role: "user", content: [.text(inputPrompt)])],
+            maxTokens: 2000,
+            responseFormat: OpenAIResponseFormat(
+                type: "json_schema",
+                jsonSchema: OpenAIJSONSchema(
                     name: "published_nutrition",
                     strict: true,
                     schema: buildNutritionSearchSchema()
                 )
-            )
+            ),
+            tools: [
+                OpenRouterServerTool(
+                    type: "openrouter:web_search",
+                    parameters: OpenRouterWebSearchParameters(engine: "auto", maxResults: 5)
+                )
+            ]
         )
 
-        request.httpBody = try encoder.encode(responsesRequest)
+        request.httpBody = try encoder.encode(searchRequest)
 
         let (data, response) = try await session.data(for: request)
 
@@ -391,58 +371,23 @@ final class OpenAIResponsesService: AIResponsesProviderService {
     // MARK: - Response Parsing
 
     private func parseNutritionSearchResponse(_ data: Data) throws -> PublishedNutritionResult {
-        let responsesResponse: ResponsesAPIResponse
+        let response: OpenRouterChatResponse
         do {
-            responsesResponse = try decoder.decode(ResponsesAPIResponse.self, from: data)
+            response = try decoder.decode(OpenRouterChatResponse.self, from: data)
         } catch {
-            os_log("Failed to decode Responses API response: %{public}@", log: log, type: .error, error.localizedDescription)
+            os_log("Failed to decode OpenRouter response: %{public}@", log: log, type: .error, error.localizedDescription)
             throw OpenAIServiceError.decodingError(error)
         }
 
-        // Find the message output with text content
-        var textContent: String?
-        var citationURL: String?
-
-        for outputItem in responsesResponse.output {
-            os_log(
-                "Responses API output item type: %{public}@, has content: %{public}@",
-                log: log, type: .info,
-                outputItem.type,
-                outputItem.content != nil ? "yes (\(outputItem.content!.count) items)" : "no"
-            )
-            guard outputItem.type == "message", let contents = outputItem.content else { continue }
-            for content in contents {
-                if content.type == "output_text", let text = content.text {
-                    textContent = text
-                }
-                // Extract first citation URL
-                if let annotations = content.annotations {
-                    os_log(
-                        "Found %d annotations in content",
-                        log: log, type: .info,
-                        annotations.count
-                    )
-                    for annotation in annotations {
-                        os_log(
-                            "Annotation type: %{public}@, url: %{public}@",
-                            log: log, type: .info,
-                            annotation.type,
-                            annotation.url ?? "nil"
-                        )
-                        if annotation.type == "url_citation", citationURL == nil {
-                            citationURL = annotation.url
-                        }
-                    }
-                } else {
-                    os_log("No annotations found in content of type: %{public}@", log: log, type: .info, content.type)
-                }
-            }
-        }
-        os_log("Final citationURL: %{public}@", log: log, type: .info, citationURL ?? "nil")
-
-        guard let content = textContent, let contentData = content.data(using: .utf8) else {
+        guard let message = response.choices.first?.message,
+              let content = message.content,
+              let contentData = content.data(using: .utf8) else {
             throw OpenAIServiceError.noContentInResponse
         }
+
+        let citationURL = message.annotations?
+            .first(where: { $0.type == "url_citation" })?
+            .urlCitation?.url
 
         let nutrition: NutritionSearchResponse
         do {

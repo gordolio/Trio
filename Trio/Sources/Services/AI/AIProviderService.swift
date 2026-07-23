@@ -53,9 +53,7 @@ protocol AIResponsesProviderService {
 
 // MARK: - Registry
 
-/// Routes AI calls to the currently-selected provider. The provider is read from
-/// the persisted `TrioSettings.aiProvider` setting on each access, so that toggling
-/// the setting in the UI takes effect immediately without having to restart the app.
+/// Routes AI calls through OpenRouter.
 enum AIServiceRegistry {
     static var chat: AIProviderService {
         chat(for: currentProvider())
@@ -65,28 +63,22 @@ enum AIServiceRegistry {
         responses(for: currentProvider())
     }
 
-    /// Explicit provider lookup used by the multi-provider ("send to all") path so each
-    /// analysis task targets the provider it was fanned out for, regardless of the
-    /// persisted `TrioSettings.aiProvider`.
     static func chat(for provider: AIProviderType) -> AIProviderService {
         switch provider {
-        case .openai: return OpenAIService.shared
-        case .claude: return ClaudeService.shared
+        case .openrouter: return OpenRouterService.shared
         }
     }
 
     static func responses(for provider: AIProviderType) -> AIResponsesProviderService {
         switch provider {
-        case .openai: return OpenAIResponsesService.shared
-        case .claude: return ClaudeResponsesService.shared
+        case .openrouter: return OpenRouterResponsesService.shared
         }
     }
 
-    /// Reads the persisted provider choice. Defaults to `.openai` if settings
-    /// cannot be loaded (app first launch, file missing, etc.).
+    /// Reads the persisted provider choice, falling back to OpenRouter.
     private static func currentProvider() -> AIProviderType {
         let storage = BaseFileStorage()
         let settings = storage.retrieve(OpenAPS.Trio.settings, as: TrioSettings.self)
-        return settings?.aiProvider ?? .openai
+        return settings?.aiProvider ?? .openrouter
     }
 }

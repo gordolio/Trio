@@ -19,13 +19,11 @@ struct PartialFoodAnalysisResult: Equatable {
 /// Backwards-compatible alias for the provider-agnostic parser.
 typealias OpenAIStreamingParser = StructuredJSONStreamParser
 
-/// Parses streaming (SSE) responses from any AI provider and extracts partial food
-/// analysis results using incremental JSON parsing.
+/// Parses OpenAI-compatible streaming responses and extracts partial food analysis
+/// results using incremental JSON parsing.
 ///
-/// The core parser operates on an accumulated *content string* — i.e. whatever JSON
-/// fragments the LLM has emitted so far. SSE adapters (`parseOpenAILine`,
-/// `parseAnthropicLine`) pull the content fragment out of provider-specific event
-/// envelopes and feed it into `feed(contentDelta:)`.
+/// The core parser operates on an accumulated content string containing the JSON
+/// fragments emitted by the model.
 final class StructuredJSONStreamParser {
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "StructuredJSONStreamParser")
     private let decoder = JSONDecoder()
@@ -108,53 +106,6 @@ final class StructuredJSONStreamParser {
         else { return nil }
 
         return feed(contentDelta: content)
-    }
-
-    // MARK: - Anthropic SSE Adapter
-
-    /// Parses one event from Anthropic's Messages streaming format.
-    /// Anthropic SSE events come as pairs of `event: <name>` + `data: <json>` lines.
-    /// Pass each `data:` line with the most recent preceding event name.
-    ///
-    /// - Parameters:
-    ///   - event: The event name (e.g., "content_block_delta", "message_stop").
-    ///   - dataLine: The corresponding `data:` line (including the "data: " prefix)
-    ///     or just the JSON payload.
-    /// - Returns: Updated partial result, or nil if this event didn't produce new content.
-    func parseAnthropicEvent(event: String, dataLine: String) -> PartialFoodAnalysisResult? {
-        // Normalize to just the JSON payload
-        let trimmed = dataLine.trimmingCharacters(in: .whitespacesAndNewlines)
-        let jsonPayload: String
-        if trimmed.hasPrefix("data: ") {
-            jsonPayload = String(trimmed.dropFirst(6))
-        } else {
-            jsonPayload = trimmed
-        }
-
-        switch event {
-        case "message_stop":
-            return finish()
-
-        case "content_block_delta":
-            guard let payloadData = jsonPayload.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
-                  let delta = obj["delta"] as? [String: Any]
-            else { return nil }
-
-            // For forced tool use with structured outputs, the JSON arrives as
-            // `input_json_delta` → `partial_json` chunks. For plain text, it's
-            // `text_delta` → `text`; we accept either.
-            if let partial = delta["partial_json"] as? String, !partial.isEmpty {
-                return feed(contentDelta: partial)
-            }
-            if let text = delta["text"] as? String, !text.isEmpty {
-                return feed(contentDelta: text)
-            }
-            return nil
-
-        default:
-            return nil
-        }
     }
 
     /// Reset parser state for a new stream

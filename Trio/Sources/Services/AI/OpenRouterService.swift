@@ -3,7 +3,7 @@ import os.log
 
 // MARK: - Error Types
 
-/// Errors that can occur during OpenAI API operations
+/// Errors that can occur during AI API operations.
 enum OpenAIServiceError: LocalizedError {
     case missingAPIKey
     case invalidImageData
@@ -11,15 +11,13 @@ enum OpenAIServiceError: LocalizedError {
     case invalidResponse(statusCode: Int)
     case decodingError(Error)
     case noContentInResponse
-    /// The provider's account is out of credit. OpenAI signals this with HTTP 429 +
-    /// `error.code == "insufficient_quota"`; Anthropic uses HTTP 400 + `error.type ==
-    /// "insufficient_balance_error"`.
+    /// The OpenRouter account is out of credit.
     case insufficientCredits
 
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return NSLocalizedString("OpenAI API key is not configured", comment: "Error when OpenAI API key is missing")
+            return NSLocalizedString("OpenRouter API key is not configured", comment: "Error when OpenRouter API key is missing")
         case .invalidImageData:
             return NSLocalizedString("Unable to process the selected image", comment: "Error when image data is invalid")
         case let .networkError(error):
@@ -45,27 +43,22 @@ enum OpenAIServiceError: LocalizedError {
     }
 }
 
-/// Inspects an HTTP error body for the provider-specific "out of credits" signals
-/// (OpenAI: 429 + `insufficient_quota`; Anthropic: 400 + `insufficient_balance_error`).
+/// Inspects an HTTP error for an "out of credits" signal.
 /// Falls back to `.invalidResponse(statusCode:)` for every other non-2xx response.
 func mapAIHTTPError(statusCode: Int, body: Data) -> OpenAIServiceError {
+    if statusCode == 402 {
+        return .insufficientCredits
+    }
+
     if let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
        let error = json["error"] as? [String: Any]
     {
-        let type = (error["type"] as? String) ?? ""
         let code = (error["code"] as? String) ?? ""
         let message = ((error["message"] as? String) ?? "").lowercased()
 
-        // Anthropic billing (HTTP 400).
-        if statusCode == 400 {
-            if type == "insufficient_balance_error" || type == "account_billing_error" ||
-                message.contains("credit balance")
-            {
-                return .insufficientCredits
-            }
-        }
-        // OpenAI billing (HTTP 429 piggybacked on rate-limit codes).
-        if statusCode == 429, code == "insufficient_quota" {
+        if code == "insufficient_quota" || message.contains("credit balance") ||
+            message.contains("payment required")
+        {
             return .insufficientCredits
         }
     }
@@ -384,29 +377,31 @@ struct OpenAICarbEstimateResponse {
     let emojiConfidence: Double
 }
 
-// MARK: - OpenAI Service
+// MARK: - OpenRouter Service
 
-/// Service for interacting with OpenAI Vision API to analyze food images
-final class OpenAIService: AIProviderService {
-    static let shared = OpenAIService()
+/// Service for interacting with OpenRouter's OpenAI-compatible API.
+final class OpenRouterService: AIProviderService {
+    static let shared = OpenRouterService()
 
-    private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenAIService")
+    private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenRouterService")
     private let session: URLSession
-    private let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+    private let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let primaryModel = "openai/gpt-4o"
+    private let classifierModel = "openai/gpt-4o-mini"
 
     init(session: URLSession = .shared) {
         self.session = session
     }
 
-    /// Retrieves the OpenAI API key from the app's Info.plist (configured via LoopConfigOverride.xcconfig)
+    /// Retrieves the OpenRouter API key from the app's Info.plist.
     private func getAPIKey() throws -> String {
-        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenAIAPIKey") as? String,
+        guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
               !apiKey.isEmpty,
-              apiKey != "$(OPENAI_API_KEY)"
+              apiKey != "$(OPENROUTER_API_KEY)"
         else {
-            os_log("OpenAI API key not configured in LoopConfigOverride.xcconfig", log: log, type: .error)
+            os_log("OpenRouter API key not configured in ConfigOverride.xcconfig", log: log, type: .error)
             throw OpenAIServiceError.missingAPIKey
         }
         return apiKey
@@ -443,7 +438,7 @@ final class OpenAIService: AIProviderService {
 
         // Build the request with structured output schema
         let chatRequest = OpenAIChatRequest(
-            model: "gpt-4o",
+            model: primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -618,7 +613,7 @@ final class OpenAIService: AIProviderService {
         """
 
         let chatRequest = OpenAIChatRequest(
-            model: "gpt-4o",
+            model: primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -772,7 +767,7 @@ final class OpenAIService: AIProviderService {
         }
 
         let chatRequest = OpenAIChatRequest(
-            model: "gpt-4o",
+            model: primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -966,7 +961,7 @@ final class OpenAIService: AIProviderService {
                     }
 
                     let chatRequest = OpenAIChatRequest(
-                        model: "gpt-4o",
+                        model: self.primaryModel,
                         messages: [
                             OpenAIMessage(
                                 role: "user",
@@ -1085,7 +1080,7 @@ final class OpenAIService: AIProviderService {
         """
 
         let chatRequest = OpenAIChatRequest(
-            model: "gpt-4o",
+            model: primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -1230,7 +1225,7 @@ final class OpenAIService: AIProviderService {
         )
 
         let chatRequest = OpenAIChatRequest(
-            model: "gpt-4o-mini",
+            model: classifierModel,
             messages: messages,
             maxTokens: 200,
             responseFormat: OpenAIResponseFormat(
@@ -1364,7 +1359,7 @@ final class OpenAIService: AIProviderService {
         ]
 
         let chatRequest = OpenAIChatRequest(
-            model: "gpt-4o",
+            model: primaryModel,
             messages: messages,
             maxTokens: 1500,
             responseFormat: OpenAIResponseFormat(

@@ -84,12 +84,8 @@ struct TrioSettings: JSON, Equatable, Encodable {
     /// Controls whether watchface data transmission is enabled
     var isWatchfaceDataEnabled: Bool = false
 
-    /// Selected AI provider for AI-assisted carb entry features
-    var aiProvider: AIProviderType = .openai
-
-    /// When enabled, food image analysis is sent to every available AI provider simultaneously
-    /// and the user can compare results by switching tabs. When disabled, only `aiProvider` is used.
-    var sendToAllAIProvidersSimultaneously: Bool = false
+    /// AI provider for AI-assisted carb entry features.
+    var aiProvider: AIProviderType = .openrouter
 
     /// Computed property that groups all Garmin settings into a single struct
     var garminSettings: GarminWatchSettings {
@@ -361,13 +357,6 @@ extension TrioSettings: Decodable {
 
         if let aiProvider = try? container.decode(AIProviderType.self, forKey: .aiProvider) {
             settings.aiProvider = aiProvider
-        }
-
-        if let sendToAllAIProvidersSimultaneously = try? container.decode(
-            Bool.self,
-            forKey: .sendToAllAIProvidersSimultaneously
-        ) {
-            settings.sendToAllAIProvidersSimultaneously = sendToAllAIProvidersSimultaneously
         }
 
         self = settings

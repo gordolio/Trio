@@ -34,7 +34,7 @@ struct ServicesView: BaseView {
             Section(
                 header: Text("AI"),
                 content: {
-                    Text("AI Provider").navigationLink(to: .aiServiceSettings, from: self)
+                    Text("OpenRouter").navigationLink(to: .aiServiceSettings, from: self)
                 }
             )
             .listRowBackground(Color.chart)

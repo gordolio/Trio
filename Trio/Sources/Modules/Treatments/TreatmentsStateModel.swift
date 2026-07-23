@@ -183,16 +183,13 @@ extension Treatments {
 
         /// Whether the given provider has an API key configured in the build.
         func isProviderAvailable(_ provider: AIProviderType) -> Bool {
-            let (infoKey, placeholder): (String, String)
             switch provider {
-            case .openai:
-                (infoKey, placeholder) = ("OpenAIAPIKey", "$(OPENAI_API_KEY)")
-            case .claude:
-                (infoKey, placeholder) = ("AnthropicAPIKey", "$(ANTHROPIC_API_KEY)")
+            case .openrouter:
+                guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
+                      !value.isEmpty,
+                      value != "$(OPENROUTER_API_KEY)" else { return false }
+                return true
             }
-            guard let value = Bundle.main.object(forInfoDictionaryKey: infoKey) as? String,
-                  !value.isEmpty, value != placeholder else { return false }
-            return true
         }
 
         var autoOpenCamera: Bool = false
@@ -812,21 +809,10 @@ extension Treatments {
 
         // MARK: - AI-Assisted Food Analysis
 
-        /// Analyzes a food image using AI. When the user has enabled "send to all providers
-        /// simultaneously", the other providers are offered as tabs but only queried lazily
-        /// when the user switches to them — we don't burn tokens on providers the user may
-        /// never look at. Only the configured provider is queried up front.
+        /// Analyzes a food image using OpenRouter.
         func analyzeFood(imageData: Data, description: String? = nil) async {
-            let sendToAll = settingsManager.settings.sendToAllAIProvidersSimultaneously
             let configuredProvider = settingsManager.settings.aiProvider
-            let tabs: [AIProviderType] = {
-                if sendToAll {
-                    let available = AIProviderType.allCases.filter(isProviderAvailable)
-                    return available.isEmpty ? [configuredProvider] : available
-                } else {
-                    return [configuredProvider]
-                }
-            }()
+            let tabs = [configuredProvider]
             let initialProvider = tabs.contains(configuredProvider) ? configuredProvider : (tabs.first ?? configuredProvider)
 
             await MainActor.run {
@@ -984,9 +970,7 @@ extension Treatments {
             }
         }
 
-        /// Maps a provider error into a user-facing string. Surfaces a clear "out of credits"
-        /// message when the response body matched one of the known billing signals
-        /// (OpenAI: 429 + `insufficient_quota`; Anthropic: 400 + `insufficient_balance_error`).
+        /// Maps a provider error into a user-facing string, including OpenRouter billing errors.
         /// For generic HTTP failures we prefix the provider name so the user knows which one failed.
         private func providerFacingErrorMessage(for error: Error, provider: AIProviderType) -> String {
             if case OpenAIServiceError.insufficientCredits = error {
