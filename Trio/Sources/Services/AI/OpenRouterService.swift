@@ -381,17 +381,18 @@ struct OpenAICarbEstimateResponse {
 
 /// Service for interacting with OpenRouter's OpenAI-compatible API.
 final class OpenRouterService: AIProviderService {
-    static let shared = OpenRouterService()
+    static let openAI = OpenRouterService(modelSet: AIProviderType.openai.modelSet)
+    static let claude = OpenRouterService(modelSet: AIProviderType.claude.modelSet)
 
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenRouterService")
     private let session: URLSession
     private let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let primaryModel = "openai/gpt-4o"
-    private let classifierModel = "openai/gpt-4o-mini"
+    private let modelSet: OpenRouterModelSet
 
-    init(session: URLSession = .shared) {
+    init(modelSet: OpenRouterModelSet, session: URLSession = .shared) {
+        self.modelSet = modelSet
         self.session = session
     }
 
@@ -438,7 +439,7 @@ final class OpenRouterService: AIProviderService {
 
         // Build the request with structured output schema
         let chatRequest = OpenAIChatRequest(
-            model: primaryModel,
+            model: modelSet.primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -613,7 +614,7 @@ final class OpenRouterService: AIProviderService {
         """
 
         let chatRequest = OpenAIChatRequest(
-            model: primaryModel,
+            model: modelSet.primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -767,7 +768,7 @@ final class OpenRouterService: AIProviderService {
         }
 
         let chatRequest = OpenAIChatRequest(
-            model: primaryModel,
+            model: modelSet.primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -961,7 +962,7 @@ final class OpenRouterService: AIProviderService {
                     }
 
                     let chatRequest = OpenAIChatRequest(
-                        model: self.primaryModel,
+                        model: self.modelSet.primaryModel,
                         messages: [
                             OpenAIMessage(
                                 role: "user",
@@ -1080,7 +1081,7 @@ final class OpenRouterService: AIProviderService {
         """
 
         let chatRequest = OpenAIChatRequest(
-            model: primaryModel,
+            model: modelSet.primaryModel,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -1225,7 +1226,7 @@ final class OpenRouterService: AIProviderService {
         )
 
         let chatRequest = OpenAIChatRequest(
-            model: classifierModel,
+            model: modelSet.classifierModel,
             messages: messages,
             maxTokens: 200,
             responseFormat: OpenAIResponseFormat(
@@ -1359,7 +1360,7 @@ final class OpenRouterService: AIProviderService {
         ]
 
         let chatRequest = OpenAIChatRequest(
-            model: primaryModel,
+            model: modelSet.primaryModel,
             messages: messages,
             maxTokens: 1500,
             responseFormat: OpenAIResponseFormat(

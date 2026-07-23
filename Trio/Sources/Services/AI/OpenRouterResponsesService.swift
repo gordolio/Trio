@@ -119,17 +119,18 @@ private struct NutritionSearchResponse: Decodable {
 
 /// Service for restaurant food detection and published nutrition lookup.
 final class OpenRouterResponsesService: AIResponsesProviderService {
-    static let shared = OpenRouterResponsesService()
+    static let openAI = OpenRouterResponsesService(modelSet: AIProviderType.openai.modelSet)
+    static let claude = OpenRouterResponsesService(modelSet: AIProviderType.claude.modelSet)
 
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenRouterResponsesService")
     private let session: URLSession
     private let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let primaryModel = "openai/gpt-4o"
-    private let classifierModel = "openai/gpt-4o-mini"
+    private let modelSet: OpenRouterModelSet
 
-    init(session: URLSession = .shared) {
+    init(modelSet: OpenRouterModelSet, session: URLSession = .shared) {
+        self.modelSet = modelSet
         self.session = session
     }
 
@@ -175,7 +176,7 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         """
 
         let chatRequest = OpenAIChatRequest(
-            model: classifierModel,
+            model: modelSet.classifierModel,
             messages: [
                 OpenAIMessage(role: "system", content: [.text(systemPrompt)]),
                 OpenAIMessage(role: "user", content: [.text(description)])
@@ -275,7 +276,7 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         """
 
         let searchRequest = OpenRouterWebSearchRequest(
-            model: primaryModel,
+            model: modelSet.primaryModel,
             messages: [OpenAIMessage(role: "user", content: [.text(inputPrompt)])],
             maxTokens: 2000,
             responseFormat: OpenAIResponseFormat(

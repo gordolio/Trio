@@ -13,10 +13,38 @@ extension AIServiceSettings {
         var body: some View {
             Form {
                 Section(
-                    header: Text("AI Service"),
+                    header: Text("AI Provider"),
                     footer: Text(
-                        "OpenRouter powers the AI-assisted carb entry features. Its API key is set in ConfigOverride.xcconfig at build time."
+                        "Selects which model runs first for AI-assisted carb entry. Both models are accessed through OpenRouter."
                     ),
+                    content: {
+                        Picker("Provider", selection: $state.aiProvider) {
+                            ForEach(AIProviderType.allCases) { provider in
+                                Text(provider.displayName).tag(provider)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    }
+                )
+                .listRowBackground(Color.chart)
+
+                Section(
+                    header: Text("Compare Providers"),
+                    footer: Text(
+                        "When enabled, both models appear as tabs. The selected model runs first; the other loads when you open its tab."
+                    ),
+                    content: {
+                        Toggle(
+                            "Send to all providers simultaneously",
+                            isOn: $state.sendToAllAIProvidersSimultaneously
+                        )
+                    }
+                )
+                .listRowBackground(Color.chart)
+
+                Section(
+                    header: Text("API Key Status"),
                     content: {
                         keyStatusRow(
                             label: "OpenRouter",

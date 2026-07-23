@@ -182,14 +182,11 @@ extension Treatments {
         }
 
         /// Whether the given provider has an API key configured in the build.
-        func isProviderAvailable(_ provider: AIProviderType) -> Bool {
-            switch provider {
-            case .openrouter:
-                guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
-                      !value.isEmpty,
-                      value != "$(OPENROUTER_API_KEY)" else { return false }
-                return true
-            }
+        func isProviderAvailable(_: AIProviderType) -> Bool {
+            guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
+                  !value.isEmpty,
+                  value != "$(OPENROUTER_API_KEY)" else { return false }
+            return true
         }
 
         var autoOpenCamera: Bool = false
@@ -809,10 +806,19 @@ extension Treatments {
 
         // MARK: - AI-Assisted Food Analysis
 
-        /// Analyzes a food image using OpenRouter.
+        /// Analyzes a food image using AI. In comparison mode, the selected provider
+        /// runs first and the others are queried lazily when their tabs are opened.
         func analyzeFood(imageData: Data, description: String? = nil) async {
+            let sendToAll = settingsManager.settings.sendToAllAIProvidersSimultaneously
             let configuredProvider = settingsManager.settings.aiProvider
-            let tabs = [configuredProvider]
+            let tabs: [AIProviderType] = {
+                if sendToAll {
+                    let available = AIProviderType.allCases.filter(isProviderAvailable)
+                    return available.isEmpty ? [configuredProvider] : available
+                } else {
+                    return [configuredProvider]
+                }
+            }()
             let initialProvider = tabs.contains(configuredProvider) ? configuredProvider : (tabs.first ?? configuredProvider)
 
             await MainActor.run {
