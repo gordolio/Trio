@@ -32,8 +32,7 @@ private struct ScanFoodCameraView: View {
         PhotoPickerWrapper(
             selectedImage: $selectedImage,
             isPresented: $isPresented,
-            sourceType: .camera,
-            overlayBottomInset: 66
+            sourceType: .camera
         )
         .onChange(of: selectedImage) { _, newImage in
             guard let image = newImage,

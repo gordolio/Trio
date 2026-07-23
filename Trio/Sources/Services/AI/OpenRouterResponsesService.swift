@@ -382,7 +382,8 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
 
         guard let message = response.choices.first?.message,
               let content = message.content,
-              let contentData = content.data(using: .utf8) else {
+              let contentData = content.data(using: .utf8)
+        else {
             throw OpenAIServiceError.noContentInResponse
         }
 

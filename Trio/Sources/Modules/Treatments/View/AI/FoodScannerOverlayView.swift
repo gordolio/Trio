@@ -1,14 +1,35 @@
 import SwiftUI
 
+/// Shared geometry for the visible scanner frame and the captured-image crop.
+enum FoodScannerLayout {
+    static let controlsHeight: CGFloat = 150
+
+    static func scanRegion(
+        in size: CGSize,
+        safeTop: CGFloat,
+        safeBottom: CGFloat
+    ) -> CGRect {
+        let sidePadding: CGFloat = 16
+        let topTextY = safeTop + 24
+        let regionTop = topTextY + 56
+        let regionBottom = size.height - safeBottom - controlsHeight
+
+        return CGRect(
+            x: sidePadding,
+            y: regionTop,
+            width: size.width - (sidePadding * 2),
+            height: max(0, regionBottom - regionTop)
+        )
+    }
+}
+
 /// Camera overlay view with styled scanning region corners and instructional text.
 /// Uses the Trio AI purple/blue gradient theme.
 ///
 /// Layout uses standard iOS spacing and safe area insets so it adapts
 /// correctly across all iPhone models without hardcoded percentages.
 struct FoodScannerOverlayView: View {
-    /// Bottom inset from the overlay edge to place the bottom brackets.
-    /// Different when launched from shortcut (full screen) vs treatment view (modal sheet).
-    var bottomInset: CGFloat = 210
+    var safeAreaInsets: EdgeInsets?
 
     @State private var pulseScale: CGFloat = 1.0
     @State private var pulseOpacity: Double = 1.0
@@ -23,12 +44,8 @@ struct FoodScannerOverlayView: View {
     var body: some View {
         GeometryReader { geometry in
             let w = geometry.size.width
-            let safeTop = geometry.safeAreaInsets.top
-            let safeBottom = geometry.safeAreaInsets.bottom
-
-            // Standard iOS spacing
-            let sidePadding: CGFloat = 16
-            let regionWidth = w - (sidePadding * 2)
+            let safeTop = safeAreaInsets?.top ?? geometry.safeAreaInsets.top
+            let safeBottom = safeAreaInsets?.bottom ?? geometry.safeAreaInsets.bottom
 
             let cornerLength: CGFloat = 40
             let cornerLineWidth: CGFloat = 3
@@ -37,23 +54,10 @@ struct FoodScannerOverlayView: View {
             // Text above the scan region, below the safe area
             let topTextY = safeTop + 24
 
-            // Scan region: starts below text, ends between shutter and bottom bar.
-            // We use geometry.size.height (the actual overlay height) so this works
-            // whether launched from a shortcut or from within the treatment view.
-            // Camera bottom controls from the view bottom:
-            //   - ~safeBottom for home indicator
-            //   - ~50pt for bottom bar (X / PHOTO / flip)
-            //   - ~16pt gap
-            // Bottom brackets land between shutter button and bottom bar.
-            let regionTop = topTextY + 56
-            let regionBottom = geometry.size.height - safeBottom - bottomInset
-            let regionHeight = regionBottom - regionTop
-
-            let regionRect = CGRect(
-                x: sidePadding,
-                y: regionTop,
-                width: regionWidth,
-                height: regionHeight
+            let regionRect = FoodScannerLayout.scanRegion(
+                in: geometry.size,
+                safeTop: safeTop,
+                safeBottom: safeBottom
             )
 
             ZStack {
