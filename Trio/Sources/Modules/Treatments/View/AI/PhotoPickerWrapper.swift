@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import PhotosUI
 import SwiftUI
 
@@ -178,6 +179,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
             flipButton.centerYAnchor.constraint(equalTo: shutterButton.centerYAnchor)
         ])
 
+        configureHardwareCapture()
         startCamera()
     }
 
@@ -228,6 +230,17 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
         button.accessibilityIdentifier = identifier
         button.addTarget(self, action: action, for: .touchUpInside)
         return button
+    }
+
+    private func configureHardwareCapture() {
+        guard #available(iOS 17.2, *) else { return }
+
+        // Preserve UIImagePickerController's hardware-shutter behavior.
+        let interaction = AVCaptureEventInteraction { [weak self] event in
+            guard event.phase == .ended else { return }
+            self?.capturePhoto()
+        }
+        view.addInteraction(interaction)
     }
 
     private func startCamera() {
