@@ -29,6 +29,8 @@ extension AIServiceSettings {
                 )
                 .listRowBackground(Color.chart)
 
+                AIFoodAnalysisPromptSettingsView()
+
                 Section(
                     header: Text("Compare Providers"),
                     footer: Text(
@@ -74,5 +76,60 @@ extension AIServiceSettings {
             guard let value = Bundle.main.object(forInfoDictionaryKey: infoPlistKey) as? String else { return false }
             return !value.isEmpty && value != placeholder
         }
+    }
+}
+
+private struct AIFoodAnalysisPromptSettingsView: View {
+    var body: some View {
+        Section(
+            header: Text("Food Analysis"),
+            footer: Text(
+                "Customize the instructions used to estimate carbohydrates, fat, and protein from food images."
+            ),
+            content: {
+                NavigationLink("Food analysis prompt") {
+                    AIFoodAnalysisPromptEditor()
+                }
+            }
+        )
+        .listRowBackground(Color.chart)
+    }
+}
+
+private struct AIFoodAnalysisPromptEditor: View {
+    @State private var prompt = AIPromptSettings.foodAnalysisPrompt
+
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(AppState.self) var appState
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TextEditor(text: $prompt)
+                .keyboardType(.asciiCapable)
+                .font(.system(.subheadline, design: .monospaced))
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .padding()
+
+            Divider()
+
+            Button("Reset to Defaults") {
+                AIPromptSettings.resetFoodAnalysisPrompt()
+                prompt = AIPromptSettings.foodAnalysisPrompt
+            }
+            .padding()
+        }
+        .scrollContentBackground(.hidden)
+        .background(appState.trioBackgroundColor(for: colorScheme))
+        .navigationTitle("Food Analysis Prompt")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarItems(
+            trailing: Button("Save") {
+                AIPromptSettings.foodAnalysisPrompt = prompt
+                dismiss()
+            }
+            .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        )
     }
 }

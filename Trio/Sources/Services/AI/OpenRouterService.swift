@@ -425,7 +425,7 @@ final class OpenRouterService: AIProviderService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let prompt = """
+        let defaultPrompt = """
         Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
 
         IMPORTANT GUIDELINES:
@@ -436,6 +436,7 @@ final class OpenRouterService: AIProviderService {
         - Choose 1-2 emojis per item that best represent it
         - Estimate fat and protein in grams for each item
         """
+        let prompt = AIPromptSettings.foodAnalysisPrompt(fallback: defaultPrompt)
 
         // Build the request with structured output schema
         let chatRequest = OpenAIChatRequest(
@@ -749,7 +750,7 @@ final class OpenRouterService: AIProviderService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        var prompt = """
+        let defaultPrompt = """
         Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
 
         IMPORTANT GUIDELINES:
@@ -761,6 +762,7 @@ final class OpenRouterService: AIProviderService {
         - Estimate fat and protein in grams for each item
         - Provide a brief reasoning explaining your carb estimates
         """
+        var prompt = AIPromptSettings.foodAnalysisPrompt(fallback: defaultPrompt)
 
         // Add user description if provided
         if let description = userDescription, !description.isEmpty {
@@ -940,7 +942,7 @@ final class OpenRouterService: AIProviderService {
                     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                    var prompt = """
+                    let defaultPrompt = """
                     Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
 
                     IMPORTANT GUIDELINES:
@@ -956,6 +958,7 @@ final class OpenRouterService: AIProviderService {
                     - If the image shows a NUTRITION FACTS LABEL, report carbs/fat/protein PER SERVING as printed on the label. Set the item's servingCount to the number per serving (e.g., 4) and servingUnit to the unit (e.g., "Crackers").
                     - If the image shows ACTUAL FOOD (not a label), estimate total nutrients for the visible portion. Set servingCount to 1 and servingUnit to "Serving".
                     """
+                    var prompt = AIPromptSettings.foodAnalysisPrompt(fallback: defaultPrompt)
 
                     if let description = userDescription, !description.isEmpty {
                         prompt += "\n\nUSER CONTEXT: \(description)\nPlease factor this information into your analysis."
@@ -1509,6 +1512,40 @@ final class OpenRouterService: AIProviderService {
             assistantMessage: apiResponse.assistantMessage,
             overallConfidence: apiResponse.overallConfidence
         )
+    }
+}
+
+enum AIPromptSettings {
+    static let defaultFoodAnalysisPrompt = """
+    Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
+
+    IMPORTANT GUIDELINES:
+    - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
+    - Include sides, drinks, sauces, and condiments as separate items
+    - For composite items like sandwiches, list as one item but note components in the name
+    - Estimate portion sizes based on visual cues
+    - Choose 1-2 emojis per item that best represent it
+    - Estimate fat and protein in grams for each item
+    - Provide a brief reasoning explaining your carb estimates
+
+    SERVING SIZE RULES (per item):
+    - If the image shows a NUTRITION FACTS LABEL, report carbs/fat/protein PER SERVING as printed on the label. Set the item's servingCount to the number per serving (e.g., 4) and servingUnit to the unit (e.g., "Crackers").
+    - If the image shows ACTUAL FOOD (not a label), estimate total nutrients for the visible portion. Set servingCount to 1 and servingUnit to "Serving".
+    """
+
+    private static let foodAnalysisPromptKey = "aiFoodAnalysisPrompt"
+
+    static var foodAnalysisPrompt: String {
+        get { foodAnalysisPrompt(fallback: defaultFoodAnalysisPrompt) }
+        set { UserDefaults.standard.set(newValue, forKey: foodAnalysisPromptKey) }
+    }
+
+    static func foodAnalysisPrompt(fallback defaultPrompt: String) -> String {
+        UserDefaults.standard.string(forKey: foodAnalysisPromptKey) ?? defaultPrompt
+    }
+
+    static func resetFoodAnalysisPrompt() {
+        UserDefaults.standard.removeObject(forKey: foodAnalysisPromptKey)
     }
 }
 
