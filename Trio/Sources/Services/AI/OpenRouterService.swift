@@ -311,20 +311,6 @@ struct OpenAIStreamDelta: Decodable {
 
 // MARK: - AI Response Content Types (what we parse from the content field)
 
-/// Response structure for multi-item food analysis (matches our JSON schema)
-struct AIFoodAnalysisResponse: Decodable {
-    let foodItems: [AIFoodItemResponse]
-    let overallConfidence: Double
-    let reasoning: String?
-}
-
-/// Response structure for multi-item food analysis with reasoning
-struct AIFoodAnalysisWithReasoningResponse: Decodable {
-    let foodItems: [AIFoodItemResponse]
-    let overallConfidence: Double
-    let reasoning: String
-}
-
 /// Response structure for single item update
 struct AISingleItemUpdateAPIResponse: Decodable {
     let updatedCarbs: Double
@@ -341,17 +327,6 @@ struct AIConversationTurnAPIResponse: Decodable {
     let overallConfidence: Double
 }
 
-/// Individual food item in the AI response
-struct AIFoodItemResponse: Decodable {
-    let name: String
-    let carbs: Double
-    let emoji: String
-    let fat: Double
-    let protein: Double
-    let servingCount: Double
-    let servingUnit: String
-}
-
 /// Individual food item in conversation response (includes ID and source)
 struct AIFoodItemWithIdResponse: Decodable {
     let id: String
@@ -363,18 +338,6 @@ struct AIFoodItemWithIdResponse: Decodable {
     let source: String?
     let servingCount: Double
     let servingUnit: String
-}
-
-/// Response from OpenAI Vision API containing carb estimate and food description (legacy single-item)
-struct OpenAICarbEstimateResponse {
-    let estimatedCarbs: Double
-    let foodDescription: String
-    let emoji: String
-    let detailedDescription: String
-    let fat: Double
-    let protein: Double
-    let carbConfidence: Double
-    let emojiConfidence: Double
 }
 
 // MARK: - OpenRouter Service
@@ -408,364 +371,7 @@ final class OpenRouterService: AIProviderService {
         return apiKey
     }
 
-    // MARK: - Multi-Item Food Analysis (Structured Outputs)
-
-    /// Analyzes a food image and returns an array of individual food items detected
-    /// Uses OpenAI Structured Outputs to guarantee response format
-    /// - Parameter imageData: JPEG image data of the food to analyze
-    /// - Returns: AIFoodItemsResponse containing all detected food items
-    func estimateCarbsMultiItem(from imageData: Data) async throws -> AIFoodItemsResponse {
-        let apiKey = try getAPIKey()
-        let base64Image = imageData.base64EncodedString()
-
-        os_log("Sending food image for multi-item AI analysis (%d bytes)", log: log, type: .info, imageData.count)
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let prompt = AIPromptSettings.Prompt.multiItemFoodAnalysis.value
-
-        // Build the request with structured output schema
-        let chatRequest = OpenAIChatRequest(
-            model: modelSet.primaryModel,
-            messages: [
-                OpenAIMessage(
-                    role: "user",
-                    content: [
-                        .text(prompt),
-                        .imageUrl(OpenAIImageUrl(url: "data:image/jpeg;base64,\(base64Image)"))
-                    ]
-                )
-            ],
-            maxTokens: 1000,
-            responseFormat: OpenAIResponseFormat(
-                type: "json_schema",
-                jsonSchema: OpenAIJSONSchema(
-                    name: "food_analysis",
-                    strict: true,
-                    schema: buildFoodAnalysisSchema()
-                )
-            )
-        )
-
-        request.httpBody = try encoder.encode(chatRequest)
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw OpenAIServiceError.invalidResponse(statusCode: 0)
-        }
-
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            os_log("OpenAI API error: status %d", log: log, type: .error, httpResponse.statusCode)
-            if let errorBody = String(data: data, encoding: .utf8) {
-                os_log("Error body: %{public}@", log: log, type: .error, errorBody)
-            }
-            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
-        }
-
-        return try parseMultiItemResponse(data)
-    }
-
-    /// Builds the JSON schema for food analysis structured output
-    private func buildFoodAnalysisSchema() -> JSONSchemaDefinition {
-        let foodItemSchema = JSONSchemaProperty.object(
-            properties: [
-                "name": .string(description: "Concise item description, max 30 chars"),
-                "carbs": .number(description: "Estimated total carbohydrates in grams (not net carbs)"),
-                "emoji": .string(description: "1-2 food emojis representing the item"),
-                "fat": .number(description: "Estimated fat in grams"),
-                "protein": .number(description: "Estimated protein in grams")
-            ],
-            required: ["name", "carbs", "emoji", "fat", "protein"],
-            description: "A single food item detected in the image"
-        )
-
-        return JSONSchemaDefinition(
-            type: "object",
-            properties: [
-                "foodItems": .array(items: foodItemSchema, description: "Array of all food items detected"),
-                "overallConfidence": .number(description: "Overall confidence in the analysis (0.0-1.0)")
-            ],
-            required: ["foodItems", "overallConfidence"],
-            additionalProperties: false
-        )
-    }
-
-    /// Parses the OpenAI API response for multi-item food analysis
-    private func parseMultiItemResponse(_ data: Data) throws -> AIFoodItemsResponse {
-        // First decode the outer OpenAI response structure
-        let chatResponse: OpenAIChatResponse
-        do {
-            chatResponse = try decoder.decode(OpenAIChatResponse.self, from: data)
-        } catch {
-            os_log("Failed to decode OpenAI response: %{public}@", log: log, type: .error, error.localizedDescription)
-            throw OpenAIServiceError.decodingError(error)
-        }
-
-        guard let content = chatResponse.choices.first?.message.content else {
-            throw OpenAIServiceError.noContentInResponse
-        }
-
-        os_log("Received multi-item AI response content: %{public}@", log: log, type: .debug, content)
-
-        // Decode the content JSON (guaranteed to match schema due to structured outputs)
-        guard let contentData = content.data(using: .utf8) else {
-            throw OpenAIServiceError
-                .decodingError(NSError(
-                    domain: "OpenAIService",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Invalid content encoding"]
-                ))
-        }
-
-        let analysisResponse: AIFoodAnalysisResponse
-        do {
-            analysisResponse = try decoder.decode(AIFoodAnalysisResponse.self, from: contentData)
-        } catch {
-            os_log("Failed to decode food analysis: %{public}@", log: log, type: .error, error.localizedDescription)
-            throw OpenAIServiceError.decodingError(error)
-        }
-
-        // Convert to our domain model
-        let foodItems = analysisResponse.foodItems.map { item in
-            AIFoodItem(
-                name: item.name,
-                carbs: item.carbs,
-                emoji: item.emoji,
-                fat: item.fat,
-                protein: item.protein
-            )
-        }
-
-        guard !foodItems.isEmpty else {
-            throw OpenAIServiceError
-                .decodingError(NSError(
-                    domain: "OpenAIService",
-                    code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: "No food items found in response"]
-                ))
-        }
-
-        os_log(
-            "AI detected %d food items with total %.1f grams of carbs",
-            log: log,
-            type: .info,
-            foodItems.count,
-            foodItems.reduce(0) { $0 + $1.carbs }
-        )
-
-        return AIFoodItemsResponse(
-            foodItems: foodItems,
-            overallConfidence: analysisResponse.overallConfidence
-        )
-    }
-
-    // MARK: - Legacy Single-Item Analysis (kept for backwards compatibility)
-
-    /// Analyzes a food image and returns estimated carbohydrate content
-    /// - Parameter imageData: JPEG image data of the food to analyze
-    /// - Returns: OpenAICarbEstimateResponse containing carb estimate and description
-    func estimateCarbs(from imageData: Data) async throws -> OpenAICarbEstimateResponse {
-        let apiKey = try getAPIKey()
-        let base64Image = imageData.base64EncodedString()
-
-        os_log("Sending food image for AI analysis (%d bytes)", log: log, type: .info, imageData.count)
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let prompt = AIPromptSettings.Prompt.legacyFoodAnalysis.value
-
-        let chatRequest = OpenAIChatRequest(
-            model: modelSet.primaryModel,
-            messages: [
-                OpenAIMessage(
-                    role: "user",
-                    content: [
-                        .text(prompt),
-                        .imageUrl(OpenAIImageUrl(url: "data:image/jpeg;base64,\(base64Image)"))
-                    ]
-                )
-            ],
-            maxTokens: 500,
-            responseFormat: nil // Legacy mode without structured outputs
-        )
-
-        request.httpBody = try encoder.encode(chatRequest)
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw OpenAIServiceError.invalidResponse(statusCode: 0)
-        }
-
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            os_log("OpenAI API error: status %d", log: log, type: .error, httpResponse.statusCode)
-            if let errorBody = String(data: data, encoding: .utf8) {
-                os_log("Error body: %{public}@", log: log, type: .error, errorBody)
-            }
-            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
-        }
-
-        return try parseLegacyResponse(data)
-    }
-
-    /// Parses the legacy single-item response
-    private func parseLegacyResponse(_ data: Data) throws -> OpenAICarbEstimateResponse {
-        let chatResponse: OpenAIChatResponse
-        do {
-            chatResponse = try decoder.decode(OpenAIChatResponse.self, from: data)
-        } catch {
-            throw OpenAIServiceError.decodingError(error)
-        }
-
-        guard let content = chatResponse.choices.first?.message.content else {
-            throw OpenAIServiceError.noContentInResponse
-        }
-
-        os_log("Received AI response content: %{public}@", log: log, type: .debug, content)
-
-        // Extract JSON from content (may be wrapped in markdown code blocks)
-        let jsonString = extractJSON(from: content)
-
-        guard let jsonData = jsonString.data(using: .utf8) else {
-            throw OpenAIServiceError
-                .decodingError(NSError(
-                    domain: "OpenAIService",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Invalid content encoding"]
-                ))
-        }
-
-        // Decode the legacy response structure
-        let result: LegacySingleItemResponse
-        do {
-            result = try decoder.decode(LegacySingleItemResponse.self, from: jsonData)
-        } catch {
-            throw OpenAIServiceError.decodingError(error)
-        }
-
-        os_log(
-            "AI estimated %{public}.1f grams of carbs (confidence: %.2f) for: %{public}@",
-            log: log,
-            type: .info,
-            result.estimatedCarbs,
-            result.carbConfidence,
-            result.foodDescription
-        )
-
-        return OpenAICarbEstimateResponse(
-            estimatedCarbs: result.estimatedCarbs,
-            foodDescription: result.foodDescription,
-            emoji: result.emoji,
-            detailedDescription: result.detailedDescription,
-            fat: result.fat,
-            protein: result.protein,
-            carbConfidence: result.carbConfidence,
-            emojiConfidence: result.emojiConfidence
-        )
-    }
-
-    /// Extracts JSON from a string that might contain markdown code blocks
-    private func extractJSON(from content: String) -> String {
-        // Try to find JSON in code block first
-        if let codeBlockRange = content.range(of: "```json"),
-           let endRange = content.range(of: "```", range: codeBlockRange.upperBound ..< content.endIndex)
-        {
-            return String(content[codeBlockRange.upperBound ..< endRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        // Try plain code block
-        if let codeBlockRange = content.range(of: "```"),
-           let endRange = content.range(of: "```", range: codeBlockRange.upperBound ..< content.endIndex)
-        {
-            return String(content[codeBlockRange.upperBound ..< endRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        // Try to find JSON object directly
-        if let startBrace = content.firstIndex(of: "{"),
-           let endBrace = content.lastIndex(of: "}")
-        {
-            return String(content[startBrace ... endBrace])
-        }
-
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    // MARK: - Enhanced Food Analysis with Reasoning
-
-    /// Analyzes a food image with optional user description and returns items with reasoning
-    /// - Parameters:
-    ///   - imageData: JPEG image data of the food to analyze
-    ///   - userDescription: Optional context from user (e.g., "No sugar added dessert")
-    /// - Returns: AIFoodItemsResponseWithReasoning containing items and explanation
-    func analyzeFood(imageData: Data, userDescription: String?) async throws -> AIFoodItemsResponseWithReasoning {
-        let apiKey = try getAPIKey()
-        let base64Image = imageData.base64EncodedString()
-
-        os_log("Sending food image for AI analysis with reasoning (%d bytes)", log: log, type: .info, imageData.count)
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        var prompt = AIPromptSettings.Prompt.enhancedFoodAnalysis.value
-
-        // Add user description if provided
-        if let description = userDescription, !description.isEmpty {
-            prompt += "\n\n" + AIPromptSettings.Prompt.foodUserContext.rendered(["description": description])
-        }
-
-        let chatRequest = OpenAIChatRequest(
-            model: modelSet.primaryModel,
-            messages: [
-                OpenAIMessage(
-                    role: "user",
-                    content: [
-                        .text(prompt),
-                        .imageUrl(OpenAIImageUrl(url: "data:image/jpeg;base64,\(base64Image)"))
-                    ]
-                )
-            ],
-            maxTokens: 1500,
-            responseFormat: OpenAIResponseFormat(
-                type: "json_schema",
-                jsonSchema: OpenAIJSONSchema(
-                    name: "food_analysis_with_reasoning",
-                    strict: true,
-                    schema: buildFoodAnalysisWithReasoningSchema()
-                )
-            )
-        )
-
-        request.httpBody = try encoder.encode(chatRequest)
-
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw OpenAIServiceError.invalidResponse(statusCode: 0)
-        }
-
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
-            os_log("OpenAI API error: status %d", log: log, type: .error, httpResponse.statusCode)
-            if let errorBody = String(data: data, encoding: .utf8) {
-                os_log("Error body: %{public}@", log: log, type: .error, errorBody)
-            }
-            throw mapAIHTTPError(statusCode: httpResponse.statusCode, body: data)
-        }
-
-        return try parseMultiItemResponseWithReasoning(data)
-    }
-
-    /// Builds schema for food analysis with reasoning
+    /// Builds the schema used by streaming food analysis.
     private func buildFoodAnalysisWithReasoningSchema() -> JSONSchemaDefinition {
         let foodItemSchema = JSONSchemaProperty.object(
             properties: [
@@ -796,74 +402,6 @@ final class OpenRouterService: AIProviderService {
             ],
             required: ["foodItems", "overallConfidence", "reasoning"],
             additionalProperties: false
-        )
-    }
-
-    /// Parses the response with reasoning
-    private func parseMultiItemResponseWithReasoning(_ data: Data) throws -> AIFoodItemsResponseWithReasoning {
-        let chatResponse: OpenAIChatResponse
-        do {
-            chatResponse = try decoder.decode(OpenAIChatResponse.self, from: data)
-        } catch {
-            os_log("Failed to decode OpenAI response: %{public}@", log: log, type: .error, error.localizedDescription)
-            throw OpenAIServiceError.decodingError(error)
-        }
-
-        guard let content = chatResponse.choices.first?.message.content else {
-            throw OpenAIServiceError.noContentInResponse
-        }
-
-        os_log("Received AI response with reasoning: %{public}@", log: log, type: .debug, content)
-
-        guard let contentData = content.data(using: .utf8) else {
-            throw OpenAIServiceError
-                .decodingError(NSError(
-                    domain: "OpenAIService",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Invalid content encoding"]
-                ))
-        }
-
-        let analysisResponse: AIFoodAnalysisWithReasoningResponse
-        do {
-            analysisResponse = try decoder.decode(AIFoodAnalysisWithReasoningResponse.self, from: contentData)
-        } catch {
-            os_log(
-                "Failed to decode food analysis with reasoning: %{public}@",
-                log: log,
-                type: .error,
-                error.localizedDescription
-            )
-            throw OpenAIServiceError.decodingError(error)
-        }
-
-        let foodItems = analysisResponse.foodItems.map { item in
-            AIFoodItem(
-                name: item.name,
-                carbs: item.carbs,
-                emoji: item.emoji,
-                fat: item.fat,
-                protein: item.protein,
-                servingCount: max(item.servingCount, 1),
-                servingUnit: item.servingUnit.isEmpty ? "Serving" : item.servingUnit
-            )
-        }
-
-        guard !foodItems.isEmpty else {
-            throw OpenAIServiceError
-                .decodingError(NSError(
-                    domain: "OpenAIService",
-                    code: 2,
-                    userInfo: [NSLocalizedDescriptionKey: "No food items found in response"]
-                ))
-        }
-
-        os_log("AI detected %d food items with reasoning", log: log, type: .info, foodItems.count)
-
-        return AIFoodItemsResponseWithReasoning(
-            foodItems: foodItems,
-            overallConfidence: analysisResponse.overallConfidence,
-            reasoning: analysisResponse.reasoning
         )
     }
 
@@ -1412,6 +950,17 @@ final class OpenRouterService: AIProviderService {
 }
 
 enum AIPromptSettings {
+    static func removeObsoletePromptValues(defaults: UserDefaults = .standard) {
+        for key in [
+            "aiPrompt.enhancedFoodAnalysis",
+            "aiPrompt.multiItemFoodAnalysis",
+            "aiPrompt.legacyFoodAnalysis",
+            "aiPrompt.didSplitFoodAnalysisPrompt"
+        ] {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     struct Placeholder: Identifiable {
         let token: String
         let description: String
@@ -1422,9 +971,6 @@ enum AIPromptSettings {
 
     enum Prompt: String, CaseIterable, Identifiable {
         case streamingFoodAnalysis
-        case enhancedFoodAnalysis
-        case multiItemFoodAnalysis
-        case legacyFoodAnalysis
         case foodUserContext
         case singleItemCorrection
         case nutritionLookupIntent
@@ -1438,9 +984,6 @@ enum AIPromptSettings {
         var titleKey: String {
             switch self {
             case .streamingFoodAnalysis: return "Streaming Food Analysis"
-            case .enhancedFoodAnalysis: return "Enhanced Food Analysis"
-            case .multiItemFoodAnalysis: return "Multi-Item Food Analysis"
-            case .legacyFoodAnalysis: return "Legacy Food Analysis"
             case .foodUserContext: return "Food Description Context"
             case .singleItemCorrection: return "Single-Item Correction"
             case .nutritionLookupIntent: return "Nutrition Lookup Detection"
@@ -1454,9 +997,6 @@ enum AIPromptSettings {
         var title: String {
             switch self {
             case .streamingFoodAnalysis: return String(localized: "Streaming Food Analysis")
-            case .enhancedFoodAnalysis: return String(localized: "Enhanced Food Analysis")
-            case .multiItemFoodAnalysis: return String(localized: "Multi-Item Food Analysis")
-            case .legacyFoodAnalysis: return String(localized: "Legacy Food Analysis")
             case .foodUserContext: return String(localized: "Food Description Context")
             case .singleItemCorrection: return String(localized: "Single-Item Correction")
             case .nutritionLookupIntent: return String(localized: "Nutrition Lookup Detection")
@@ -1471,14 +1011,8 @@ enum AIPromptSettings {
             switch self {
             case .streamingFoodAnalysis:
                 return String(localized: "Used by the current food-image workflow to stream detected items and nutrient estimates into the interface.")
-            case .enhancedFoodAnalysis:
-                return String(localized: "Used by the non-streaming image-analysis path that returns food items with overall reasoning.")
-            case .multiItemFoodAnalysis:
-                return String(localized: "Used by the structured multi-item image-analysis path that returns detected foods without conversation reasoning.")
-            case .legacyFoodAnalysis:
-                return String(localized: "Used by the legacy single-item image analysis path when a structured multi-item response is unavailable.")
             case .foodUserContext:
-                return String(localized: "Added to streaming and enhanced food analysis when the user supplies a description before analysis.")
+                return String(localized: "Added to streaming food analysis when the user supplies a description before analysis.")
             case .singleItemCorrection:
                 return String(localized: "Used when the user edits one detected food item's description and asks AI to recalculate its nutrients.")
             case .nutritionLookupIntent:
@@ -1557,59 +1091,10 @@ enum AIPromptSettings {
                 - If the image shows a NUTRITION FACTS LABEL, report carbs/fat/protein PER SERVING as printed on the label. Set the item's servingCount to the number per serving (e.g., 4) and servingUnit to the unit (e.g., "Crackers").
                 - If the image shows ACTUAL FOOD (not a label), estimate total nutrients for the visible portion. Set servingCount to 1 and servingUnit to "Serving".
                 """
-            case .enhancedFoodAnalysis:
-                return """
-                Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
-
-                IMPORTANT GUIDELINES:
-                - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
-                - Include sides, drinks, sauces, and condiments as separate items
-                - For composite items like sandwiches, list as one item but note components in the name
-                - Estimate portion sizes based on visual cues
-                - Choose 1-2 emojis per item that best represent it
-                - Estimate fat and protein in grams for each item
-                - Provide a brief reasoning explaining your carb estimates
-                """
-            case .multiItemFoodAnalysis:
-                return """
-                Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
-
-                IMPORTANT GUIDELINES:
-                - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
-                - Include sides, drinks, sauces, and condiments as separate items
-                - For composite items like sandwiches, list as one item but note components in the name
-                - Estimate portion sizes based on visual cues
-                - Choose 1-2 emojis per item that best represent it
-                - Estimate fat and protein in grams for each item
-                """
             case .foodUserContext:
                 return """
                 USER CONTEXT: {{description}}
                 Please factor this information into your analysis.
-                """
-            case .legacyFoodAnalysis:
-                return """
-                Analyze this food image for a diabetes insulin dosing app. Estimate total carbohydrate, fat, and protein content.
-
-                EMOJI SELECTION:
-                Choose 1-3 food emojis that best represent the meal. Use only standard food/drink emojis.
-
-                FOOD DESCRIPTION RULES:
-                - If emojis completely represent the food (e.g., 🍕 for pizza), use ONLY the emoji(s) as the description
-                - If emojis partially represent it, combine emoji + brief text (e.g., "🍝 Carbonara")
-                - If no good emoji match exists, use brief text description (max 25 chars)
-
-                Respond ONLY with valid JSON in this exact format (no other text):
-                {
-                    "estimatedCarbs": <number in grams>,
-                    "foodDescription": "<emoji-only OR emoji+text OR text, max 25 chars>",
-                    "emoji": "<1-3 food emojis>",
-                    "detailedDescription": "<detailed description of food items and portions observed>",
-                    "fat": <number in grams>,
-                    "protein": <number in grams>,
-                    "carbConfidence": <0.0-1.0>,
-                    "emojiConfidence": <0.0-1.0>
-                }
                 """
             case .singleItemCorrection:
                 return """
@@ -1707,8 +1192,6 @@ enum AIPromptSettings {
         }
 
         var value: String {
-            Self.migrateLegacyFoodAnalysisPromptIfNeeded()
-
             if let savedValue = UserDefaults.standard.string(forKey: storageKey) {
                 return savedValue
             }
@@ -1734,7 +1217,6 @@ enum AIPromptSettings {
         }
 
         func reset() {
-            Self.migrateLegacyFoodAnalysisPromptIfNeeded()
             UserDefaults.standard.removeObject(forKey: storageKey)
         }
 
@@ -1742,31 +1224,5 @@ enum AIPromptSettings {
             self == .streamingFoodAnalysis ? "aiFoodAnalysisPrompt" : "aiPrompt.\(rawValue)"
         }
 
-        private static func migrateLegacyFoodAnalysisPromptIfNeeded() {
-            let defaults = UserDefaults.standard
-            let migrationKey = "aiPrompt.didSplitFoodAnalysisPrompt"
-            guard !defaults.bool(forKey: migrationKey) else { return }
-
-            if let legacyValue = defaults.string(forKey: "aiFoodAnalysisPrompt") {
-                defaults.set(legacyValue, forKey: "aiPrompt.enhancedFoodAnalysis")
-                defaults.set(legacyValue, forKey: "aiPrompt.multiItemFoodAnalysis")
-            }
-
-            defaults.set(true, forKey: migrationKey)
-        }
     }
-}
-
-// MARK: - Legacy Response Type
-
-/// Response structure for legacy single-item analysis
-private struct LegacySingleItemResponse: Decodable {
-    let estimatedCarbs: Double
-    let foodDescription: String
-    let emoji: String
-    let detailedDescription: String
-    let fat: Double
-    let protein: Double
-    let carbConfidence: Double
-    let emojiConfidence: Double
 }

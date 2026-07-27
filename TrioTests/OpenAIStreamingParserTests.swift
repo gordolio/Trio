@@ -225,6 +225,30 @@ private struct ExpectedItem: Equatable {
     }
 }
 
+@Suite("AI Prompt Settings") struct AIPromptSettingsTests {
+    @Test("Obsolete prompt values are removed without affecting active prompts") func removesObsoletePromptValues() {
+        let suiteName = "AIPromptSettingsTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let obsoleteKeys = [
+            "aiPrompt.enhancedFoodAnalysis",
+            "aiPrompt.multiItemFoodAnalysis",
+            "aiPrompt.legacyFoodAnalysis",
+            "aiPrompt.didSplitFoodAnalysisPrompt"
+        ]
+        obsoleteKeys.forEach { defaults.set("obsolete", forKey: $0) }
+        defaults.set("active image prompt", forKey: "aiFoodAnalysisPrompt")
+        defaults.set("active conversation prompt", forKey: "aiPrompt.conversationRefinement")
+
+        AIPromptSettings.removeObsoletePromptValues(defaults: defaults)
+        AIPromptSettings.removeObsoletePromptValues(defaults: defaults)
+
+        #expect(obsoleteKeys.allSatisfy { defaults.object(forKey: $0) == nil })
+        #expect(defaults.string(forKey: "aiFoodAnalysisPrompt") == "active image prompt")
+        #expect(defaults.string(forKey: "aiPrompt.conversationRefinement") == "active conversation prompt")
+    }
+}
+
 // MARK: - Tests
 
 @Suite("OpenAI Streaming Parser Tests") struct OpenAIStreamingParserTests {

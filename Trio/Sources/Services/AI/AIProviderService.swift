@@ -16,9 +16,6 @@ struct NutritionLookupIntent: Decodable {
 /// Chat-style AI operations used for food image analysis and conversational refinement.
 /// Implementations must produce domain responses that are identical regardless of provider.
 protocol AIProviderService {
-    func estimateCarbsMultiItem(from imageData: Data) async throws -> AIFoodItemsResponse
-    func estimateCarbs(from imageData: Data) async throws -> OpenAICarbEstimateResponse
-    func analyzeFood(imageData: Data, userDescription: String?) async throws -> AIFoodItemsResponseWithReasoning
     func analyzeFoodStreaming(
         imageData: Data,
         userDescription: String?
