@@ -159,21 +159,7 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let systemPrompt = """
-        You are a food classifier. Determine if the user's text describes a menu item \
-        from a restaurant, fast food chain, coffee shop, or branded food product that \
-        would have officially published nutrition information available online.
-
-        Examples of YES: "Big Mac from McDonald's", "Starbucks caramel latte", \
-        "Chipotle burrito bowl", "Subway footlong Italian BMT", "Whopper from Burger King", \
-        "Chick-fil-A sandwich", "Domino's pepperoni pizza medium"
-
-        Examples of NO: "homemade pasta", "rice and chicken", "some fruit", \
-        "sandwich" (generic, no brand), "salad", "my mom's lasagna"
-
-        If yes, extract the restaurant/brand name and the specific menu item name. \
-        If the text is ambiguous but leans toward a known chain, classify as yes with lower confidence.
-        """
+        let systemPrompt = AIPromptSettings.Prompt.restaurantClassification.value
 
         let chatRequest = OpenAIChatRequest(
             model: modelSet.classifierModel,
@@ -247,33 +233,11 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let inputPrompt = """
-        Look up the official published nutrition facts for "\(menuItemName)" from "\(restaurantName)".
-
-        STRONGLY PREFER the restaurant's own official website (e.g., \(restaurantName.lowercased()).com/nutrition \
-        or the restaurant's official nutrition PDF). Only use third-party nutrition databases as a fallback \
-        if the official source is unavailable.
-
-        I need:
-        - Total carbohydrates in grams
-        - Total fat in grams
-        - Protein in grams
-        - Calories
-        - The URL of the webpage where you found the nutrition facts (sourceURL)
-        - servingCount: How many individual items are in one serving (e.g., 8 for an 8-count nugget, 1 for a sandwich)
-        - servingCountUnit: The unit for counting (e.g., "Nuggets", "Pieces", or "Serving" if not countable)
-
-        IMPORTANT: For menuItemName, return ONLY the menu item name as it appears on the menu, \
-        without including the restaurant or brand name. For example, return "Hash Browns" not \
-        "Hash Browns (Chick-fil-A)".
-
-        IMPORTANT: For sourceURL, return the actual URL of the official webpage where the nutrition \
-        information was found. Prefer the restaurant's own domain (e.g., "https://www.chickfila.com/nutrition"). \
-        Do not leave this empty.
-
-        Return the data from the official/published source. If you cannot find the exact item, \
-        return your best match with a lower confidence score.
-        """
+        let inputPrompt = AIPromptSettings.Prompt.publishedNutritionSearch.rendered([
+            "menuItemName": menuItemName,
+            "restaurantName": restaurantName,
+            "restaurantDomain": restaurantName.lowercased()
+        ])
 
         let searchRequest = OpenRouterWebSearchRequest(
             model: modelSet.primaryModel,

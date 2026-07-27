@@ -425,18 +425,7 @@ final class OpenRouterService: AIProviderService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let defaultPrompt = """
-        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
-
-        IMPORTANT GUIDELINES:
-        - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
-        - Include sides, drinks, sauces, and condiments as separate items
-        - For composite items like sandwiches, list as one item but note components in the name
-        - Estimate portion sizes based on visual cues
-        - Choose 1-2 emojis per item that best represent it
-        - Estimate fat and protein in grams for each item
-        """
-        let prompt = AIPromptSettings.foodAnalysisPrompt(fallback: defaultPrompt)
+        let prompt = AIPromptSettings.Prompt.multiItemFoodAnalysis.value
 
         // Build the request with structured output schema
         let chatRequest = OpenAIChatRequest(
@@ -590,29 +579,7 @@ final class OpenRouterService: AIProviderService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let prompt = """
-        Analyze this food image for a diabetes insulin dosing app. Estimate total carbohydrate, fat, and protein content.
-
-        EMOJI SELECTION:
-        Choose 1-3 food emojis that best represent the meal. Use only standard food/drink emojis.
-
-        FOOD DESCRIPTION RULES:
-        - If emojis completely represent the food (e.g., 🍕 for pizza), use ONLY the emoji(s) as the description
-        - If emojis partially represent it, combine emoji + brief text (e.g., "🍝 Carbonara")
-        - If no good emoji match exists, use brief text description (max 25 chars)
-
-        Respond ONLY with valid JSON in this exact format (no other text):
-        {
-            "estimatedCarbs": <number in grams>,
-            "foodDescription": "<emoji-only OR emoji+text OR text, max 25 chars>",
-            "emoji": "<1-3 food emojis>",
-            "detailedDescription": "<detailed description of food items and portions observed>",
-            "fat": <number in grams>,
-            "protein": <number in grams>,
-            "carbConfidence": <0.0-1.0>,
-            "emojiConfidence": <0.0-1.0>
-        }
-        """
+        let prompt = AIPromptSettings.Prompt.legacyFoodAnalysis.value
 
         let chatRequest = OpenAIChatRequest(
             model: modelSet.primaryModel,
@@ -750,23 +717,11 @@ final class OpenRouterService: AIProviderService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let defaultPrompt = """
-        Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
-
-        IMPORTANT GUIDELINES:
-        - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
-        - Include sides, drinks, sauces, and condiments as separate items
-        - For composite items like sandwiches, list as one item but note components in the name
-        - Estimate portion sizes based on visual cues
-        - Choose 1-2 emojis per item that best represent it
-        - Estimate fat and protein in grams for each item
-        - Provide a brief reasoning explaining your carb estimates
-        """
-        var prompt = AIPromptSettings.foodAnalysisPrompt(fallback: defaultPrompt)
+        var prompt = AIPromptSettings.Prompt.enhancedFoodAnalysis.value
 
         // Add user description if provided
         if let description = userDescription, !description.isEmpty {
-            prompt += "\n\nUSER CONTEXT: \(description)\nPlease factor this information into your analysis."
+            prompt += "\n\n" + AIPromptSettings.Prompt.foodUserContext.rendered(["description": description])
         }
 
         let chatRequest = OpenAIChatRequest(
@@ -942,26 +897,10 @@ final class OpenRouterService: AIProviderService {
                     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                    let defaultPrompt = """
-                    Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
-
-                    IMPORTANT GUIDELINES:
-                    - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
-                    - Include sides, drinks, sauces, and condiments as separate items
-                    - For composite items like sandwiches, list as one item but note components in the name
-                    - Estimate portion sizes based on visual cues
-                    - Choose 1-2 emojis per item that best represent it
-                    - Estimate fat and protein in grams for each item
-                    - Provide a brief reasoning explaining your carb estimates
-
-                    SERVING SIZE RULES (per item):
-                    - If the image shows a NUTRITION FACTS LABEL, report carbs/fat/protein PER SERVING as printed on the label. Set the item's servingCount to the number per serving (e.g., 4) and servingUnit to the unit (e.g., "Crackers").
-                    - If the image shows ACTUAL FOOD (not a label), estimate total nutrients for the visible portion. Set servingCount to 1 and servingUnit to "Serving".
-                    """
-                    var prompt = AIPromptSettings.foodAnalysisPrompt(fallback: defaultPrompt)
+                    var prompt = AIPromptSettings.Prompt.streamingFoodAnalysis.value
 
                     if let description = userDescription, !description.isEmpty {
-                        prompt += "\n\nUSER CONTEXT: \(description)\nPlease factor this information into your analysis."
+                        prompt += "\n\n" + AIPromptSettings.Prompt.foodUserContext.rendered(["description": description])
                     }
 
                     let chatRequest = OpenAIChatRequest(
@@ -1070,18 +1009,14 @@ final class OpenRouterService: AIProviderService {
             .map { "\($0.emoji ?? "") \($0.name): \(Int($0.carbs))g carbs, \(Int($0.fat))g fat, \(Int($0.protein))g protein" }
             .joined(separator: ", ")
 
-        let prompt = """
-        I previously analyzed this food image and identified these items: \(otherItemsContext
-            .isEmpty ? "none" : otherItemsContext)
-
-        I also identified an item as "\(editedItem
-            .name)" with \(Int(editedItem.carbs))g carbs, \(Int(editedItem.fat))g fat, \(Int(editedItem.protein))g protein.
-
-        The user has corrected this item's description to: "\(newDescription)"
-
-        Please re-estimate the total carbohydrates, fat, and protein for this corrected item based on the image and new description.
-        Consider the visual portion size and the specific food type indicated by the user.
-        """
+        let prompt = AIPromptSettings.Prompt.singleItemCorrection.rendered([
+            "otherItems": otherItemsContext.isEmpty ? "none" : otherItemsContext,
+            "itemName": editedItem.name,
+            "carbs": String(Int(editedItem.carbs)),
+            "fat": String(Int(editedItem.fat)),
+            "protein": String(Int(editedItem.protein)),
+            "newDescription": newDescription
+        ])
 
         let chatRequest = OpenAIChatRequest(
             model: modelSet.primaryModel,
@@ -1194,20 +1129,10 @@ final class OpenRouterService: AIProviderService {
 
         let itemsList = currentItems.map { "\($0.emoji ?? "") \($0.name)" }.joined(separator: ", ")
 
-        let systemPrompt = """
-        You are classifying a user's message in a food analysis conversation.
-        The user is looking at food from \(restaurantName). Current items: \(itemsList).
-
-        Determine if the user is asking you to LOOK UP or FIND published nutrition facts for a specific menu item \
-        (e.g., "look up the fries", "find nutrition for the nuggets", "can you search for the shake?").
-
-        This does NOT include:
-        - Asking to change/update an existing item's values
-        - Asking general questions about the food
-        - Asking to add a new item with estimated values
-
-        If it IS a nutrition lookup request, extract the menu item name they want to look up.
-        """
+        let systemPrompt = AIPromptSettings.Prompt.nutritionLookupIntent.rendered([
+            "restaurantName": restaurantName,
+            "currentItems": itemsList
+        ])
 
         let messages = [
             OpenAIMessage(role: "system", content: [.text(systemPrompt)]),
@@ -1309,39 +1234,10 @@ final class OpenRouterService: AIProviderService {
             }
         }.joined(separator: "\n")
 
-        let systemPrompt = """
-        You are helping a person with diabetes refine their total carbohydrate, fat, and protein estimates for insulin dosing.
-
-        CURRENT FOOD ITEMS:
-        \(itemsContext)
-
-        Items marked [PUBLISHED] have verified nutrition facts from the restaurant's official website.
-        Items marked [AI ESTIMATE] are vision-based estimates that may be less accurate.
-
-        CONVERSATION HISTORY:
-        \(historyText)
-
-        The user's new message is below. Based on their feedback:
-        1. Update any food items that need to change
-        2. Keep item IDs consistent (return the same IDs for unchanged items)
-        3. Provide a helpful response acknowledging their input
-        4. If they mention specific items, update those
-        5. If they provide new information about the whole meal, adjust accordingly
-        6. For items marked [PUBLISHED], preserve their values unless the user explicitly asks to change them
-        7. If the user asks you to look up or find nutrition facts for an item, let them know that you can only provide AI estimates in the conversation — published nutrition lookups happen automatically when a restaurant is identified
-        8. For each item, include a "source" field: "published" for items with verified data, "estimated" for AI estimates
-
-        For each item, return:
-        - id: The original UUID if updating, or generate a new one for new items
-        - name: Food description (max 30 chars)
-        - carbs: Estimated total carbohydrate grams (not net carbs)
-        - emoji: 1-2 relevant emojis
-        - fat: Estimated fat grams
-        - protein: Estimated protein grams
-        - source: "published" if the item has verified published nutrition data, "estimated" if AI estimate
-
-        For each item, also preserve its servingCount and servingUnit from the previous analysis unless the user explicitly changes it.
-        """
+        let systemPrompt = AIPromptSettings.Prompt.conversationRefinement.rendered([
+            "currentItems": itemsContext,
+            "conversationHistory": historyText
+        ])
 
         // Build messages array for multi-turn conversation
         let messages: [OpenAIMessage] = [
@@ -1352,7 +1248,7 @@ final class OpenRouterService: AIProviderService {
             OpenAIMessage(
                 role: "user",
                 content: [
-                    .text("Here is the food image for reference:"),
+                    .text(AIPromptSettings.Prompt.conversationImageReference.value),
                     .imageUrl(OpenAIImageUrl(url: "data:image/jpeg;base64,\(base64Image)"))
                 ]
             ),
@@ -1516,36 +1412,332 @@ final class OpenRouterService: AIProviderService {
 }
 
 enum AIPromptSettings {
-    static let defaultFoodAnalysisPrompt = """
-    Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
+    struct Placeholder: Identifiable {
+        let token: String
+        let description: String
 
-    IMPORTANT GUIDELINES:
-    - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
-    - Include sides, drinks, sauces, and condiments as separate items
-    - For composite items like sandwiches, list as one item but note components in the name
-    - Estimate portion sizes based on visual cues
-    - Choose 1-2 emojis per item that best represent it
-    - Estimate fat and protein in grams for each item
-    - Provide a brief reasoning explaining your carb estimates
-
-    SERVING SIZE RULES (per item):
-    - If the image shows a NUTRITION FACTS LABEL, report carbs/fat/protein PER SERVING as printed on the label. Set the item's servingCount to the number per serving (e.g., 4) and servingUnit to the unit (e.g., "Crackers").
-    - If the image shows ACTUAL FOOD (not a label), estimate total nutrients for the visible portion. Set servingCount to 1 and servingUnit to "Serving".
-    """
-
-    private static let foodAnalysisPromptKey = "aiFoodAnalysisPrompt"
-
-    static var foodAnalysisPrompt: String {
-        get { foodAnalysisPrompt(fallback: defaultFoodAnalysisPrompt) }
-        set { UserDefaults.standard.set(newValue, forKey: foodAnalysisPromptKey) }
+        var id: String { token }
+        var displayToken: String { "{{\(token)}}" }
     }
 
-    static func foodAnalysisPrompt(fallback defaultPrompt: String) -> String {
-        UserDefaults.standard.string(forKey: foodAnalysisPromptKey) ?? defaultPrompt
-    }
+    enum Prompt: String, CaseIterable, Identifiable {
+        case streamingFoodAnalysis
+        case enhancedFoodAnalysis
+        case multiItemFoodAnalysis
+        case legacyFoodAnalysis
+        case foodUserContext
+        case singleItemCorrection
+        case nutritionLookupIntent
+        case conversationRefinement
+        case conversationImageReference
+        case restaurantClassification
+        case publishedNutritionSearch
 
-    static func resetFoodAnalysisPrompt() {
-        UserDefaults.standard.removeObject(forKey: foodAnalysisPromptKey)
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .streamingFoodAnalysis: return String(localized: "Streaming Food Analysis")
+            case .enhancedFoodAnalysis: return String(localized: "Enhanced Food Analysis")
+            case .multiItemFoodAnalysis: return String(localized: "Multi-Item Food Analysis")
+            case .legacyFoodAnalysis: return String(localized: "Legacy Food Analysis")
+            case .foodUserContext: return String(localized: "Food Description Context")
+            case .singleItemCorrection: return String(localized: "Single-Item Correction")
+            case .nutritionLookupIntent: return String(localized: "Nutrition Lookup Detection")
+            case .conversationRefinement: return String(localized: "Conversation Refinement")
+            case .conversationImageReference: return String(localized: "Conversation Image Reference")
+            case .restaurantClassification: return String(localized: "Restaurant Classification")
+            case .publishedNutritionSearch: return String(localized: "Published Nutrition Search")
+            }
+        }
+
+        var usageDescription: String {
+            switch self {
+            case .streamingFoodAnalysis:
+                return String(localized: "Used by the current food-image workflow to stream detected items and nutrient estimates into the interface.")
+            case .enhancedFoodAnalysis:
+                return String(localized: "Used by the non-streaming image-analysis path that returns food items with overall reasoning.")
+            case .multiItemFoodAnalysis:
+                return String(localized: "Used by the structured multi-item image-analysis path that returns detected foods without conversation reasoning.")
+            case .legacyFoodAnalysis:
+                return String(localized: "Used by the legacy single-item image analysis path when a structured multi-item response is unavailable.")
+            case .foodUserContext:
+                return String(localized: "Added to streaming and enhanced food analysis when the user supplies a description before analysis.")
+            case .singleItemCorrection:
+                return String(localized: "Used when the user edits one detected food item's description and asks AI to recalculate its nutrients.")
+            case .nutritionLookupIntent:
+                return String(localized: "Used during food chat to decide whether a message requests published restaurant nutrition facts.")
+            case .conversationRefinement:
+                return String(localized: "Used after an initial analysis when the user chats with AI to add, remove, correct, or resize food items.")
+            case .conversationImageReference:
+                return String(localized: "Sent with the original food image on each conversational refinement request.")
+            case .restaurantClassification:
+                return String(localized: "Used to decide whether the user's food description names a restaurant, chain, or branded menu item.")
+            case .publishedNutritionSearch:
+                return String(localized: "Used to search the web for official nutrition facts after a restaurant and menu item are identified.")
+            }
+        }
+
+        var placeholders: [Placeholder] {
+            switch self {
+            case .foodUserContext:
+                return [.init(token: "description", description: String(localized: "The user's food description."))]
+            case .singleItemCorrection:
+                return [
+                    .init(token: "otherItems", description: String(localized: "Other detected items and their nutrients.")),
+                    .init(token: "itemName", description: String(localized: "The original item name.")),
+                    .init(token: "carbs", description: String(localized: "The original carbohydrate estimate.")),
+                    .init(token: "fat", description: String(localized: "The original fat estimate.")),
+                    .init(token: "protein", description: String(localized: "The original protein estimate.")),
+                    .init(token: "newDescription", description: String(localized: "The user's corrected description."))
+                ]
+            case .nutritionLookupIntent:
+                return [
+                    .init(token: "restaurantName", description: String(localized: "The identified restaurant name.")),
+                    .init(token: "currentItems", description: String(localized: "The food items currently shown."))
+                ]
+            case .conversationRefinement:
+                return [
+                    .init(token: "currentItems", description: String(localized: "Current items, nutrient estimates, IDs, and sources.")),
+                    .init(token: "conversationHistory", description: String(localized: "Previous user, assistant, and system messages."))
+                ]
+            case .publishedNutritionSearch:
+                return [
+                    .init(token: "menuItemName", description: String(localized: "The menu item to find.")),
+                    .init(token: "restaurantName", description: String(localized: "The restaurant or brand name.")),
+                    .init(token: "restaurantDomain", description: String(localized: "A lowercase restaurant name for suggesting an official domain."))
+                ]
+            default:
+                return []
+            }
+        }
+
+        var examples: [String] {
+            guard self == .conversationRefinement else { return [] }
+            return [
+                String(localized: "That was two slices of pizza, not one."),
+                String(localized: "Remove the fries; I didn't eat them."),
+                String(localized: "The coffee had oat milk and no syrup."),
+                String(localized: "Add a tablespoon of ranch dressing.")
+            ]
+        }
+
+        var defaultValue: String {
+            switch self {
+            case .streamingFoodAnalysis:
+                return """
+                Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
+
+                IMPORTANT GUIDELINES:
+                - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
+                - Include sides, drinks, sauces, and condiments as separate items
+                - For composite items like sandwiches, list as one item but note components in the name
+                - Estimate portion sizes based on visual cues
+                - Choose 1-2 emojis per item that best represent it
+                - Estimate fat and protein in grams for each item
+                - Provide a brief reasoning explaining your carb estimates
+
+                SERVING SIZE RULES (per item):
+                - If the image shows a NUTRITION FACTS LABEL, report carbs/fat/protein PER SERVING as printed on the label. Set the item's servingCount to the number per serving (e.g., 4) and servingUnit to the unit (e.g., "Crackers").
+                - If the image shows ACTUAL FOOD (not a label), estimate total nutrients for the visible portion. Set servingCount to 1 and servingUnit to "Serving".
+                """
+            case .enhancedFoodAnalysis:
+                return """
+                Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
+
+                IMPORTANT GUIDELINES:
+                - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
+                - Include sides, drinks, sauces, and condiments as separate items
+                - For composite items like sandwiches, list as one item but note components in the name
+                - Estimate portion sizes based on visual cues
+                - Choose 1-2 emojis per item that best represent it
+                - Estimate fat and protein in grams for each item
+                - Provide a brief reasoning explaining your carb estimates
+                """
+            case .multiItemFoodAnalysis:
+                return """
+                Analyze this food image for a diabetes insulin dosing app. Identify ALL individual food items visible and estimate total carbohydrate, fat, and protein content for each.
+
+                IMPORTANT GUIDELINES:
+                - List EACH distinct food item separately (e.g., for a meal with sandwich, apple, and drink - list all 3)
+                - Include sides, drinks, sauces, and condiments as separate items
+                - For composite items like sandwiches, list as one item but note components in the name
+                - Estimate portion sizes based on visual cues
+                - Choose 1-2 emojis per item that best represent it
+                - Estimate fat and protein in grams for each item
+                """
+            case .foodUserContext:
+                return """
+                USER CONTEXT: {{description}}
+                Please factor this information into your analysis.
+                """
+            case .legacyFoodAnalysis:
+                return """
+                Analyze this food image for a diabetes insulin dosing app. Estimate total carbohydrate, fat, and protein content.
+
+                EMOJI SELECTION:
+                Choose 1-3 food emojis that best represent the meal. Use only standard food/drink emojis.
+
+                FOOD DESCRIPTION RULES:
+                - If emojis completely represent the food (e.g., 🍕 for pizza), use ONLY the emoji(s) as the description
+                - If emojis partially represent it, combine emoji + brief text (e.g., "🍝 Carbonara")
+                - If no good emoji match exists, use brief text description (max 25 chars)
+
+                Respond ONLY with valid JSON in this exact format (no other text):
+                {
+                    "estimatedCarbs": <number in grams>,
+                    "foodDescription": "<emoji-only OR emoji+text OR text, max 25 chars>",
+                    "emoji": "<1-3 food emojis>",
+                    "detailedDescription": "<detailed description of food items and portions observed>",
+                    "fat": <number in grams>,
+                    "protein": <number in grams>,
+                    "carbConfidence": <0.0-1.0>,
+                    "emojiConfidence": <0.0-1.0>
+                }
+                """
+            case .singleItemCorrection:
+                return """
+                I previously analyzed this food image and identified these items: {{otherItems}}
+
+                I also identified an item as "{{itemName}}" with {{carbs}}g carbs, {{fat}}g fat, and {{protein}}g protein.
+
+                The user has corrected this item's description to: "{{newDescription}}"
+
+                Please re-estimate the total carbohydrates, fat, and protein for this corrected item based on the image and new description.
+                Consider the visual portion size and the specific food type indicated by the user.
+                """
+            case .nutritionLookupIntent:
+                return """
+                You are classifying a user's message in a food analysis conversation.
+                The user is looking at food from {{restaurantName}}. Current items: {{currentItems}}.
+
+                Determine if the user is asking you to LOOK UP or FIND published nutrition facts for a specific menu item (e.g., "look up the fries", "find nutrition for the nuggets", "can you search for the shake?").
+
+                This does NOT include:
+                - Asking to change/update an existing item's values
+                - Asking general questions about the food
+                - Asking to add a new item with estimated values
+
+                If it IS a nutrition lookup request, extract the menu item name they want to look up.
+                """
+            case .conversationRefinement:
+                return """
+                You are helping a person with diabetes refine their total carbohydrate, fat, and protein estimates for insulin dosing.
+
+                CURRENT FOOD ITEMS:
+                {{currentItems}}
+
+                Items marked [PUBLISHED] have verified nutrition facts from the restaurant's official website.
+                Items marked [AI ESTIMATE] are vision-based estimates that may be less accurate.
+
+                CONVERSATION HISTORY:
+                {{conversationHistory}}
+
+                The user's new message is below. Based on their feedback:
+                1. Update any food items that need to change
+                2. Keep item IDs consistent (return the same IDs for unchanged items)
+                3. Provide a helpful response acknowledging their input
+                4. If they mention specific items, update those
+                5. If they provide new information about the whole meal, adjust accordingly
+                6. For items marked [PUBLISHED], preserve their values unless the user explicitly asks to change them
+                7. If the user asks you to look up or find nutrition facts for an item, let them know that you can only provide AI estimates in the conversation — published nutrition lookups happen automatically when a restaurant is identified
+                8. For each item, include a "source" field: "published" for items with verified data, "estimated" for AI estimates
+
+                For each item, return:
+                - id: The original UUID if updating, or generate a new one for new items
+                - name: Food description (max 30 chars)
+                - carbs: Estimated total carbohydrate grams (not net carbs)
+                - emoji: 1-2 relevant emojis
+                - fat: Estimated fat grams
+                - protein: Estimated protein grams
+                - source: "published" if the item has verified published nutrition data, "estimated" if AI estimate
+
+                For each item, also preserve its servingCount and servingUnit from the previous analysis unless the user explicitly changes it.
+                """
+            case .conversationImageReference:
+                return "Here is the food image for reference:"
+            case .restaurantClassification:
+                return """
+                You are a food classifier. Determine if the user's text describes a menu item from a restaurant, fast food chain, coffee shop, or branded food product that would have officially published nutrition information available online.
+
+                Examples of YES: "Big Mac from McDonald's", "Starbucks caramel latte", "Chipotle burrito bowl", "Subway footlong Italian BMT", "Whopper from Burger King", "Chick-fil-A sandwich", "Domino's pepperoni pizza medium"
+
+                Examples of NO: "homemade pasta", "rice and chicken", "some fruit", "sandwich" (generic, no brand), "salad", "my mom's lasagna"
+
+                If yes, extract the restaurant/brand name and the specific menu item name. If the text is ambiguous but leans toward a known chain, classify as yes with lower confidence.
+                """
+            case .publishedNutritionSearch:
+                return """
+                Look up the official published nutrition facts for "{{menuItemName}}" from "{{restaurantName}}".
+
+                STRONGLY PREFER the restaurant's own official website (e.g., {{restaurantDomain}}.com/nutrition or the restaurant's official nutrition PDF). Only use third-party nutrition databases as a fallback if the official source is unavailable.
+
+                I need:
+                - Total carbohydrates in grams
+                - Total fat in grams
+                - Protein in grams
+                - Calories
+                - The URL of the webpage where you found the nutrition facts (sourceURL)
+                - servingCount: How many individual items are in one serving (e.g., 8 for an 8-count nugget, 1 for a sandwich)
+                - servingCountUnit: The unit for counting (e.g., "Nuggets", "Pieces", or "Serving" if not countable)
+
+                IMPORTANT: For menuItemName, return ONLY the menu item name as it appears on the menu, without including the restaurant or brand name. For example, return "Hash Browns" not "Hash Browns (Chick-fil-A)".
+
+                IMPORTANT: For sourceURL, return the actual URL of the official webpage where the nutrition information was found. Prefer the restaurant's own domain (e.g., "https://www.chickfila.com/nutrition"). Do not leave this empty.
+
+                Return the data from the official/published source. If you cannot find the exact item, return your best match with a lower confidence score.
+                """
+            }
+        }
+
+        var value: String {
+            Self.migrateLegacyFoodAnalysisPromptIfNeeded()
+
+            if let savedValue = UserDefaults.standard.string(forKey: storageKey) {
+                return savedValue
+            }
+
+            return defaultValue
+        }
+
+        func rendered(_ replacements: [String: String]) -> String {
+            let template = value
+            let expression = try? NSRegularExpression(pattern: #"\{\{([A-Za-z][A-Za-z0-9]*)\}\}"#)
+            let matches = expression?.matches(in: template, range: NSRange(template.startIndex..., in: template)) ?? []
+            let templateString = template as NSString
+
+            return matches.reversed().reduce(template) { result, match in
+                let token = templateString.substring(with: match.range(at: 1))
+                guard let replacement = replacements[token] else { return result }
+                return (result as NSString).replacingCharacters(in: match.range, with: replacement)
+            }
+        }
+
+        func save(_ value: String) {
+            UserDefaults.standard.set(value, forKey: storageKey)
+        }
+
+        func reset() {
+            Self.migrateLegacyFoodAnalysisPromptIfNeeded()
+            UserDefaults.standard.removeObject(forKey: storageKey)
+        }
+
+        private var storageKey: String {
+            self == .streamingFoodAnalysis ? "aiFoodAnalysisPrompt" : "aiPrompt.\(rawValue)"
+        }
+
+        private static func migrateLegacyFoodAnalysisPromptIfNeeded() {
+            let defaults = UserDefaults.standard
+            let migrationKey = "aiPrompt.didSplitFoodAnalysisPrompt"
+            guard !defaults.bool(forKey: migrationKey) else { return }
+
+            if let legacyValue = defaults.string(forKey: "aiFoodAnalysisPrompt") {
+                defaults.set(legacyValue, forKey: "aiPrompt.enhancedFoodAnalysis")
+                defaults.set(legacyValue, forKey: "aiPrompt.multiItemFoodAnalysis")
+            }
+
+            defaults.set(true, forKey: migrationKey)
+        }
     }
 }
 
