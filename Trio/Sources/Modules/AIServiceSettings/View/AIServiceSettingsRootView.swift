@@ -56,6 +56,7 @@ extension AIServiceSettings {
                 )
                 .listRowBackground(Color.chart)
             }
+            .settingsHighlightScroll()
             .scrollContentBackground(.hidden)
             .background(appState.trioBackgroundColor(for: colorScheme))
             .navigationTitle("AI")
@@ -82,7 +83,8 @@ extension AIServiceSettings {
 private struct AIPromptSettingsView: View {
     var body: some View {
         Section(
-            header: Text("AI Prompts"),
+            header: Text("AI Prompts")
+                .settingsSearchTarget(label: "AI Prompts"),
             footer: Text(
                 "Custom prompts apply to both providers and remain saved across app updates."
             ),
@@ -91,10 +93,10 @@ private struct AIPromptSettingsView: View {
                     NavigationLink(prompt.title) {
                         AIPromptEditor(prompt: prompt)
                     }
+                    .settingsSearchTarget(label: prompt.title)
                 }
             }
         )
-        .listRowBackground(Color.chart)
     }
 }
 

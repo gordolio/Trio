@@ -32,6 +32,14 @@ import Testing
         }
     }
 
+    @Test("Every AI prompt search result targets its settings row") func allAIPromptsAreSearchable() {
+        for prompt in AIPromptSettings.Prompt.allCases {
+            let result = SettingItems.filteredItems(searchText: prompt.titleKey)
+                .first { $0.matchedContent == prompt.titleKey && $0.settingItem.view == .aiServiceSettings }
+            #expect(result?.scrollLabel == prompt.title)
+        }
+    }
+
     @Test("SearchResultTarget is Hashable and equatable by value") func searchResultTargetHashable() {
         let a = SearchResultTarget(screen: .dynamicISF, scrollLabel: "Dynamic ISF")
         let b = SearchResultTarget(screen: .dynamicISF, scrollLabel: "Dynamic ISF")

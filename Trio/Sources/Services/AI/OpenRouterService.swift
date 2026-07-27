@@ -1435,6 +1435,22 @@ enum AIPromptSettings {
 
         var id: String { rawValue }
 
+        var titleKey: String {
+            switch self {
+            case .streamingFoodAnalysis: return "Streaming Food Analysis"
+            case .enhancedFoodAnalysis: return "Enhanced Food Analysis"
+            case .multiItemFoodAnalysis: return "Multi-Item Food Analysis"
+            case .legacyFoodAnalysis: return "Legacy Food Analysis"
+            case .foodUserContext: return "Food Description Context"
+            case .singleItemCorrection: return "Single-Item Correction"
+            case .nutritionLookupIntent: return "Nutrition Lookup Detection"
+            case .conversationRefinement: return "Conversation Refinement"
+            case .conversationImageReference: return "Conversation Image Reference"
+            case .restaurantClassification: return "Restaurant Classification"
+            case .publishedNutritionSearch: return "Published Nutrition Search"
+            }
+        }
+
         var title: String {
             switch self {
             case .streamingFoodAnalysis: return String(localized: "Streaming Food Analysis")

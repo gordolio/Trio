@@ -421,6 +421,15 @@ enum SettingItems {
             ],
             path: ["Services", "Nightscout", "Fetch and Remote Control"]
         ),
+        SettingItem(
+            title: "AI Prompts",
+            view: .aiServiceSettings,
+            searchContents: AIPromptSettings.Prompt.allCases.map(\.titleKey),
+            scrollTargetLabels: Dictionary(
+                uniqueKeysWithValues: AIPromptSettings.Prompt.allCases.map { ($0.titleKey, $0.title) }
+            ),
+            path: ["Services", "AI"]
+        ),
         SettingItem(title: "Tidepool", view: .serviceSettings, path: ["Services"]),
         SettingItem(title: "Apple Health", view: .healthkit, path: ["Services"])
     ]
