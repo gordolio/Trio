@@ -81,15 +81,57 @@ extension AIServiceSettings {
 }
 
 private struct AIPromptSettingsView: View {
+    private let supportingPrompts: [AIPromptSettings.Prompt] = [
+        .singleItemCorrection,
+        .nutritionLookupIntent,
+        .conversationRefinement,
+        .conversationImageReference,
+        .restaurantClassification,
+        .publishedNutritionSearch
+    ]
+
     var body: some View {
         Section(
             header: Text("AI Prompts")
                 .settingsSearchTarget(label: "AI Prompts"),
             footer: Text(
-                "Custom prompts apply to both providers and remain saved across app updates."
+                "Streaming Food Analysis is the main image prompt. Food Description Context is its optional addendum when the user supplies more information."
             ),
             content: {
-                ForEach(AIPromptSettings.Prompt.allCases) { prompt in
+                NavigationLink {
+                    AIPromptEditor(prompt: .streamingFoodAnalysis)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(AIPromptSettings.Prompt.streamingFoodAnalysis.title)
+                        Text("Primary prompt")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .settingsSearchTarget(label: AIPromptSettings.Prompt.streamingFoodAnalysis.title)
+
+                NavigationLink {
+                    AIPromptEditor(prompt: .foodUserContext)
+                } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(AIPromptSettings.Prompt.foodUserContext.title)
+                        Text("Optional description addendum")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .settingsSearchTarget(label: AIPromptSettings.Prompt.foodUserContext.title)
+            }
+        )
+        .listRowBackground(Color.chart)
+
+        Section(
+            header: Text("Supporting Prompts"),
+            footer: Text(
+                "Used for corrections, conversation, intent detection, and restaurant or published-nutrition workflows."
+            ),
+            content: {
+                ForEach(supportingPrompts) { prompt in
                     NavigationLink(prompt.title) {
                         AIPromptEditor(prompt: prompt)
                     }
@@ -97,6 +139,7 @@ private struct AIPromptSettingsView: View {
                 }
             }
         )
+        .listRowBackground(Color.chart)
     }
 }
 

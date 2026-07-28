@@ -18,7 +18,14 @@ struct NutritionLookupIntent: Decodable {
 protocol AIProviderService {
     func analyzeFoodStreaming(
         imageData: Data,
-        userDescription: String?
+        userDescription: String?,
+        sessionID: String?
+    ) -> AsyncThrowingStream<PartialFoodAnalysisResult, Error>
+    func refineFoodAnalysisStreaming(
+        imageData: Data,
+        initialResponse: AIFoodItemsResponseWithReasoning,
+        userDescription: String,
+        sessionID: String
     ) -> AsyncThrowingStream<PartialFoodAnalysisResult, Error>
     func updateSingleItem(
         imageData: Data,

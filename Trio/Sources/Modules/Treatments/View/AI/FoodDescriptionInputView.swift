@@ -1,11 +1,14 @@
 import SwiftUI
 
-/// Inline view for adding an optional description before AI analysis.
+/// Inline view for reviewing initial AI analysis and adding optional context.
 /// Shown below the AI button after a photo is captured/selected.
 struct FoodDescriptionInputView: View {
     @Binding var description: String
     let imageData: Data
-    let onAnalyze: () -> Void
+    let isPreparingAnalysis: Bool
+    let provisionalItems: [AIFoodItem]
+    let provisionalError: String?
+    let onContinue: () -> Void
     let onCancel: () -> Void
 
     @FocusState private var isTextFieldFocused: Bool
@@ -54,6 +57,8 @@ struct FoodDescriptionInputView: View {
                 }
             }
 
+            initialAnalysisCard
+
             // Example chips
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -78,11 +83,11 @@ struct FoodDescriptionInputView: View {
 
                 Spacer()
 
-                Button(action: onAnalyze) {
+                Button(action: onContinue) {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
                             .font(.subheadline)
-                        Text("Analyze", comment: "Button to analyze food with AI")
+                        Text("Continue", comment: "Button to continue with the initial food analysis")
                             .font(.subheadline.bold())
                     }
                     .foregroundColor(.white)
@@ -99,6 +104,75 @@ struct FoodDescriptionInputView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 isTextFieldFocused = true
             }
+        }
+    }
+
+    @ViewBuilder private var initialAnalysisCard: some View {
+        if isPreparingAnalysis || !provisionalItems.isEmpty || provisionalError != nil {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 6) {
+                    if isPreparingAnalysis {
+                        ProgressView()
+                            .controlSize(.small)
+                        if provisionalItems.isEmpty {
+                            Text(
+                                "Analyzing image…",
+                                comment: "Status shown while immediate food image analysis waits for its first result"
+                            )
+                        } else {
+                            Text(
+                                "Initial analysis updating…",
+                                comment: "Status shown while immediate food image analysis streams provisional results"
+                            )
+                        }
+                    } else if let provisionalError {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(.orange)
+                        Text(provisionalError)
+                    } else {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text(
+                            "Initial analysis ready",
+                            comment: "Status shown when immediate food image analysis has completed"
+                        )
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                ForEach(provisionalItems) { item in
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(verbatim: "\(item.emoji ?? "") \(item.name)")
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(
+                            verbatim:
+                            "C \(item.carbs.formatted(.number.precision(.fractionLength(0 ... 1))))g · F \(item.fat.formatted(.number.precision(.fractionLength(0 ... 1))))g · P \(item.protein.formatted(.number.precision(.fractionLength(0 ... 1))))g"
+                        )
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    }
+                }
+
+                if !provisionalItems.isEmpty {
+                    Divider()
+                    HStack {
+                        Text("Preliminary total", comment: "Label for provisional total carbohydrate estimate")
+                            .font(.caption.bold())
+                        Spacer()
+                        Text(
+                            verbatim:
+                            "\(provisionalItems.reduce(0) { $0 + $1.carbs }.formatted(.number.precision(.fractionLength(0 ... 1)))) g carbs"
+                        )
+                        .font(.caption.bold().monospacedDigit())
+                    }
+                }
+            }
+            .padding(10)
+            .background(Color(.secondarySystemFill))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 
@@ -127,7 +201,10 @@ struct FoodDescriptionInputView: View {
             FoodDescriptionInputView(
                 description: .constant(""),
                 imageData: Data(),
-                onAnalyze: {},
+                isPreparingAnalysis: true,
+                provisionalItems: [],
+                provisionalError: nil,
+                onContinue: {},
                 onCancel: {}
             )
             .padding()

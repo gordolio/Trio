@@ -74,19 +74,25 @@ struct OpenAIChatRequest: Encodable {
     let maxTokens: Int
     let responseFormat: OpenAIResponseFormat?
     let stream: Bool?
+    let streamOptions: OpenAIStreamOptions?
+    let sessionID: String?
 
     init(
         model: String,
         messages: [OpenAIMessage],
         maxTokens: Int,
         responseFormat: OpenAIResponseFormat?,
-        stream: Bool? = nil
+        stream: Bool? = nil,
+        streamOptions: OpenAIStreamOptions? = nil,
+        sessionID: String? = nil
     ) {
         self.model = model
         self.messages = messages
         self.maxTokens = maxTokens
         self.responseFormat = responseFormat
         self.stream = stream
+        self.streamOptions = streamOptions
+        self.sessionID = sessionID
     }
 
     enum CodingKeys: String, CodingKey {
@@ -95,6 +101,16 @@ struct OpenAIChatRequest: Encodable {
         case maxTokens = "max_tokens"
         case responseFormat = "response_format"
         case stream
+        case streamOptions = "stream_options"
+        case sessionID = "session_id"
+    }
+}
+
+struct OpenAIStreamOptions: Encodable {
+    let includeUsage: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case includeUsage = "include_usage"
     }
 }
 
@@ -278,11 +294,21 @@ struct OpenAIUsage: Decodable {
     let promptTokens: Int
     let completionTokens: Int
     let totalTokens: Int
+    let promptTokensDetails: OpenAIPromptTokensDetails?
 
     enum CodingKeys: String, CodingKey {
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
         case totalTokens = "total_tokens"
+        case promptTokensDetails = "prompt_tokens_details"
+    }
+}
+
+struct OpenAIPromptTokensDetails: Decodable {
+    let cachedTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case cachedTokens = "cached_tokens"
     }
 }
 
@@ -291,6 +317,7 @@ struct OpenAIUsage: Decodable {
 /// A single chunk from the OpenAI streaming API (SSE)
 struct OpenAIStreamChunk: Decodable {
     let choices: [OpenAIStreamChoice]
+    let usage: OpenAIUsage?
 }
 
 /// A choice within a streaming chunk
@@ -338,6 +365,79 @@ struct AIFoodItemWithIdResponse: Decodable {
     let source: String?
     let servingCount: Double
     let servingUnit: String
+}
+
+/// Schema-compatible copy of a completed image analysis used as the assistant
+/// turn in a cache-compatible description refinement request. App-only fields
+/// such as UUIDs and source metadata are intentionally omitted.
+private struct FoodAnalysisAssistantMessage: Encodable {
+    struct FoodItem: Encodable {
+        let name: String
+        let carbs: Double
+        let emoji: String
+        let fat: Double
+        let protein: Double
+        let servingCount: Double
+        let servingUnit: String
+    }
+
+    let foodItems: [FoodItem]
+    let overallConfidence: Double
+    let reasoning: String
+
+    init(response: AIFoodItemsResponseWithReasoning) {
+        foodItems = response.foodItems.map {
+            FoodItem(
+                name: $0.name,
+                carbs: $0.carbs,
+                emoji: $0.emoji ?? "",
+                fat: $0.fat,
+                protein: $0.protein,
+                servingCount: $0.servingCount,
+                servingUnit: $0.servingUnit
+            )
+        }
+        overallConfidence = response.overallConfidence
+        reasoning = response.reasoning
+    }
+}
+
+/// Constructs the message sequence for the primary image flow. Kept separate
+/// from networking so the cache-prefix contract can be regression tested.
+enum FoodAnalysisRequestBuilder {
+    static func initialMessages(imageData: Data) -> [OpenAIMessage] {
+        [
+            OpenAIMessage(
+                role: "user",
+                content: [
+                    .text(AIPromptSettings.Prompt.streamingFoodAnalysis.value),
+                    .imageUrl(OpenAIImageUrl(url: "data:image/jpeg;base64,\(imageData.base64EncodedString())"))
+                ]
+            )
+        ]
+    }
+
+    static func refinementMessages(
+        imageData: Data,
+        initialResponse: AIFoodItemsResponseWithReasoning,
+        userDescription: String,
+        encoder: JSONEncoder = JSONEncoder()
+    ) throws -> [OpenAIMessage] {
+        let assistantData = try encoder.encode(FoodAnalysisAssistantMessage(response: initialResponse))
+        guard let assistantJSON = String(data: assistantData, encoding: .utf8) else {
+            throw OpenAIServiceError.invalidImageData
+        }
+
+        var messages = initialMessages(imageData: imageData)
+        messages.append(OpenAIMessage(role: "assistant", content: [.text(assistantJSON)]))
+        messages.append(OpenAIMessage(
+            role: "user",
+            content: [
+                .text(AIPromptSettings.Prompt.foodUserContext.rendered(["description": userDescription]))
+            ]
+        ))
+        return messages
+    }
 }
 
 // MARK: - OpenRouter Service
@@ -415,19 +515,64 @@ final class OpenRouterService: AIProviderService {
     /// - Returns: An AsyncStream of partial results, culminating in a complete result
     func analyzeFoodStreaming(
         imageData: Data,
-        userDescription: String?
+        userDescription: String?,
+        sessionID: String?
+    ) -> AsyncThrowingStream<PartialFoodAnalysisResult, Error> {
+        var messages = FoodAnalysisRequestBuilder.initialMessages(imageData: imageData)
+
+        if let description = userDescription?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !description.isEmpty
+        {
+            messages.append(OpenAIMessage(
+                role: "user",
+                content: [
+                    .text(AIPromptSettings.Prompt.foodUserContext.rendered(["description": description]))
+                ]
+            ))
+        }
+
+        return streamFoodAnalysis(messages: messages, sessionID: sessionID)
+    }
+
+    /// Refines an already-completed image analysis with user context.
+    ///
+    /// The first message is built by the same helper as the immediate request, so
+    /// its prompt text and image bytes remain an identical cacheable prefix.
+    func refineFoodAnalysisStreaming(
+        imageData: Data,
+        initialResponse: AIFoodItemsResponseWithReasoning,
+        userDescription: String,
+        sessionID: String
+    ) -> AsyncThrowingStream<PartialFoodAnalysisResult, Error> {
+        do {
+            let messages = try FoodAnalysisRequestBuilder.refinementMessages(
+                imageData: imageData,
+                initialResponse: initialResponse,
+                userDescription: userDescription,
+                encoder: encoder
+            )
+            return streamFoodAnalysis(messages: messages, sessionID: sessionID)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
+    }
+
+    private func streamFoodAnalysis(
+        messages: [OpenAIMessage],
+        sessionID: String?
     ) -> AsyncThrowingStream<PartialFoodAnalysisResult, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let apiKey = try self.getAPIKey()
-                    let base64Image = imageData.base64EncodedString()
 
                     os_log(
-                        "Sending food image for streaming AI analysis (%d bytes)",
+                        "Sending streaming food analysis with %d message(s)",
                         log: self.log,
                         type: .info,
-                        imageData.count
+                        messages.count
                     )
 
                     var request = URLRequest(url: self.endpoint)
@@ -435,23 +580,9 @@ final class OpenRouterService: AIProviderService {
                     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-                    var prompt = AIPromptSettings.Prompt.streamingFoodAnalysis.value
-
-                    if let description = userDescription, !description.isEmpty {
-                        prompt += "\n\n" + AIPromptSettings.Prompt.foodUserContext.rendered(["description": description])
-                    }
-
                     let chatRequest = OpenAIChatRequest(
                         model: self.modelSet.primaryModel,
-                        messages: [
-                            OpenAIMessage(
-                                role: "user",
-                                content: [
-                                    .text(prompt),
-                                    .imageUrl(OpenAIImageUrl(url: "data:image/jpeg;base64,\(base64Image)"))
-                                ]
-                            )
-                        ],
+                        messages: messages,
                         maxTokens: 1500,
                         responseFormat: OpenAIResponseFormat(
                             type: "json_schema",
@@ -461,7 +592,9 @@ final class OpenRouterService: AIProviderService {
                                 schema: self.buildFoodAnalysisWithReasoningSchema()
                             )
                         ),
-                        stream: true
+                        stream: true,
+                        streamOptions: OpenAIStreamOptions(includeUsage: true),
+                        sessionID: sessionID
                     )
 
                     request.httpBody = try self.encoder.encode(chatRequest)
@@ -487,12 +620,20 @@ final class OpenRouterService: AIProviderService {
                     let parser = StructuredJSONStreamParser()
 
                     for try await line in bytes.lines {
+                        if let usage = self.streamingUsage(from: line) {
+                            let cachedTokens = usage.promptTokensDetails?.cachedTokens ?? 0
+                            os_log(
+                                "Food analysis token usage: prompt=%d cached=%d completion=%d",
+                                log: self.log,
+                                type: .info,
+                                usage.promptTokens,
+                                cachedTokens,
+                                usage.completionTokens
+                            )
+                        }
+
                         if let partialResult = parser.parseOpenAILine(line) {
                             continuation.yield(partialResult)
-
-                            if partialResult.isComplete {
-                                break
-                            }
                         }
                     }
 
@@ -508,7 +649,23 @@ final class OpenRouterService: AIProviderService {
                     continuation.finish(throwing: error)
                 }
             }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
+    }
+
+    private func streamingUsage(from line: String) -> OpenAIUsage? {
+        guard line.hasPrefix("data: ") else { return nil }
+        let payload = String(line.dropFirst(6))
+        guard payload != "[DONE]",
+              let data = payload.data(using: .utf8),
+              let chunk = try? decoder.decode(OpenAIStreamChunk.self, from: data)
+        else {
+            return nil
+        }
+        return chunk.usage
     }
 
     // MARK: - Single Item Update (Inline Editing)
@@ -1011,10 +1168,12 @@ enum AIPromptSettings {
             switch self {
             case .streamingFoodAnalysis:
                 return String(
-                    localized: "Used by the current food-image workflow to stream detected items and nutrient estimates into the interface."
+                    localized: "Starts immediately after image capture and streams detected items and nutrient estimates into the interface."
                 )
             case .foodUserContext:
-                return String(localized: "Added to streaming food analysis when the user supplies a description before analysis.")
+                return String(
+                    localized: "Sent after the initial image result as an optional description addendum, while preserving the primary prompt as the cacheable request prefix."
+                )
             case .singleItemCorrection:
                 return String(
                     localized: "Used when the user edits one detected food item's description and asks AI to recalculate its nutrients."

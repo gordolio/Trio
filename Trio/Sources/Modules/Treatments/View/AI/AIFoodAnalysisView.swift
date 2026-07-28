@@ -25,17 +25,21 @@ struct AIFoodAnalysisView: View {
                 )
                 .padding(.bottom, 4)
             } else if state.foodItemSelection == nil, state.foodItemSelections.isEmpty,
-                      let imageData = state.capturedImageData, state.isAnalyzingFood
+                      let imageData = state.capturedImageData
             {
-                // Description input + analyzing overlay (before any items have streamed in)
+                // Keep the description form visible while the real primary analysis
+                // runs in the background and shows provisional nutrition below it.
                 ZStack {
                     FoodDescriptionInputView(
                         description: Binding(
                             get: { state.foodDescription },
-                            set: { state.foodDescription = $0 }
+                            set: { state.updateFoodDescription($0) }
                         ),
                         imageData: imageData,
-                        onAnalyze: {
+                        isPreparingAnalysis: state.isPreparingFoodAnalysis,
+                        provisionalItems: state.provisionalFoodItems,
+                        provisionalError: state.provisionalFoodAnalysisError,
+                        onContinue: {
                             state.isAnalyzingFood = true
                             Task {
                                 await state.analyzeFood(
@@ -47,8 +51,7 @@ struct AIFoodAnalysisView: View {
                         onCancel: {
                             guard !state.isAnalyzingFood else { return }
                             withAnimation(.easeInOut(duration: 0.35)) {
-                                state.capturedImageData = nil
-                                state.foodDescription = ""
+                                state.cancelCapturedImagePreparation()
                             }
                         }
                     )
@@ -59,32 +62,6 @@ struct AIFoodAnalysisView: View {
                         analysisOverlay
                     }
                 }
-            } else if state.foodItemSelection == nil, state.foodItemSelections.isEmpty,
-                      let imageData = state.capturedImageData, !state.isAnalyzingFood
-            {
-                // Description input (not yet analyzing, no results)
-                FoodDescriptionInputView(
-                    description: Binding(
-                        get: { state.foodDescription },
-                        set: { state.foodDescription = $0 }
-                    ),
-                    imageData: imageData,
-                    onAnalyze: {
-                        state.isAnalyzingFood = true
-                        Task {
-                            await state.analyzeFood(
-                                imageData: imageData,
-                                description: state.foodDescription.isEmpty ? nil : state.foodDescription
-                            )
-                        }
-                    },
-                    onCancel: {
-                        withAnimation(.easeInOut(duration: 0.35)) {
-                            state.capturedImageData = nil
-                            state.foodDescription = ""
-                        }
-                    }
-                )
             } else if state.foodItemSelection != nil || !state.foodItemSelections.isEmpty {
                 // Food items selection tree (shown during streaming and after completion)
                 VStack(spacing: 0) {
@@ -188,8 +165,7 @@ struct AIFoodAnalysisView: View {
                let imageData = image.compressedForAI()
             {
                 withAnimation(.easeInOut(duration: 0.35)) {
-                    state.capturedImageData = imageData
-                    state.foodDescription = ""
+                    state.prepareCapturedImage(imageData)
                 }
                 selectedImage = nil
             }
@@ -199,8 +175,7 @@ struct AIFoodAnalysisView: View {
             if let imageData = ScanFoodImageRelay.shared.pendingImageData {
                 ScanFoodImageRelay.shared.pendingImageData = nil
                 withAnimation(.easeInOut(duration: 0.35)) {
-                    state.capturedImageData = imageData
-                    state.foodDescription = ""
+                    state.prepareCapturedImage(imageData)
                 }
             }
         }

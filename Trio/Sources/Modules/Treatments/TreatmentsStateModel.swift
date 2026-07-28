@@ -127,9 +127,18 @@ extension Treatments {
         // MARK: - AI-Assisted Entry Properties
 
         var isAnalyzingFood = false
+        var isPreparingFoodAnalysis = false
         var aiError: String?
         var foodItemSelection: FoodItemSelection?
         var conversationManager: AIConversationManager?
+        var provisionalFoodItems: [AIFoodItem] = []
+        var provisionalFoodAnalysisError: String?
+        @ObservationIgnored private var provisionalFoodAnalysis: AIFoodItemsResponseWithReasoning?
+        @ObservationIgnored private var immediateConversationManager: AIConversationManager?
+        @ObservationIgnored private var immediateFoodAnalysisTask: Task<Void, Never>?
+        @ObservationIgnored private var immediateAnalysisProvider: AIProviderType?
+        @ObservationIgnored private var immediateAnalysisSessionID: String?
+        @ObservationIgnored private var immediateAnalysisImageData: Data?
         /// The captured photo data, kept visible for thumbnail display during and after analysis
         var capturedImageData: Data? {
             didSet {
@@ -146,6 +155,7 @@ extension Treatments {
         private var originalAICarbsQuantity: Double?
         private var pendingImageData: Data?
         private var pendingAnalysisDescription: String?
+        private var pendingAnalysisSessionIDs: [AIProviderType: String] = [:]
 
         /// Vision items saved before merge, used as fallback when user rejects published nutrition
         private var premergeVisionItems: [AIFoodItem]?
@@ -319,6 +329,7 @@ extension Treatments {
             // Cancel in-flight work — the setup task awaits a full oref simulation.
             setupTask?.cancel()
             determinationUpdateTask?.cancel()
+            immediateFoodAnalysisTask?.cancel()
 
             broadcaster?.unregister(DeterminationObserver.self, observer: self)
             broadcaster?.unregister(BolusFailureObserver.self, observer: self)
@@ -806,9 +817,131 @@ extension Treatments {
 
         // MARK: - AI-Assisted Food Analysis
 
+        /// Stores a newly captured image and immediately starts the primary food-analysis request.
+        ///
+        /// Results remain provisional until the user taps Analyze. This gives the user
+        /// nutrition feedback immediately without changing the treatment form or invoking
+        /// Trio's insulin calculation.
+        @MainActor func prepareCapturedImage(_ imageData: Data) {
+            immediateFoodAnalysisTask?.cancel()
+
+            capturedImageData = imageData
+            foodDescription = ""
+            aiError = nil
+            provisionalFoodItems = []
+            provisionalFoodAnalysis = nil
+            provisionalFoodAnalysisError = nil
+            immediateConversationManager = nil
+            foodItemSelection = nil
+            conversationManager = nil
+            foodItemSelections.removeAll()
+            conversationManagers.removeAll()
+            activeProviders.removeAll()
+            displayedProvider = nil
+
+            let provider = settingsManager.settings.aiProvider
+            let sessionID = UUID().uuidString
+            immediateAnalysisProvider = provider
+            immediateAnalysisSessionID = sessionID
+            immediateAnalysisImageData = imageData
+            isPreparingFoodAnalysis = true
+
+            immediateFoodAnalysisTask = Task { [weak self] in
+                await self?.performImmediateFoodAnalysis(
+                    imageData: imageData,
+                    provider: provider,
+                    sessionID: sessionID
+                )
+            }
+        }
+
+        /// Updates optional user context. It is sent once as the description addendum
+        /// when the user taps Analyze.
+        @MainActor func updateFoodDescription(_ description: String) {
+            foodDescription = description
+        }
+
+        @MainActor func cancelCapturedImagePreparation() {
+            immediateFoodAnalysisTask?.cancel()
+            immediateFoodAnalysisTask = nil
+            provisionalFoodItems = []
+            provisionalFoodAnalysis = nil
+            provisionalFoodAnalysisError = nil
+            immediateConversationManager = nil
+            immediateAnalysisProvider = nil
+            immediateAnalysisSessionID = nil
+            immediateAnalysisImageData = nil
+            isPreparingFoodAnalysis = false
+            capturedImageData = nil
+            foodDescription = ""
+        }
+
+        /// Executes the actual configured-provider image prompt as soon as a photo is available.
+        /// This is the same result that Analyze promotes when no description is supplied.
+        @MainActor private func performImmediateFoodAnalysis(
+            imageData: Data,
+            provider: AIProviderType,
+            sessionID: String
+        ) async {
+            let manager = AIConversationManager()
+            manager.providerOverride = provider
+            let stream = AIServiceRegistry.chat(for: provider).analyzeFoodStreaming(
+                imageData: imageData,
+                userDescription: nil,
+                sessionID: sessionID
+            )
+
+            do {
+                let response = try await manager.initializeStreaming(
+                    stream: stream,
+                    imageData: imageData,
+                    userDescription: nil,
+                    onItemsUpdated: { [weak self] items in
+                        guard let self,
+                              self.capturedImageData == imageData,
+                              self.immediateAnalysisSessionID == sessionID
+                        else { return }
+                        self.provisionalFoodItems = items
+                    }
+                )
+
+                guard !Task.isCancelled,
+                      capturedImageData == imageData,
+                      immediateAnalysisSessionID == sessionID
+                else { return }
+
+                provisionalFoodItems = response.foodItems
+                provisionalFoodAnalysis = response
+                immediateConversationManager = manager
+                provisionalFoodAnalysisError = nil
+            } catch is CancellationError {
+                return
+            } catch {
+                guard capturedImageData == imageData,
+                      immediateAnalysisSessionID == sessionID
+                else { return }
+                provisionalFoodAnalysisError = String(
+                    localized: "Initial analysis could not be completed. Continue will retry."
+                )
+                print("🍽️ [\(provider.displayName)] Immediate analysis failed: \(error.localizedDescription)")
+            }
+
+            guard capturedImageData == imageData,
+                  immediateAnalysisSessionID == sessionID
+            else { return }
+            isPreparingFoodAnalysis = false
+        }
+
         /// Analyzes a food image using AI. In comparison mode, the selected provider
         /// runs first and the others are queried lazily when their tabs are opened.
         func analyzeFood(imageData: Data, description: String? = nil) async {
+            let immediateTask = await MainActor.run { immediateFoodAnalysisTask }
+            await immediateTask?.value
+
+            let normalizedDescription = description?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalDescription = normalizedDescription?.isEmpty == false ? normalizedDescription : nil
+
             let sendToAll = settingsManager.settings.sendToAllAIProvidersSimultaneously
             let configuredProvider = settingsManager.settings.aiProvider
             let tabs: [AIProviderType] = {
@@ -820,6 +953,27 @@ extension Treatments {
                 }
             }()
             let initialProvider = tabs.contains(configuredProvider) ? configuredProvider : (tabs.first ?? configuredProvider)
+
+            let immediateDraft = await MainActor.run {
+                guard immediateAnalysisProvider == initialProvider,
+                      immediateAnalysisImageData == imageData
+                else {
+                    return (
+                        response: AIFoodItemsResponseWithReasoning?.none,
+                        manager: AIConversationManager?.none,
+                        sessionID: String?.none
+                    )
+                }
+                return (
+                    response: provisionalFoodAnalysis,
+                    manager: immediateConversationManager,
+                    sessionID: immediateAnalysisSessionID
+                )
+            }
+            let initialSessionID = immediateDraft.sessionID ?? UUID().uuidString
+            let sessionIDs = Dictionary(uniqueKeysWithValues: tabs.map {
+                ($0, $0 == initialProvider ? initialSessionID : UUID().uuidString)
+            })
 
             await MainActor.run {
                 isAnalyzingFood = true
@@ -840,10 +994,19 @@ extension Treatments {
                 displayedProvider = initialProvider
                 capturedImageData = imageData
                 pendingImageData = imageData
-                pendingAnalysisDescription = description
+                pendingAnalysisDescription = finalDescription
+                pendingAnalysisSessionIDs = sessionIDs
+                isPreparingFoodAnalysis = false
             }
 
-            await runAnalysis(for: initialProvider, imageData: imageData, description: description)
+            await runAnalysis(
+                for: initialProvider,
+                imageData: imageData,
+                description: finalDescription,
+                sessionID: initialSessionID,
+                initialResponse: immediateDraft.response,
+                initialManager: immediateDraft.manager
+            )
 
             await MainActor.run {
                 isAnalyzingFood = perProviderAnalyzing.values.contains(true)
@@ -856,7 +1019,10 @@ extension Treatments {
         private func runAnalysis(
             for provider: AIProviderType,
             imageData: Data,
-            description: String?
+            description: String?,
+            sessionID: String,
+            initialResponse: AIFoodItemsResponseWithReasoning? = nil,
+            initialManager: AIConversationManager? = nil
         ) async {
             let chatService = AIServiceRegistry.chat(for: provider)
             let responsesService = AIServiceRegistry.responses(for: provider)
@@ -887,12 +1053,66 @@ extension Treatments {
                     }
                 }
 
-                let stream = chatService.analyzeFoodStreaming(
-                    imageData: imageData,
-                    userDescription: description
-                )
+                let manager: AIConversationManager
+                let visionResponse: AIFoodItemsResponseWithReasoning
 
-                let manager = AIConversationManager()
+                if description == nil, let initialResponse {
+                    manager = initialManager ?? AIConversationManager()
+                    manager.providerOverride = provider
+                    if initialManager == nil {
+                        await manager.initialize(
+                            with: initialResponse,
+                            imageData: imageData,
+                            userDescription: nil
+                        )
+                    }
+                    visionResponse = initialResponse
+                    print("🍽️ [\(provider.displayName)] Reusing immediate analysis; no second vision request")
+                } else {
+                    manager = AIConversationManager()
+                    manager.providerOverride = provider
+                    let stream: AsyncThrowingStream<PartialFoodAnalysisResult, Error>
+                    if let description, let initialResponse {
+                        stream = chatService.refineFoodAnalysisStreaming(
+                            imageData: imageData,
+                            initialResponse: initialResponse,
+                            userDescription: description,
+                            sessionID: sessionID
+                        )
+                    } else {
+                        stream = chatService.analyzeFoodStreaming(
+                            imageData: imageData,
+                            userDescription: description,
+                            sessionID: sessionID
+                        )
+                    }
+
+                    await MainActor.run {
+                        conversationManagers[provider] = manager
+                        if displayedProvider == provider {
+                            conversationManager = manager
+                        }
+                    }
+
+                    visionResponse = try await manager.initializeStreaming(
+                        stream: stream,
+                        imageData: imageData,
+                        userDescription: description,
+                        onItemsUpdated: { [weak self] items in
+                            guard let self else { return }
+                            let response = AIFoodItemsResponse(
+                                foodItems: items,
+                                overallConfidence: 0
+                            )
+                            let selection = FoodItemSelection(response: response)
+                            self.foodItemSelections[provider] = selection
+                            if self.displayedProvider == provider {
+                                self.foodItemSelection = selection
+                            }
+                        }
+                    )
+                }
+
                 manager.providerOverride = provider
                 await MainActor.run {
                     conversationManagers[provider] = manager
@@ -900,24 +1120,6 @@ extension Treatments {
                         conversationManager = manager
                     }
                 }
-
-                let visionResponse = try await manager.initializeStreaming(
-                    stream: stream,
-                    imageData: imageData,
-                    userDescription: description,
-                    onItemsUpdated: { [weak self] items in
-                        guard let self else { return }
-                        let response = AIFoodItemsResponse(
-                            foodItems: items,
-                            overallConfidence: 0
-                        )
-                        let selection = FoodItemSelection(response: response)
-                        self.foodItemSelections[provider] = selection
-                        if self.displayedProvider == provider {
-                            self.foodItemSelection = selection
-                        }
-                    }
-                )
 
                 let publishedResult = await publishedNutritionTask.value
 
@@ -1057,8 +1259,15 @@ extension Treatments {
             }
 
             let description = pendingAnalysisDescription
+            let sessionID = pendingAnalysisSessionIDs[provider] ?? UUID().uuidString
+            pendingAnalysisSessionIDs[provider] = sessionID
             Task { [weak self] in
-                await self?.runAnalysis(for: provider, imageData: imageData, description: description)
+                await self?.runAnalysis(
+                    for: provider,
+                    imageData: imageData,
+                    description: description,
+                    sessionID: sessionID
+                )
                 await MainActor.run {
                     guard let self else { return }
                     var endTxn = Transaction()
@@ -1213,13 +1422,25 @@ extension Treatments {
 
         /// Clears the food item selection (resets AI analysis)
         func clearFoodItemSelection() {
+            immediateFoodAnalysisTask?.cancel()
             foodItemSelection = nil
             conversationManager = nil
             capturedImageData = nil
             foodDescription = ""
+            isPreparingFoodAnalysis = false
+            provisionalFoodItems = []
+            provisionalFoodAnalysis = nil
+            provisionalFoodAnalysisError = nil
+            immediateConversationManager = nil
+            immediateFoodAnalysisTask = nil
+            immediateAnalysisProvider = nil
+            immediateAnalysisSessionID = nil
+            immediateAnalysisImageData = nil
             originalAICarbsQuantity = nil
             aiAssistedMetadata = nil
             pendingImageData = nil
+            pendingAnalysisDescription = nil
+            pendingAnalysisSessionIDs.removeAll()
             premergeVisionItems = nil
             publishedRestaurantName = nil
             foodItemSelections.removeAll()

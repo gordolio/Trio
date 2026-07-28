@@ -225,6 +225,65 @@ private struct ExpectedItem: Equatable {
     }
 }
 
+@Suite("Immediate Food Analysis Requests") struct ImmediateFoodAnalysisRequestTests {
+    @Test("Description refinement preserves the exact base image-message prefix") func refinementPreservesBasePrefix() throws {
+        let imageData = Data([0x01, 0x02, 0x03, 0x04])
+        let initialResponse = AIFoodItemsResponseWithReasoning(
+            foodItems: [
+                AIFoodItem(
+                    name: "Toast",
+                    carbs: 24,
+                    emoji: "🍞",
+                    fat: 2,
+                    protein: 4
+                )
+            ],
+            overallConfidence: 0.9,
+            reasoning: "One visible slice."
+        )
+        let descriptionMarker = "CACHE_ADDENDUM_MARKER"
+
+        let baseMessages = FoodAnalysisRequestBuilder.initialMessages(imageData: imageData)
+        let refinementMessages = try FoodAnalysisRequestBuilder.refinementMessages(
+            imageData: imageData,
+            initialResponse: initialResponse,
+            userDescription: descriptionMarker
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let basePrefix = try encoder.encode(baseMessages[0])
+        let refinementPrefix = try encoder.encode(refinementMessages[0])
+
+        #expect(basePrefix == refinementPrefix)
+        #expect(refinementMessages.map(\.role) == ["user", "assistant", "user"])
+        #expect(!String(decoding: basePrefix, as: UTF8.self).contains(descriptionMarker))
+        #expect(
+            String(decoding: try encoder.encode(refinementMessages[2]), as: UTF8.self)
+                .contains(descriptionMarker)
+        )
+    }
+
+    @Test("Streaming requests encode usage reporting and a stable session ID") func streamingRequestMetadata() throws {
+        let request = OpenAIChatRequest(
+            model: "test/model",
+            messages: FoodAnalysisRequestBuilder.initialMessages(imageData: Data([0x01])),
+            maxTokens: 1500,
+            responseFormat: nil,
+            stream: true,
+            streamOptions: OpenAIStreamOptions(includeUsage: true),
+            sessionID: "capture-session"
+        )
+
+        let data = try JSONEncoder().encode(request)
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let streamOptions = try #require(json["stream_options"] as? [String: Any])
+
+        #expect(json["session_id"] as? String == "capture-session")
+        #expect(streamOptions["include_usage"] as? Bool == true)
+    }
+}
+
 @Suite("AI Prompt Settings") struct AIPromptSettingsTests {
     @Test("Obsolete prompt values are removed without affecting active prompts") func removesObsoletePromptValues() {
         let suiteName = "AIPromptSettingsTests.\(UUID().uuidString)"
