@@ -5725,6 +5725,9 @@
     "· %@" : {
 
     },
+    "\"%@\"" : {
+
+    },
     "“Trio” Would Like to Use Bluetooth" : {
       "localizations" : {
         "bg" : {
@@ -27292,6 +27295,9 @@
         }
       }
     },
+    "A lowercase restaurant name for suggesting an official domain." : {
+
+    },
     "A new version (%@) is available. It is recommended to update." : {
       "comment" : "Message for update available alert",
       "localizations" : {
@@ -30188,6 +30194,9 @@
         }
       }
     },
+    "Add a tablespoon of ranch dressing." : {
+
+    },
     "Add Alarm" : {
       "comment" : "A title for a sheet that lets the user add a glucose alert.",
       "localizations" : {
@@ -32845,6 +32854,9 @@
         }
       }
     },
+    "Add Mock Garmin Watch" : {
+
+    },
     "Add Omnipod" : {
       "comment" : "Add Omnipod pump",
       "extractionState" : "manual",
@@ -34728,6 +34740,9 @@
           }
         }
       }
+    },
+    "Added to streaming food analysis when the user supplies a description before analysis." : {
+
     },
     "Adding carbs or bolusing now will invalidate the calibration test. Status: %@" : {
 
@@ -37663,6 +37678,9 @@
     "AI Estimate" : {
       "comment" : "Label for AI-generated carb estimate"
     },
+    "AI Prompts" : {
+
+    },
     "AI Provider" : {
 
     },
@@ -40325,6 +40343,9 @@
           }
         }
       }
+    },
+    "Allow camera access in Settings, then try again." : {
+      "comment" : "Camera unavailable alert message"
     },
     "Allow Fetching from Nightscout" : {
       "localizations" : {
@@ -55659,6 +55680,9 @@
         }
       }
     },
+    "Available Placeholders" : {
+
+    },
     "Available Rings:" : {
       "localizations" : {
         "bg" : {
@@ -67911,6 +67935,9 @@
     "Camera" : {
 
     },
+    "Camera Unavailable" : {
+      "comment" : "Camera unavailable alert title"
+    },
     "Can't find the default Nightscout Profile." : {
       "comment" : "Import ErrorImport Error",
       "extractionState" : "manual",
@@ -68044,7 +68071,7 @@
       }
     },
     "Cancel" : {
-      "comment" : "Cancel button\nCancel description input",
+      "comment" : "Cancel button\nCancel description input\nDismiss camera accessibility label\nDismiss camera alert",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -84944,6 +84971,12 @@
         }
       }
     },
+    "Conversation Image Reference" : {
+
+    },
+    "Conversation Refinement" : {
+
+    },
     "Copied" : {
       "localizations" : {
         "bg" : {
@@ -87208,6 +87241,9 @@
         }
       }
     },
+    "Current items, nutrient estimates, IDs, and sources." : {
+
+    },
     "Current Loop Status" : {
       "localizations" : {
         "bg" : {
@@ -88243,6 +88279,9 @@
           }
         }
       }
+    },
+    "Custom prompts apply to both providers and remain saved across app updates." : {
+
     },
     "Custom Temp Target" : {
       "localizations" : {
@@ -125522,6 +125561,9 @@
         }
       }
     },
+    "Example User Messages" : {
+
+    },
     "exceeded" : {
       "comment" : "Limit Exceeded label",
       "extractionState" : "manual",
@@ -134259,6 +134301,9 @@
           }
         }
       }
+    },
+    "Food Description Context" : {
+
     },
     "for" : {
       "comment" : "Temp target set for ... minutes",
@@ -164883,6 +164928,9 @@
           }
         }
       }
+    },
+    "Keep any placeholders needed to include live context in the request." : {
+
     },
     "Keep Current Ratio" : {
 
@@ -203960,6 +204008,9 @@
     "Number of tablets:" : {
 
     },
+    "Nutrition Lookup Detection" : {
+
+    },
     "ø" : {
       "localizations" : {
         "bg" : {
@@ -208275,6 +208326,9 @@
           }
         }
       }
+    },
+    "Other detected items and their nutrients." : {
+
     },
     "Other Elements & Shapes" : {
       "localizations" : {
@@ -217901,6 +217955,9 @@
         }
       }
     },
+    "Previous user, assistant, and system messages." : {
+
+    },
     "Primary" : {
       "localizations" : {
         "bg" : {
@@ -219413,6 +219470,9 @@
         }
       }
     },
+    "Prompt" : {
+
+    },
     "protein" : {
       "comment" : "Nutrient label for protein"
     },
@@ -220046,6 +220106,9 @@
     },
     "Published Nutrition Facts" : {
       "comment" : "Title for the published nutrition source verification sheet"
+    },
+    "Published Nutrition Search" : {
+
     },
     "Pump" : {
       "extractionState" : "manual",
@@ -228224,6 +228287,9 @@
         }
       }
     },
+    "Remove All Devices" : {
+
+    },
     "Remove Last" : {
       "localizations" : {
         "bg" : {
@@ -228347,6 +228413,9 @@
           }
         }
       }
+    },
+    "Remove the fries; I didn't eat them." : {
+
     },
     "Remove Widget" : {
       "localizations" : {
@@ -230210,6 +230279,9 @@
           }
         }
       }
+    },
+    "Restaurant Classification" : {
+
     },
     "Result" : {
 
@@ -240656,6 +240728,9 @@
         }
       }
     },
+    "Sent with the original food image on each conversational refinement request." : {
+
+    },
     "Series" : {
       "localizations" : {
         "bg" : {
@@ -247684,6 +247759,15 @@
           }
         }
       }
+    },
+    "Simulator only - for testing UI workflow" : {
+
+    },
+    "Simulator Testing" : {
+
+    },
+    "Single-Item Correction" : {
+
     },
     "Skip Bolus screen after carbs" : {
       "comment" : "Do you want to show bolus screen after added carbs?",
@@ -257868,6 +257952,9 @@
         }
       }
     },
+    "Streaming Food Analysis" : {
+
+    },
     "Strength" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -261126,6 +261213,9 @@
         }
       }
     },
+    "Switch Camera" : {
+      "comment" : "Switch camera accessibility label"
+    },
     "Synth" : {
       "comment" : "Display name for the synth alarm sound.",
       "localizations" : {
@@ -261755,6 +261845,9 @@
     },
     "Take glucose tablets and deliver bolus" : {
 
+    },
+    "Take Photo" : {
+      "comment" : "Camera shutter accessibility label"
     },
     "Take Tablets" : {
 
@@ -265949,6 +266042,9 @@
     "Test Summary" : {
 
     },
+    "That was two slices of pizza, not one." : {
+
+    },
     "The Adjustment Factor (AF) allows you to control how quickly and effectively Dynamic ISF responds to changes in glucose levels." : {
       "localizations" : {
         "bg" : {
@@ -266702,6 +266798,9 @@
           }
         }
       }
+    },
+    "The coffee had oat milk and no syrup." : {
+
     },
     "The current version has a critical issue and should be updated as soon as possible." : {
       "comment" : "Message for critical update alert",
@@ -268834,6 +268933,9 @@
         }
       }
     },
+    "The food items currently shown." : {
+
+    },
     "The forecasted glucose value in 4 hours based on current deviations ramping down to zero at the same rate they have been recently." : {
       "localizations" : {
         "bg" : {
@@ -269329,6 +269431,9 @@
           }
         }
       }
+    },
+    "The identified restaurant name." : {
+
     },
     "The lowest forecasted glucose during the remaining duration of insulin action (DIA)." : {
       "localizations" : {
@@ -269950,6 +270055,9 @@
         }
       }
     },
+    "The menu item to find." : {
+
+    },
     "The Night window runs from 'Night Starts' back around to 'Day Starts' — so by default, Night covers %1$@ through %2$@ the next morning." : {
       "localizations" : {
         "bg" : {
@@ -270570,6 +270678,18 @@
         }
       }
     },
+    "The original carbohydrate estimate." : {
+
+    },
+    "The original fat estimate." : {
+
+    },
+    "The original item name." : {
+
+    },
+    "The original protein estimate." : {
+
+    },
     "The other side of the autosens safety limits, putting a cap on how low autosens can adjust basals, and how high it can adjust ISF and BG targets." : {
       "comment" : "\"Autosens Min\"",
       "extractionState" : "manual",
@@ -271073,6 +271193,9 @@
           }
         }
       }
+    },
+    "The restaurant or brand name." : {
+
     },
     "The Sensitivity Ratio is used to calculate the amount of adjustment needed to basal rates and ISF." : {
       "localizations" : {
@@ -271945,6 +272068,12 @@
           }
         }
       }
+    },
+    "The user's corrected description." : {
+
+    },
+    "The user's food description." : {
+
     },
     "The Warsaw Method helps account for the delayed glucose spikes caused by fat and protein in meals. It uses Fat-Protein Units (FPU) to calculate the carb effect from fat and protein. The system spreads insulin delivery over several hours to mimic natural insulin release, helping to manage post-meal glucose spikes." : {
       "localizations" : {
@@ -303586,6 +303715,24 @@
         }
       }
     },
+    "Used after an initial analysis when the user chats with AI to add, remove, correct, or resize food items." : {
+
+    },
+    "Used by the current food-image workflow to stream detected items and nutrient estimates into the interface." : {
+
+    },
+    "Used during food chat to decide whether a message requests published restaurant nutrition facts." : {
+
+    },
+    "Used to decide whether the user's food description names a restaurant, chain, or branded menu item." : {
+
+    },
+    "Used to search the web for official nutrition facts after a restaurant and menu item are identified." : {
+
+    },
+    "Used when the user edits one detected food item's description and asks AI to recalculate its nutrients." : {
+
+    },
     "User Interface" : {
       "localizations" : {
         "bg" : {
@@ -312506,6 +312653,9 @@
           }
         }
       }
+    },
+    "When This Prompt Is Used" : {
+
     },
     "When true, raises BG target when autosens detects sensitivity" : {
       "comment" : "”Sensitivity Raises Target\"",

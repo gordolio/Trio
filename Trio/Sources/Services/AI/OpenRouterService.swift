@@ -1010,21 +1010,33 @@ enum AIPromptSettings {
         var usageDescription: String {
             switch self {
             case .streamingFoodAnalysis:
-                return String(localized: "Used by the current food-image workflow to stream detected items and nutrient estimates into the interface.")
+                return String(
+                    localized: "Used by the current food-image workflow to stream detected items and nutrient estimates into the interface."
+                )
             case .foodUserContext:
                 return String(localized: "Added to streaming food analysis when the user supplies a description before analysis.")
             case .singleItemCorrection:
-                return String(localized: "Used when the user edits one detected food item's description and asks AI to recalculate its nutrients.")
+                return String(
+                    localized: "Used when the user edits one detected food item's description and asks AI to recalculate its nutrients."
+                )
             case .nutritionLookupIntent:
-                return String(localized: "Used during food chat to decide whether a message requests published restaurant nutrition facts.")
+                return String(
+                    localized: "Used during food chat to decide whether a message requests published restaurant nutrition facts."
+                )
             case .conversationRefinement:
-                return String(localized: "Used after an initial analysis when the user chats with AI to add, remove, correct, or resize food items.")
+                return String(
+                    localized: "Used after an initial analysis when the user chats with AI to add, remove, correct, or resize food items."
+                )
             case .conversationImageReference:
                 return String(localized: "Sent with the original food image on each conversational refinement request.")
             case .restaurantClassification:
-                return String(localized: "Used to decide whether the user's food description names a restaurant, chain, or branded menu item.")
+                return String(
+                    localized: "Used to decide whether the user's food description names a restaurant, chain, or branded menu item."
+                )
             case .publishedNutritionSearch:
-                return String(localized: "Used to search the web for official nutrition facts after a restaurant and menu item are identified.")
+                return String(
+                    localized: "Used to search the web for official nutrition facts after a restaurant and menu item are identified."
+                )
             }
         }
 
@@ -1048,14 +1060,23 @@ enum AIPromptSettings {
                 ]
             case .conversationRefinement:
                 return [
-                    .init(token: "currentItems", description: String(localized: "Current items, nutrient estimates, IDs, and sources.")),
-                    .init(token: "conversationHistory", description: String(localized: "Previous user, assistant, and system messages."))
+                    .init(
+                        token: "currentItems",
+                        description: String(localized: "Current items, nutrient estimates, IDs, and sources.")
+                    ),
+                    .init(
+                        token: "conversationHistory",
+                        description: String(localized: "Previous user, assistant, and system messages.")
+                    )
                 ]
             case .publishedNutritionSearch:
                 return [
                     .init(token: "menuItemName", description: String(localized: "The menu item to find.")),
                     .init(token: "restaurantName", description: String(localized: "The restaurant or brand name.")),
-                    .init(token: "restaurantDomain", description: String(localized: "A lowercase restaurant name for suggesting an official domain."))
+                    .init(
+                        token: "restaurantDomain",
+                        description: String(localized: "A lowercase restaurant name for suggesting an official domain.")
+                    )
                 ]
             default:
                 return []
@@ -1223,6 +1244,5 @@ enum AIPromptSettings {
         private var storageKey: String {
             self == .streamingFoodAnalysis ? "aiFoodAnalysisPrompt" : "aiPrompt.\(rawValue)"
         }
-
     }
 }
