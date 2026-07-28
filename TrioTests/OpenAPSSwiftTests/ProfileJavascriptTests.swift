@@ -12,8 +12,7 @@ struct ProfileGeneratorTests {
         Preferences,
         CarbRatios,
         [TempTarget],
-        String,
-        TrioSettings
+        String
     ) {
         let pumpSettings = PumpSettings(
             insulinActionCurve: 10,
@@ -52,9 +51,8 @@ struct ProfileGeneratorTests {
 
         let tempTargets: [TempTarget] = []
         let model = "523"
-        let trioSettings = TrioSettings()
 
-        return (pumpSettings, bgTargets, basalProfile, isf, preferences, carbRatios, tempTargets, model, trioSettings)
+        return (pumpSettings, bgTargets, basalProfile, isf, preferences, carbRatios, tempTargets, model)
     }
 
     @Test("Basic profile generation should create profile with correct values") func testBasicProfileGeneration() throws {

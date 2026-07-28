@@ -1,6 +1,4 @@
 import Foundation
-import HealthKit
-import LoopKit
 
 struct BloodGlucose: JSON, Identifiable, Hashable, Codable {
     enum Direction: String, JSON {
@@ -275,16 +273,4 @@ extension NumberFormatter {
         formatter.maximumFractionDigits = 1
         return formatter
     }()
-}
-
-extension BloodGlucose {
-    func convertStoredGlucoseSample(isManualGlucose: Bool) -> StoredGlucoseSample {
-        StoredGlucoseSample(
-            syncIdentifier: id,
-            startDate: dateString.date,
-            quantity: HKQuantity(unit: .milligramsPerDeciliter, doubleValue: Double(glucose!)),
-            wasUserEntered: isManualGlucose,
-            device: HKDevice.local()
-        )
-    }
 }

@@ -21,6 +21,77 @@ on:
       - '**.txt'
 
 jobs:
+  # Guards the TrioAlgorithm SPM package declared in Package.swift.
+  #
+  # Package.swift is a "shadow" package: it compiles a hand-enumerated subset of
+  # the app's sources so the oref algorithm builds standalone on macOS, which is
+  # what lets CLI tools replay recorded inputs against it.
+  #
+  # The `test` job below cannot catch drift in that list, because the Xcode
+  # target globs whole directories. Any commit that adds a cross-file dependency
+  # inside an already-listed file breaks `swift test` while `test` stays green.
+  # This job is the only thing that notices.
+  #
+  # Runs in parallel with `test` and needs no simulator, so it reports in well
+  # under a minute.
+  algorithm-package:
+    name: Algorithm Package (swift test)
+    runs-on: macos-26
+    if: github.repository_owner == 'nightscout'
+
+    steps:
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode_26.2.app/Contents/Developer
+
+      # No submodules: the package declares no external dependencies and
+      # compiles only files under Trio/Sources and TrioTests/OpenAPSSwiftTests.
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Restore cache
+        id: spm-cache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-algorithm-${{ hashFiles('Package.swift', 'Trio/Sources/**/*.swift', 'TrioTests/OpenAPSSwiftTests/**/*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-algorithm-
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Run algorithm tests
+        run: time swift test
+
+      - name: Save cache
+        if: always() && steps.spm-cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-algorithm-${{ hashFiles('Package.swift', 'Trio/Sources/**/*.swift', 'TrioTests/OpenAPSSwiftTests/**/*.swift') }}
+
+      - name: Annotate algorithm package results
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "::notice title=Algorithm Package::✅ swift test passed"
+            echo "✅ Algorithm package builds standalone on macOS and all tests passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "::error title=Algorithm Package::❌ swift test failed"
+            {
+              echo "## ❌ Algorithm package (\`swift test\`) failed"
+              echo ""
+              echo "\`Package.swift\` enumerates its sources by hand, so it drifts when a"
+              echo "listed file gains a dependency on a file that is not listed."
+              echo ""
+              echo "If the error is \`cannot find 'X' in scope\`, add the file declaring \`X\`"
+              echo "to \`algorithmModels\` or \`algorithmHelpers\` in \`Package.swift\`."
+            } >> $GITHUB_STEP_SUMMARY
+          fi
+        shell: bash
+
   test:
     name: Run Unit Tests
     runs-on: macos-26

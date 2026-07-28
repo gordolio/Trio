@@ -1,5 +1,4 @@
 import Foundation
-import HealthKit
 
 enum Formatters {
     static func percent(for number: Double) -> String {

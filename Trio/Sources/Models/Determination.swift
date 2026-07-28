@@ -63,7 +63,6 @@ extension Determination {
         case isf = "ISF"
         case current_target
         case tdd = "TDD"
-        case insulinForManualBolus
         case minDelta
         case expectedDelta
         case minGuardBG

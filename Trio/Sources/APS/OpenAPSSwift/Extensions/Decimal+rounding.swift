@@ -44,4 +44,25 @@ extension Decimal {
             return self
         }
     }
+
+    /// Rounds a decimal to specified number of places
+    /// - Parameter places: Number of decimal places
+    /// - Returns: Rounded decimal
+    func rounded(toPlaces places: Int) -> Decimal {
+        var value = self
+        var result = Decimal()
+        NSDecimalRound(&result, &value, places, .plain)
+        return result
+    }
+
+    /// Truncates the `Decimal` to the specified number of decimal places without rounding.
+    ///
+    /// - Parameter places: The number of decimal places to retain.
+    /// - Returns: A `Decimal` truncated to the specified precision.
+    func truncated(toPlaces places: Int) -> Decimal {
+        var original = self
+        var result = Decimal()
+        NSDecimalRound(&result, &original, places, .down)
+        return result
+    }
 }
