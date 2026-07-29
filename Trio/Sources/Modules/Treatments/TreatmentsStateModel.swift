@@ -190,8 +190,9 @@ extension Treatments {
         }
 
         var isAIAvailable: Bool {
-            guard hasOpenRouterAPIKey else { return false }
-            return !settingsManager.settings.openRouterModelConfiguration.selectedModelIDs.isEmpty
+            // SwiftUI can evaluate this before BaseView injects settingsManager.
+            // Model configuration independently guarantees at least one selection.
+            hasOpenRouterAPIKey
         }
 
         private var hasOpenRouterAPIKey: Bool {

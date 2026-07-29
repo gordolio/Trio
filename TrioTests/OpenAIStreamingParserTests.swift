@@ -3,6 +3,13 @@ import Testing
 
 @testable import Trio
 
+@Suite("Treatments AI Availability") struct TreatmentsAIAvailabilityTests {
+    @Test("Availability is safe before dependency injection") func availabilityBeforeInjection() {
+        let state = Treatments.StateModel()
+        _ = state.isAIAvailable
+    }
+}
+
 @Suite("OpenRouter Model Configuration") struct OpenRouterModelConfigurationTests {
     @Test("Selection normalization enforces unique one-to-four bounds") func normalizesSelectionBounds() {
         let configuration = OpenRouterModelConfiguration(
