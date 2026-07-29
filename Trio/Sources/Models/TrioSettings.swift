@@ -91,6 +91,9 @@ struct TrioSettings: JSON, Equatable, Encodable {
     /// The selected provider runs first; other providers load when their tab is opened.
     var sendToAllAIProvidersSimultaneously: Bool = false
 
+    /// Ordered dynamic OpenRouter configuration. Legacy provider fields above remain for migration.
+    var openRouterModelConfiguration = OpenRouterModelConfiguration()
+
     /// Computed property that groups all Garmin settings into a single struct
     var garminSettings: GarminWatchSettings {
         get {
@@ -368,6 +371,27 @@ extension TrioSettings: Decodable {
             forKey: .sendToAllAIProvidersSimultaneously
         ) {
             settings.sendToAllAIProvidersSimultaneously = sendToAllAIProvidersSimultaneously
+        }
+
+        if let configuration = try? container.decode(
+            OpenRouterModelConfiguration.self,
+            forKey: .openRouterModelConfiguration
+        ) {
+            settings.openRouterModelConfiguration = OpenRouterModelConfiguration(
+                selectedModelIDs: configuration.selectedModelIDs,
+                defaultModelID: configuration.defaultModelID,
+                runAllModelsSimultaneously: configuration.runAllModelsSimultaneously
+            )
+        } else {
+            let legacyProvider = settings.aiProvider
+            let selectedIDs = settings.sendToAllAIProvidersSimultaneously
+                ? [OpenRouterModels.defaultModelID, OpenRouterModels.legacyClaudeModelID]
+                : [legacyProvider.modelID]
+            settings.openRouterModelConfiguration = OpenRouterModelConfiguration(
+                selectedModelIDs: selectedIDs,
+                defaultModelID: legacyProvider.modelID,
+                runAllModelsSimultaneously: false
+            )
         }
 
         self = settings

@@ -136,7 +136,9 @@ extension Treatments {
         @ObservationIgnored private var provisionalFoodAnalysis: AIFoodItemsResponseWithReasoning?
         @ObservationIgnored private var immediateConversationManager: AIConversationManager?
         @ObservationIgnored private var immediateFoodAnalysisTask: Task<Void, Never>?
-        @ObservationIgnored private var immediateAnalysisProvider: AIProviderType?
+        @ObservationIgnored private var foodAnalysisTask: Task<Void, Never>?
+        @ObservationIgnored private var lazyAnalysisTasks: [String: Task<Void, Never>] = [:]
+        @ObservationIgnored private var immediateAnalysisProvider: String?
         @ObservationIgnored private var immediateAnalysisSessionID: String?
         @ObservationIgnored private var immediateAnalysisImageData: Data?
         /// The captured photo data, kept visible for thumbnail display during and after analysis
@@ -155,7 +157,7 @@ extension Treatments {
         private var originalAICarbsQuantity: Double?
         private var pendingImageData: Data?
         private var pendingAnalysisDescription: String?
-        private var pendingAnalysisSessionIDs: [AIProviderType: String] = [:]
+        private var pendingAnalysisSessionIDs: [String: String] = [:]
 
         /// Vision items saved before merge, used as fallback when user rejects published nutrition
         private var premergeVisionItems: [AIFoodItem]?
@@ -167,20 +169,20 @@ extension Treatments {
         /// Per-provider analysis slots. When multi-provider mode is off, only the single configured
         /// provider appears here. The `foodItemSelection` / `conversationManager` / `premergeVisionItems`
         /// / `publishedRestaurantName` values above mirror the slot for `displayedProvider`.
-        var foodItemSelections: [AIProviderType: FoodItemSelection] = [:]
-        var conversationManagers: [AIProviderType: AIConversationManager] = [:]
-        var perProviderAnalyzing: [AIProviderType: Bool] = [:]
-        var perProviderErrors: [AIProviderType: String] = [:]
-        var perProviderPremergeVisionItems: [AIProviderType: [AIFoodItem]] = [:]
-        var perProviderPublishedRestaurantName: [AIProviderType: String] = [:]
+        var foodItemSelections: [String: FoodItemSelection] = [:]
+        var conversationManagers: [String: AIConversationManager] = [:]
+        var perProviderAnalyzing: [String: Bool] = [:]
+        var perProviderErrors: [String: String] = [:]
+        var perProviderPremergeVisionItems: [String: [AIFoodItem]] = [:]
+        var perProviderPublishedRestaurantName: [String: String] = [:]
 
         /// Providers the current analysis was dispatched to, in display order.
         /// Empty when no analysis is in flight / complete.
-        var activeProviders: [AIProviderType] = []
+        var activeProviders: [String] = []
 
         /// Which provider's results are currently shown in the UI.
         /// Only meaningful when `activeProviders.count > 1` (multi-provider mode).
-        var displayedProvider: AIProviderType?
+        var displayedProvider: String?
 
         /// Whether we're in AI mode (photo captured or analysis complete)
         var isInAIMode: Bool {
@@ -188,15 +190,22 @@ extension Treatments {
         }
 
         var isAIAvailable: Bool {
-            AIProviderType.allCases.contains(where: isProviderAvailable)
+            guard hasOpenRouterAPIKey else { return false }
+            return !settingsManager.settings.openRouterModelConfiguration.selectedModelIDs.isEmpty
         }
 
-        /// Whether the given provider has an API key configured in the build.
-        func isProviderAvailable(_: AIProviderType) -> Bool {
+        private var hasOpenRouterAPIKey: Bool {
             guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
-                  !value.isEmpty,
-                  value != "$(OPENROUTER_API_KEY)" else { return false }
+                   !value.isEmpty,
+                   value != "$(OPENROUTER_API_KEY)" else { return false }
             return true
+        }
+
+        func isProviderAvailable(_ modelID: String) -> Bool {
+            guard hasOpenRouterAPIKey else { return false }
+            let catalog = OpenRouterModelCatalogService.shared.cachedModels
+            guard !catalog.isEmpty else { return true }
+            return catalog.first(where: { $0.id == modelID })?.isFoodAnalysisCompatible == true
         }
 
         var autoOpenCamera: Bool = false
@@ -330,6 +339,10 @@ extension Treatments {
             setupTask?.cancel()
             determinationUpdateTask?.cancel()
             immediateFoodAnalysisTask?.cancel()
+            foodAnalysisTask?.cancel()
+            foodAnalysisTask = nil
+            lazyAnalysisTasks.values.forEach { $0.cancel() }
+            lazyAnalysisTasks.removeAll()
 
             broadcaster?.unregister(DeterminationObserver.self, observer: self)
             broadcaster?.unregister(BolusFailureObserver.self, observer: self)
@@ -824,6 +837,9 @@ extension Treatments {
         /// Trio's insulin calculation.
         @MainActor func prepareCapturedImage(_ imageData: Data) {
             immediateFoodAnalysisTask?.cancel()
+            foodAnalysisTask?.cancel()
+            lazyAnalysisTasks.values.forEach { $0.cancel() }
+            lazyAnalysisTasks.removeAll()
 
             capturedImageData = imageData
             foodDescription = ""
@@ -836,10 +852,17 @@ extension Treatments {
             conversationManager = nil
             foodItemSelections.removeAll()
             conversationManagers.removeAll()
+            perProviderAnalyzing.removeAll()
+            perProviderErrors.removeAll()
+            perProviderPremergeVisionItems.removeAll()
+            perProviderPublishedRestaurantName.removeAll()
             activeProviders.removeAll()
             displayedProvider = nil
+            pendingImageData = nil
+            pendingAnalysisDescription = nil
+            pendingAnalysisSessionIDs.removeAll()
 
-            let provider = settingsManager.settings.aiProvider
+            let provider = settingsManager.settings.openRouterModelConfiguration.defaultModelID
             let sessionID = UUID().uuidString
             immediateAnalysisProvider = provider
             immediateAnalysisSessionID = sessionID
@@ -863,6 +886,10 @@ extension Treatments {
 
         @MainActor func cancelCapturedImagePreparation() {
             immediateFoodAnalysisTask?.cancel()
+            foodAnalysisTask?.cancel()
+            foodAnalysisTask = nil
+            lazyAnalysisTasks.values.forEach { $0.cancel() }
+            lazyAnalysisTasks.removeAll()
             immediateFoodAnalysisTask = nil
             provisionalFoodItems = []
             provisionalFoodAnalysis = nil
@@ -880,11 +907,19 @@ extension Treatments {
         /// This is the same result that Analyze promotes when no description is supplied.
         @MainActor private func performImmediateFoodAnalysis(
             imageData: Data,
-            provider: AIProviderType,
+            provider: String,
             sessionID: String
         ) async {
+            guard !Task.isCancelled,
+                  capturedImageData == imageData,
+                  immediateAnalysisSessionID == sessionID else { return }
+            guard isProviderAvailable(provider) else {
+                provisionalFoodAnalysisError = OpenAIServiceError.incompatibleModel(provider).localizedDescription
+                isPreparingFoodAnalysis = false
+                return
+            }
             let manager = AIConversationManager()
-            manager.providerOverride = provider
+            manager.modelID = provider
             let stream = AIServiceRegistry.chat(for: provider).analyzeFoodStreaming(
                 imageData: imageData,
                 userDescription: nil,
@@ -923,7 +958,7 @@ extension Treatments {
                 provisionalFoodAnalysisError = String(
                     localized: "Initial analysis could not be completed. Continue will retry."
                 )
-                print("🍽️ [\(provider.displayName)] Immediate analysis failed: \(error.localizedDescription)")
+                print("🍽️ [\(provider)] Immediate analysis failed: \(error.localizedDescription)")
             }
 
             guard capturedImageData == imageData,
@@ -934,6 +969,13 @@ extension Treatments {
 
         /// Analyzes a food image using AI. In comparison mode, the selected provider
         /// runs first and the others are queried lazily when their tabs are opened.
+        @MainActor func startFoodAnalysis(imageData: Data, description: String? = nil) {
+            foodAnalysisTask?.cancel()
+            foodAnalysisTask = Task { [weak self] in
+                await self?.analyzeFood(imageData: imageData, description: description)
+            }
+        }
+
         func analyzeFood(imageData: Data, description: String? = nil) async {
             let immediateTask = await MainActor.run { immediateFoodAnalysisTask }
             await immediateTask?.value
@@ -942,16 +984,10 @@ extension Treatments {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let finalDescription = normalizedDescription?.isEmpty == false ? normalizedDescription : nil
 
-            let sendToAll = settingsManager.settings.sendToAllAIProvidersSimultaneously
-            let configuredProvider = settingsManager.settings.aiProvider
-            let tabs: [AIProviderType] = {
-                if sendToAll {
-                    let available = AIProviderType.allCases.filter(isProviderAvailable)
-                    return available.isEmpty ? [configuredProvider] : available
-                } else {
-                    return [configuredProvider]
-                }
-            }()
+            let configuration = settingsManager.settings.openRouterModelConfiguration
+            let configuredProvider = configuration.defaultModelID
+            let tabs = configuration.selectedModelIDs
+            let initialModels = Set(configuration.initialModelIDs)
             let initialProvider = tabs.contains(configuredProvider) ? configuredProvider : (tabs.first ?? configuredProvider)
 
             let immediateDraft = await MainActor.run {
@@ -987,9 +1023,9 @@ extension Treatments {
                 perProviderErrors.removeAll()
                 perProviderPremergeVisionItems.removeAll()
                 perProviderPublishedRestaurantName.removeAll()
-                // Only the initial provider is marked analyzing; other tabs stay dormant
-                // and will be kicked off from `switchDisplayedProvider(to:)` on demand.
-                perProviderAnalyzing = Dictionary(uniqueKeysWithValues: tabs.map { ($0, $0 == initialProvider) })
+                perProviderAnalyzing = Dictionary(
+                    uniqueKeysWithValues: tabs.map { ($0, initialModels.contains($0)) }
+                )
                 activeProviders = tabs
                 displayedProvider = initialProvider
                 capturedImageData = imageData
@@ -999,14 +1035,29 @@ extension Treatments {
                 isPreparingFoodAnalysis = false
             }
 
-            await runAnalysis(
-                for: initialProvider,
-                imageData: imageData,
-                description: finalDescription,
-                sessionID: initialSessionID,
-                initialResponse: immediateDraft.response,
-                initialManager: immediateDraft.manager
-            )
+            await withTaskGroup(of: Void.self) { group in
+                for modelID in tabs where initialModels.contains(modelID) && modelID != initialProvider {
+                    group.addTask { [weak self] in
+                        guard let self else { return }
+                        await self.runAnalysis(
+                            for: modelID,
+                            imageData: imageData,
+                            description: finalDescription,
+                            sessionID: sessionIDs[modelID] ?? UUID().uuidString
+                        )
+                    }
+                }
+
+                await runAnalysis(
+                    for: initialProvider,
+                    imageData: imageData,
+                    description: finalDescription,
+                    sessionID: initialSessionID,
+                    initialResponse: immediateDraft.response,
+                    initialManager: immediateDraft.manager
+                )
+                await group.waitForAll()
+            }
 
             await MainActor.run {
                 isAnalyzingFood = perProviderAnalyzing.values.contains(true)
@@ -1017,48 +1068,44 @@ extension Treatments {
         /// If this provider is the currently-displayed one, the top-level `foodItemSelection`
         /// / `conversationManager` mirrors are also updated so the existing UI code keeps working.
         private func runAnalysis(
-            for provider: AIProviderType,
+            for provider: String,
             imageData: Data,
             description: String?,
             sessionID: String,
             initialResponse: AIFoodItemsResponseWithReasoning? = nil,
             initialManager: AIConversationManager? = nil
         ) async {
+            let isCurrentAnalysis = await MainActor.run {
+                pendingImageData == imageData && activeProviders.contains(provider)
+            }
+            guard isCurrentAnalysis else { return }
+            guard isProviderAvailable(provider) else {
+                await MainActor.run {
+                    guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
+                    perProviderAnalyzing[provider] = false
+                    perProviderErrors[provider] = OpenAIServiceError.incompatibleModel(provider).localizedDescription
+                    if displayedProvider == provider { aiError = perProviderErrors[provider] }
+                }
+                return
+            }
             let chatService = AIServiceRegistry.chat(for: provider)
             let responsesService = AIServiceRegistry.responses(for: provider)
 
             do {
-                print("🍽️ [\(provider.displayName)] Starting food analysis. Description: \(description ?? "<none>")")
+                print("🍽️ [\(provider)] Starting food analysis. Description: \(description ?? "<none>")")
 
-                let publishedNutritionTask: Task<PublishedNutritionResult?, Never> = Task {
-                    guard let desc = description, !desc.isEmpty else {
-                        return nil
-                    }
-                    do {
-                        let classification = try await responsesService.classifyRestaurantItem(description: desc)
-                        guard classification.isRestaurantItem,
-                              !classification.restaurantName.isEmpty,
-                              !classification.menuItemName.isEmpty
-                        else {
-                            return nil
-                        }
-                        let result = try await responsesService.searchPublishedNutrition(
-                            restaurantName: classification.restaurantName,
-                            menuItemName: classification.menuItemName
-                        )
-                        return result
-                    } catch {
-                        print("🍽️ [\(provider.displayName)] Classifier/search failed (non-fatal): \(error.localizedDescription)")
-                        return nil
-                    }
-                }
+                async let publishedNutritionResult = findPublishedNutrition(
+                    description: description,
+                    using: responsesService,
+                    modelID: provider
+                )
 
                 let manager: AIConversationManager
                 let visionResponse: AIFoodItemsResponseWithReasoning
 
                 if description == nil, let initialResponse {
                     manager = initialManager ?? AIConversationManager()
-                    manager.providerOverride = provider
+                    manager.modelID = provider
                     if initialManager == nil {
                         await manager.initialize(
                             with: initialResponse,
@@ -1067,10 +1114,10 @@ extension Treatments {
                         )
                     }
                     visionResponse = initialResponse
-                    print("🍽️ [\(provider.displayName)] Reusing immediate analysis; no second vision request")
+                    print("🍽️ [\(provider)] Reusing immediate analysis; no second vision request")
                 } else {
                     manager = AIConversationManager()
-                    manager.providerOverride = provider
+                    manager.modelID = provider
                     let stream: AsyncThrowingStream<PartialFoodAnalysisResult, Error>
                     if let description, let initialResponse {
                         stream = chatService.refineFoodAnalysisStreaming(
@@ -1088,6 +1135,7 @@ extension Treatments {
                     }
 
                     await MainActor.run {
+                        guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
                         conversationManagers[provider] = manager
                         if displayedProvider == provider {
                             conversationManager = manager
@@ -1099,7 +1147,9 @@ extension Treatments {
                         imageData: imageData,
                         userDescription: description,
                         onItemsUpdated: { [weak self] items in
-                            guard let self else { return }
+                            guard let self,
+                                  self.pendingImageData == imageData,
+                                  self.activeProviders.contains(provider) else { return }
                             let response = AIFoodItemsResponse(
                                 foodItems: items,
                                 overallConfidence: 0
@@ -1113,17 +1163,19 @@ extension Treatments {
                     )
                 }
 
-                manager.providerOverride = provider
+                manager.modelID = provider
                 await MainActor.run {
+                    guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
                     conversationManagers[provider] = manager
                     if displayedProvider == provider {
                         conversationManager = manager
                     }
                 }
 
-                let publishedResult = await publishedNutritionTask.value
+                let publishedResult = await publishedNutritionResult
 
                 await MainActor.run {
+                    guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
                     perProviderPremergeVisionItems[provider] = visionResponse.foodItems
                     perProviderPublishedRestaurantName[provider] = publishedResult?.restaurantName
                     if displayedProvider == provider {
@@ -1138,6 +1190,7 @@ extension Treatments {
                 )
 
                 await MainActor.run {
+                    guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
                     let mergedResponse = AIFoodItemsResponse(
                         foodItems: mergedItems,
                         overallConfidence: visionResponse.overallConfidence
@@ -1162,32 +1215,58 @@ extension Treatments {
                         foodItemSelection = selection
                         updateFormFromSelection()
                     }
-                    print("🍽️ [\(provider.displayName)] Analysis complete")
+                    print("🍽️ [\(provider)] Analysis complete")
                 }
             } catch {
                 await MainActor.run {
+                    guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
                     perProviderAnalyzing[provider] = false
+                    foodItemSelections[provider] = nil
+                    conversationManagers[provider] = nil
                     let message = providerFacingErrorMessage(for: error, provider: provider)
                     perProviderErrors[provider] = message
                     // Only surface errors for the provider the user is currently looking at —
                     // a background/dormant provider failing silently shouldn't pop an alert.
-                    if displayedProvider == provider, foodItemSelection == nil {
+                    if displayedProvider == provider {
+                        foodItemSelection = nil
+                        conversationManager = nil
                         aiError = message
                     }
                 }
             }
         }
 
+        private func findPublishedNutrition(
+            description: String?,
+            using service: AIResponsesProviderService,
+            modelID: String
+        ) async -> PublishedNutritionResult? {
+            guard let description, !description.isEmpty else { return nil }
+            do {
+                let classification = try await service.classifyRestaurantItem(description: description)
+                guard classification.isRestaurantItem,
+                      !classification.restaurantName.isEmpty,
+                      !classification.menuItemName.isEmpty else { return nil }
+                return try await service.searchPublishedNutrition(
+                    restaurantName: classification.restaurantName,
+                    menuItemName: classification.menuItemName
+                )
+            } catch {
+                print("🍽️ [\(modelID)] Classifier/search failed (non-fatal): \(error.localizedDescription)")
+                return nil
+            }
+        }
+
         /// Maps a provider error into a user-facing string, including OpenRouter billing errors.
         /// For generic HTTP failures we prefix the provider name so the user knows which one failed.
-        private func providerFacingErrorMessage(for error: Error, provider: AIProviderType) -> String {
+        private func providerFacingErrorMessage(for error: Error, provider: String) -> String {
             if case OpenAIServiceError.insufficientCredits = error {
                 return String(
                     format: String(
                         localized: "%@ is out of credits. Please top up your account before analyzing more images.",
                         comment: "Alert shown when a provider responds with an out-of-credits signal"
                     ),
-                    provider.displayName
+                    provider.openRouterShortDisplayName
                 )
             }
             if case let OpenAIServiceError.invalidResponse(statusCode) = error {
@@ -1199,7 +1278,7 @@ extension Treatments {
                             localized: "%@ rejected the API key (status %d). Check the key configured in ConfigOverride.xcconfig.",
                             comment: "Alert shown when a provider returns HTTP 401/403"
                         ),
-                        provider.displayName, statusCode
+                        provider.openRouterShortDisplayName, statusCode
                     )
                 case 429:
                     return String(
@@ -1207,13 +1286,13 @@ extension Treatments {
                             localized: "%@ is currently rate-limiting requests. Please try again in a moment.",
                             comment: "Alert shown when a provider returns HTTP 429 without an insufficient_quota code"
                         ),
-                        provider.displayName
+                        provider.openRouterShortDisplayName
                     )
                 default:
-                    return "\(provider.displayName): \(error.localizedDescription)"
+                    return "\(provider.openRouterShortDisplayName): \(error.localizedDescription)"
                 }
             }
-            return "\(provider.displayName): \(error.localizedDescription)"
+            return "\(provider.openRouterShortDisplayName): \(error.localizedDescription)"
         }
 
         /// Switches which provider's results are displayed in the food item list + form.
@@ -1221,7 +1300,7 @@ extension Treatments {
         /// `conversationManager` and recomputes the bolus form from the new selection.
         /// If the target provider hasn't been queried yet (lazy multi-provider mode), this
         /// kicks off its analysis now.
-        @MainActor func switchDisplayedProvider(to provider: AIProviderType) {
+        @MainActor func switchDisplayedProvider(to provider: String) {
             guard displayedProvider != provider else { return }
             // Disable animations at the source so SwiftUI/Form doesn't attach
             // an ambient transition (slide/opacity) to the resulting view-tree
@@ -1261,7 +1340,8 @@ extension Treatments {
             let description = pendingAnalysisDescription
             let sessionID = pendingAnalysisSessionIDs[provider] ?? UUID().uuidString
             pendingAnalysisSessionIDs[provider] = sessionID
-            Task { [weak self] in
+            lazyAnalysisTasks[provider]?.cancel()
+            lazyAnalysisTasks[provider] = Task { [weak self] in
                 await self?.runAnalysis(
                     for: provider,
                     imageData: imageData,
@@ -1274,6 +1354,38 @@ extension Treatments {
                     endTxn.disablesAnimations = true
                     withTransaction(endTxn) {
                         self.isAnalyzingFood = self.perProviderAnalyzing.values.contains(true)
+                    }
+                    if self.pendingAnalysisSessionIDs[provider] == sessionID {
+                        self.lazyAnalysisTasks[provider] = nil
+                    }
+                }
+            }
+        }
+
+        @MainActor func retryAnalysis(for provider: String) {
+            guard let imageData = pendingImageData,
+                  activeProviders.contains(provider),
+                  perProviderAnalyzing[provider] != true else { return }
+            perProviderErrors[provider] = nil
+            if displayedProvider == provider { aiError = nil }
+            perProviderAnalyzing[provider] = true
+            isAnalyzingFood = true
+            let description = pendingAnalysisDescription
+            let sessionID = UUID().uuidString
+            pendingAnalysisSessionIDs[provider] = sessionID
+            lazyAnalysisTasks[provider]?.cancel()
+            lazyAnalysisTasks[provider] = Task { [weak self] in
+                await self?.runAnalysis(
+                    for: provider,
+                    imageData: imageData,
+                    description: description,
+                    sessionID: sessionID
+                )
+                await MainActor.run {
+                    guard let self else { return }
+                    self.isAnalyzingFood = self.perProviderAnalyzing.values.contains(true)
+                    if self.pendingAnalysisSessionIDs[provider] == sessionID {
+                        self.lazyAnalysisTasks[provider] = nil
                     }
                 }
             }
@@ -1423,6 +1535,10 @@ extension Treatments {
         /// Clears the food item selection (resets AI analysis)
         func clearFoodItemSelection() {
             immediateFoodAnalysisTask?.cancel()
+            foodAnalysisTask?.cancel()
+            foodAnalysisTask = nil
+            lazyAnalysisTasks.values.forEach { $0.cancel() }
+            lazyAnalysisTasks.removeAll()
             foodItemSelection = nil
             conversationManager = nil
             capturedImageData = nil

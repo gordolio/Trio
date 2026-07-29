@@ -3,6 +3,151 @@ import Testing
 
 @testable import Trio
 
+@Suite("OpenRouter Model Configuration") struct OpenRouterModelConfigurationTests {
+    @Test("Selection normalization enforces unique one-to-four bounds") func normalizesSelectionBounds() {
+        let configuration = OpenRouterModelConfiguration(
+            selectedModelIDs: ["a/one", "a/one", "b/two", "c/three", "d/four", "e/five"],
+            defaultModelID: "missing/model"
+        )
+
+        #expect(configuration.selectedModelIDs == ["a/one", "b/two", "c/three", "d/four"])
+        #expect(configuration.defaultModelID == "a/one")
+
+        let empty = OpenRouterModelConfiguration(selectedModelIDs: [], defaultModelID: "")
+        #expect(empty.selectedModelIDs == [OpenRouterModels.defaultModelID])
+        #expect(empty.defaultModelID == OpenRouterModels.defaultModelID)
+    }
+
+    @Test("Removing the default deterministically selects its successor") func removesDefault() {
+        var configuration = OpenRouterModelConfiguration(
+            selectedModelIDs: ["a/one", "b/two", "c/three"],
+            defaultModelID: "b/two"
+        )
+
+        #expect(configuration.remove("b/two"))
+        #expect(configuration.selectedModelIDs == ["a/one", "c/three"])
+        #expect(configuration.defaultModelID == "c/three")
+        #expect(!configuration.remove("missing/model"))
+    }
+
+    @Test("Ordering and simultaneous execution survive persistence") func roundTrip() throws {
+        var configuration = OpenRouterModelConfiguration(
+            selectedModelIDs: ["a/one", "b/two", "c/three"],
+            defaultModelID: "c/three",
+            runAllModelsSimultaneously: true
+        )
+        configuration.move(fromOffsets: IndexSet(integer: 2), toOffset: 0)
+
+        let decoded = try JSONDecoder().decode(
+            OpenRouterModelConfiguration.self,
+            from: JSONEncoder().encode(configuration)
+        )
+        #expect(decoded.selectedModelIDs == ["c/three", "a/one", "b/two"])
+        #expect(decoded.defaultModelID == "c/three")
+        #expect(decoded.runAllModelsSimultaneously)
+        #expect(decoded.initialModelIDs == decoded.selectedModelIDs)
+    }
+
+    @Test("Lazy execution initially dispatches only the default model") func lazyExecution() {
+        let configuration = OpenRouterModelConfiguration(
+            selectedModelIDs: ["a/one", "b/two", "c/three"],
+            defaultModelID: "b/two"
+        )
+
+        #expect(configuration.selectedModelIDs == ["a/one", "b/two", "c/three"])
+        #expect(configuration.initialModelIDs == ["b/two"])
+    }
+}
+
+@Suite("Trio Settings AI Model Migration") struct TrioSettingsAIModelMigrationTests {
+    @Test("Legacy provider migrates to its stable OpenRouter model ID") func migratesLegacyProvider() throws {
+        let data = Data(#"{"aiProvider":"claude","sendToAllAIProvidersSimultaneously":false}"#.utf8)
+        let settings = try JSONDecoder().decode(TrioSettings.self, from: data)
+
+        #expect(settings.openRouterModelConfiguration.selectedModelIDs == [OpenRouterModels.legacyClaudeModelID])
+        #expect(settings.openRouterModelConfiguration.defaultModelID == OpenRouterModels.legacyClaudeModelID)
+    }
+
+    @Test("Legacy comparison migrates to two lazy model tabs") func migratesLegacyComparison() throws {
+        let data = Data(#"{"aiProvider":"claude","sendToAllAIProvidersSimultaneously":true}"#.utf8)
+        let settings = try JSONDecoder().decode(TrioSettings.self, from: data)
+
+        #expect(settings.openRouterModelConfiguration.selectedModelIDs == [
+            OpenRouterModels.defaultModelID,
+            OpenRouterModels.legacyClaudeModelID
+        ])
+        #expect(settings.openRouterModelConfiguration.defaultModelID == OpenRouterModels.legacyClaudeModelID)
+        #expect(!settings.openRouterModelConfiguration.runAllModelsSimultaneously)
+    }
+
+    @Test("New configuration takes precedence over legacy fields") func newConfigurationWins() throws {
+        let data = Data(#"""
+        {
+          "aiProvider":"openai",
+          "sendToAllAIProvidersSimultaneously":true,
+          "openRouterModelConfiguration":{
+            "selectedModelIDs":["google/gemini-test"],
+            "defaultModelID":"google/gemini-test",
+            "runAllModelsSimultaneously":true
+          }
+        }
+        """#.utf8)
+        let settings = try JSONDecoder().decode(TrioSettings.self, from: data)
+
+        #expect(settings.openRouterModelConfiguration.selectedModelIDs == ["google/gemini-test"])
+        #expect(settings.openRouterModelConfiguration.defaultModelID == "google/gemini-test")
+        #expect(settings.openRouterModelConfiguration.runAllModelsSimultaneously)
+    }
+}
+
+@Suite("OpenRouter Model Catalog") struct OpenRouterModelCatalogTests {
+    @Test("Catalog metadata identifies food-analysis compatibility") func decodesCapabilities() throws {
+        let data = Data(#"""
+        {
+          "data":[
+            {
+              "id":"example/vision-model",
+              "name":"Vision Model",
+              "description":"A compatible model",
+              "context_length":128000,
+              "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
+              "pricing":{"prompt":"0.000001","completion":"0.000002"},
+              "supported_parameters":["response_format","tools"]
+            },
+            {
+              "id":"example/text-model",
+              "name":"Text Model",
+              "architecture":{"input_modalities":["text"],"output_modalities":["text"]},
+              "supported_parameters":["response_format"]
+            }
+          ]
+        }
+        """#.utf8)
+        let catalog = try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data)
+
+        let vision = try #require(catalog.data.first)
+        #expect(vision.providerName == "Example")
+        #expect(vision.contextLength == 128_000)
+        #expect(vision.supportsImages)
+        #expect(vision.supportsStructuredResponses)
+        #expect(vision.supportsTools)
+        #expect(vision.isFoodAnalysisCompatible)
+        #expect(vision.pricePerMillionTokens(vision.pricing?.prompt) == "1")
+        #expect(!catalog.data[1].isFoodAnalysisCompatible)
+    }
+
+    @Test("Favorites persist independently of catalog availability") func favoritesPersist() {
+        let suiteName = "OpenRouterModelCatalogTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = OpenRouterModelCatalogService(defaults: defaults)
+
+        service.favoriteModelIDs = ["missing/model", "example/vision-model"]
+
+        #expect(service.favoriteModelIDs == ["missing/model", "example/vision-model"])
+    }
+}
+
 // MARK: - Test data from real SSE stream
 
 /// Each entry is the accumulated JSON content after receiving a chunk from the OpenAI SSE stream.

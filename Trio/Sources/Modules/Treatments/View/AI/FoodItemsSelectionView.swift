@@ -27,9 +27,10 @@ enum NutrientDisplayMode: CaseIterable {
 /// Metadata for a single provider tab shown above the food items list in multi-provider
 /// comparison mode. Passing an empty array hides the tab bar entirely.
 struct FoodProviderTab: Identifiable, Equatable {
-    let provider: AIProviderType
+    let provider: String
     let isAnalyzing: Bool
-    var id: AIProviderType { provider }
+    let error: String?
+    var id: String { provider }
 }
 
 /// A collapsible view for displaying and selecting individual food items from AI analysis
@@ -45,10 +46,11 @@ struct FoodItemsSelectionView: View {
     let providerTabs: [FoodProviderTab]
 
     /// The currently-selected provider tab. Ignored when `providerTabs` is empty.
-    let selectedProvider: AIProviderType?
+    let selectedProvider: String?
 
     /// Called when user taps a provider tab
-    let onSelectProvider: ((AIProviderType) -> Void)?
+    let onSelectProvider: ((String) -> Void)?
+    let onRetryProvider: ((String) -> Void)?
 
     /// Called when user toggles an item's checkbox
     let onToggleItem: (UUID) -> Void
@@ -83,8 +85,9 @@ struct FoodItemsSelectionView: View {
         isExpanded: Binding<Bool>,
         pendingItemIds: Set<UUID> = [],
         providerTabs: [FoodProviderTab] = [],
-        selectedProvider: AIProviderType? = nil,
-        onSelectProvider: ((AIProviderType) -> Void)? = nil,
+        selectedProvider: String? = nil,
+        onSelectProvider: ((String) -> Void)? = nil,
+        onRetryProvider: ((String) -> Void)? = nil,
         onToggleItem: @escaping (UUID) -> Void,
         onEditItem: ((UUID, String) -> Void)? = nil,
         onOpenChat: (() -> Void)? = nil,
@@ -97,6 +100,7 @@ struct FoodItemsSelectionView: View {
         self.providerTabs = providerTabs
         self.selectedProvider = selectedProvider
         self.onSelectProvider = onSelectProvider
+        self.onRetryProvider = onRetryProvider
         self.onToggleItem = onToggleItem
         self.onEditItem = onEditItem
         self.onOpenChat = onOpenChat
@@ -109,7 +113,7 @@ struct FoodItemsSelectionView: View {
         // identity when the selected provider flips between having results and
         // being a lazy placeholder — otherwise the tab bar gets re-inserted on
         // every switch and the ambient animation slides the tabs around.
-        if selection != nil || providerTabs.count > 1 {
+        if selection != nil || !providerTabs.isEmpty {
             VStack(spacing: 0) {
                 if providerTabs.count > 1 {
                     providerTabBar
@@ -141,12 +145,18 @@ struct FoodItemsSelectionView: View {
 
     private var loadingPlaceholder: some View {
         let isLoading = providerTabs.first(where: { $0.provider == selectedProvider })?.isAnalyzing == true
-        return HStack(spacing: 8) {
+        let error = providerTabs.first(where: { $0.provider == selectedProvider })?.error
+        return VStack(spacing: 8) {
             if isLoading {
-                AnimatedSparkleIcon(isAnimating: true)
-                Text("Analyzing\u{2026}", comment: "Placeholder shown while the selected AI provider is being queried")
-                    .font(.body)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 8) {
+                    AnimatedSparkleIcon(isAnimating: true)
+                    Text("Analyzing\u{2026}", comment: "Placeholder shown while the selected AI provider is being queried")
+                }
+            } else if let error {
+                Text(error).multilineTextAlignment(.center)
+                if let selectedProvider {
+                    Button("Retry") { onRetryProvider?(selectedProvider) }
+                }
             } else {
                 Text(
                     "No results from this provider.",
@@ -156,6 +166,8 @@ struct FoodItemsSelectionView: View {
                 .foregroundColor(.secondary)
             }
         }
+        .font(.body)
+        .foregroundColor(.secondary)
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.vertical, 24)
     }
@@ -163,9 +175,11 @@ struct FoodItemsSelectionView: View {
     // MARK: - Provider Tab Bar
 
     private var providerTabBar: some View {
-        HStack(spacing: 0) {
-            ForEach(providerTabs) { tab in
-                providerTabButton(tab)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(providerTabs) { tab in
+                    providerTabButton(tab)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -195,11 +209,12 @@ struct FoodItemsSelectionView: View {
                 .frame(width: 14, height: 14)
 
                 // Constant weight keeps the text metrics stable across selection changes.
-                Text(tab.provider.shortDisplayName)
+                Text("\(tab.provider.openRouterShortDisplayName) · \(tab.provider.openRouterProviderName)")
                     .font(.footnote.weight(.medium))
                     .foregroundColor(isSelected ? .primary : .secondary)
             }
-            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
@@ -208,6 +223,8 @@ struct FoodItemsSelectionView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(tab.provider)
+        .help(tab.provider)
     }
 
     // MARK: - Nutrient Helpers

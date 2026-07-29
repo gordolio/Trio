@@ -11,6 +11,7 @@ enum OpenAIServiceError: LocalizedError {
     case invalidResponse(statusCode: Int)
     case decodingError(Error)
     case noContentInResponse
+    case incompatibleModel(String)
     /// The OpenRouter account is out of credit.
     case insufficientCredits
 
@@ -34,6 +35,8 @@ enum OpenAIServiceError: LocalizedError {
             return NSLocalizedString("Unable to parse the AI response", comment: "Error when response parsing fails")
         case .noContentInResponse:
             return NSLocalizedString("No content returned from AI", comment: "Error when AI returns empty response")
+        case let .incompatibleModel(modelID):
+            return String(localized: "\(modelID) is unavailable or does not support image analysis with structured responses.")
         case .insufficientCredits:
             return NSLocalizedString(
                 "The AI provider is out of credits.",
@@ -444,18 +447,15 @@ enum FoodAnalysisRequestBuilder {
 
 /// Service for interacting with OpenRouter's OpenAI-compatible API.
 final class OpenRouterService: AIProviderService {
-    static let openAI = OpenRouterService(modelSet: AIProviderType.openai.modelSet)
-    static let claude = OpenRouterService(modelSet: AIProviderType.claude.modelSet)
-
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenRouterService")
     private let session: URLSession
     private let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let modelSet: OpenRouterModelSet
+    private let modelID: String
 
-    init(modelSet: OpenRouterModelSet, session: URLSession = .shared) {
-        self.modelSet = modelSet
+    init(modelID: String, session: URLSession = .shared) {
+        self.modelID = modelID
         self.session = session
     }
 
@@ -581,7 +581,7 @@ final class OpenRouterService: AIProviderService {
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
                     let chatRequest = OpenAIChatRequest(
-                        model: self.modelSet.primaryModel,
+                        model: self.modelID,
                         messages: messages,
                         maxTokens: 1500,
                         responseFormat: OpenAIResponseFormat(
@@ -714,7 +714,7 @@ final class OpenRouterService: AIProviderService {
         ])
 
         let chatRequest = OpenAIChatRequest(
-            model: modelSet.primaryModel,
+            model: modelID,
             messages: [
                 OpenAIMessage(
                     role: "user",
@@ -849,7 +849,7 @@ final class OpenRouterService: AIProviderService {
         )
 
         let chatRequest = OpenAIChatRequest(
-            model: modelSet.classifierModel,
+            model: OpenRouterModels.utilityModelID,
             messages: messages,
             maxTokens: 200,
             responseFormat: OpenAIResponseFormat(
@@ -954,7 +954,7 @@ final class OpenRouterService: AIProviderService {
         ]
 
         let chatRequest = OpenAIChatRequest(
-            model: modelSet.primaryModel,
+            model: modelID,
             messages: messages,
             maxTokens: 1500,
             responseFormat: OpenAIResponseFormat(

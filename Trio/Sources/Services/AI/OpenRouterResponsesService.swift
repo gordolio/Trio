@@ -119,18 +119,15 @@ private struct NutritionSearchResponse: Decodable {
 
 /// Service for restaurant food detection and published nutrition lookup.
 final class OpenRouterResponsesService: AIResponsesProviderService {
-    static let openAI = OpenRouterResponsesService(modelSet: AIProviderType.openai.modelSet)
-    static let claude = OpenRouterResponsesService(modelSet: AIProviderType.claude.modelSet)
-
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "OpenRouterResponsesService")
     private let session: URLSession
     private let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private let modelSet: OpenRouterModelSet
+    private let modelID: String
 
-    init(modelSet: OpenRouterModelSet, session: URLSession = .shared) {
-        self.modelSet = modelSet
+    init(modelID: String, session: URLSession = .shared) {
+        self.modelID = modelID
         self.session = session
     }
 
@@ -162,7 +159,7 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         let systemPrompt = AIPromptSettings.Prompt.restaurantClassification.value
 
         let chatRequest = OpenAIChatRequest(
-            model: modelSet.classifierModel,
+            model: OpenRouterModels.utilityModelID,
             messages: [
                 OpenAIMessage(role: "system", content: [.text(systemPrompt)]),
                 OpenAIMessage(role: "user", content: [.text(description)])
@@ -220,6 +217,11 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         restaurantName: String,
         menuItemName: String
     ) async throws -> PublishedNutritionResult {
+        let catalog = OpenRouterModelCatalogService.shared.cachedModels
+        if !catalog.isEmpty,
+           catalog.first(where: { $0.id == modelID })?.supportsTools != true {
+            throw OpenAIServiceError.incompatibleModel(modelID)
+        }
         let apiKey = try getAPIKey()
 
         os_log(
@@ -240,7 +242,7 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         ])
 
         let searchRequest = OpenRouterWebSearchRequest(
-            model: modelSet.primaryModel,
+            model: modelID,
             messages: [OpenAIMessage(role: "user", content: [.text(inputPrompt)])],
             maxTokens: 2000,
             responseFormat: OpenAIResponseFormat(

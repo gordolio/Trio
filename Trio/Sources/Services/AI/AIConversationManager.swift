@@ -46,21 +46,19 @@ final class AIConversationManager: ObservableObject {
     /// Source URL for published nutrition data
     var publishedSourceURL: String?
 
-    /// When set, every AI call this manager makes is routed to the specified provider
-    /// instead of the globally-selected one. Used by the multi-provider comparison mode
-    /// so each per-provider manager keeps talking to its own backend.
-    var providerOverride: AIProviderType?
+    /// Every follow-up remains bound to the model that produced this result.
+    var modelID: String?
 
     private var chatService: AIProviderService {
-        if let providerOverride = providerOverride {
-            return AIServiceRegistry.chat(for: providerOverride)
+        if let modelID {
+            return AIServiceRegistry.chat(for: modelID)
         }
         return AIServiceRegistry.chat
     }
 
     private var responsesService: AIResponsesProviderService {
-        if let providerOverride = providerOverride {
-            return AIServiceRegistry.responses(for: providerOverride)
+        if let modelID {
+            return AIServiceRegistry.responses(for: modelID)
         }
         return AIServiceRegistry.responses
     }

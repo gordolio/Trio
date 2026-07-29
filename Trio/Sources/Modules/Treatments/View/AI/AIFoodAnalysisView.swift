@@ -13,6 +13,11 @@ struct AIFoodAnalysisView: View {
     @State private var selectedImage: UIImage?
     @State private var isFoodItemsExpanded = false
 
+    private var isDisplayedModelAnalyzing: Bool {
+        guard let modelID = state.displayedProvider else { return state.isAnalyzingFood }
+        return state.perProviderAnalyzing[modelID] == true
+    }
+
     var body: some View {
         Group {
             if !state.isInAIMode {
@@ -24,7 +29,7 @@ struct AIFoodAnalysisView: View {
                     action: { showPhotoSourcePicker = true }
                 )
                 .padding(.bottom, 4)
-            } else if state.foodItemSelection == nil, state.foodItemSelections.isEmpty,
+            } else if state.foodItemSelection == nil, state.foodItemSelections.isEmpty, state.activeProviders.isEmpty,
                       let imageData = state.capturedImageData
             {
                 // Keep the description form visible while the real primary analysis
@@ -41,12 +46,10 @@ struct AIFoodAnalysisView: View {
                         provisionalError: state.provisionalFoodAnalysisError,
                         onContinue: {
                             state.isAnalyzingFood = true
-                            Task {
-                                await state.analyzeFood(
-                                    imageData: imageData,
-                                    description: state.foodDescription.isEmpty ? nil : state.foodDescription
-                                )
-                            }
+                            state.startFoodAnalysis(
+                                imageData: imageData,
+                                description: state.foodDescription.isEmpty ? nil : state.foodDescription
+                            )
                         },
                         onCancel: {
                             guard !state.isAnalyzingFood else { return }
@@ -62,34 +65,34 @@ struct AIFoodAnalysisView: View {
                         analysisOverlay
                     }
                 }
-            } else if state.foodItemSelection != nil || !state.foodItemSelections.isEmpty {
+            } else if state.foodItemSelection != nil || !state.foodItemSelections.isEmpty || !state.activeProviders.isEmpty {
                 // Food items selection tree (shown during streaming and after completion)
                 VStack(spacing: 0) {
                     FoodItemsSelectionView(
                         selection: $state.foodItemSelection,
                         isExpanded: $isFoodItemsExpanded,
                         pendingItemIds: state.pendingItemIds,
-                        providerTabs: state.activeProviders.count > 1
-                            ? state.activeProviders.map { provider in
+                        providerTabs: state.activeProviders.map { provider in
                                 FoodProviderTab(
                                     provider: provider,
-                                    isAnalyzing: state.perProviderAnalyzing[provider] ?? false
+                                    isAnalyzing: state.perProviderAnalyzing[provider] ?? false,
+                                    error: state.perProviderErrors[provider]
                                 )
-                            }
-                            : [],
+                            },
                         selectedProvider: state.displayedProvider,
                         onSelectProvider: { provider in
                             state.switchDisplayedProvider(to: provider)
                         },
+                        onRetryProvider: { provider in state.retryAnalysis(for: provider) },
                         onToggleItem: { itemId in
                             state.toggleFoodItem(itemId)
                         },
-                        onEditItem: state.isAnalyzingFood ? nil : { itemId, newDescription in
+                        onEditItem: isDisplayedModelAnalyzing ? nil : { itemId, newDescription in
                             Task {
                                 await state.editFoodItemDescription(itemId, newDescription: newDescription)
                             }
                         },
-                        onOpenChat: state.isAnalyzingFood ? nil : onOpenChat,
+                        onOpenChat: isDisplayedModelAnalyzing ? nil : onOpenChat,
                         onAcceptPublished: { itemId in
                             state.acceptPublishedNutrition(for: itemId)
                         },
@@ -98,7 +101,7 @@ struct AIFoodAnalysisView: View {
                         }
                     )
 
-                    if let selection = state.foodItemSelection, !state.isAnalyzingFood {
+                    if let selection = state.foodItemSelection, !isDisplayedModelAnalyzing {
                         ForEach(selection.selectedItems) { item in
                             ServingPickerView(
                                 item: item,
@@ -111,7 +114,7 @@ struct AIFoodAnalysisView: View {
                         .padding(.top, 6)
                     }
 
-                    if state.isAnalyzingFood {
+                    if isDisplayedModelAnalyzing {
                         HStack(spacing: 6) {
                             AnimatedSparkleIcon(isAnimating: true)
                             Text("Analyzing\u{2026}")

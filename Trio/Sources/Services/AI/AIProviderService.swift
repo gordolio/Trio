@@ -57,34 +57,27 @@ protocol AIResponsesProviderService {
 
 // MARK: - Registry
 
-/// Routes both provider choices through OpenRouter using the selected model set.
+/// Creates OpenRouter services bound to one stable model ID.
 enum AIServiceRegistry {
     static var chat: AIProviderService {
-        chat(for: currentProvider())
+        chat(for: currentModelID())
     }
 
     static var responses: AIResponsesProviderService {
-        responses(for: currentProvider())
+        responses(for: currentModelID())
     }
 
-    static func chat(for provider: AIProviderType) -> AIProviderService {
-        switch provider {
-        case .openai: return OpenRouterService.openAI
-        case .claude: return OpenRouterService.claude
-        }
+    static func chat(for modelID: String) -> AIProviderService {
+        OpenRouterService(modelID: modelID)
     }
 
-    static func responses(for provider: AIProviderType) -> AIResponsesProviderService {
-        switch provider {
-        case .openai: return OpenRouterResponsesService.openAI
-        case .claude: return OpenRouterResponsesService.claude
-        }
+    static func responses(for modelID: String) -> AIResponsesProviderService {
+        OpenRouterResponsesService(modelID: modelID)
     }
 
-    /// Reads the persisted provider choice, falling back to OpenAI through OpenRouter.
-    private static func currentProvider() -> AIProviderType {
+    private static func currentModelID() -> String {
         let storage = BaseFileStorage()
         let settings = storage.retrieve(OpenAPS.Trio.settings, as: TrioSettings.self)
-        return settings?.aiProvider ?? .openai
+        return settings?.openRouterModelConfiguration.defaultModelID ?? OpenRouterModels.defaultModelID
     }
 }
