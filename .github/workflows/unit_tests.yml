@@ -21,16 +21,11 @@ on:
       - '**.txt'
 
 jobs:
-  # Guards the TrioAlgorithm SPM package declared in Package.swift.
+  # Guards the TrioAlgorithm SPM package declared in AlgorithmPackage/Package.swift.
   #
-  # Package.swift is a "shadow" package: it compiles a hand-enumerated subset of
-  # the app's sources so the oref algorithm builds standalone on macOS, which is
-  # what lets CLI tools replay recorded inputs against it.
-  #
-  # The `test` job below cannot catch drift in that list, because the Xcode
-  # target globs whole directories. Any commit that adds a cross-file dependency
-  # inside an already-listed file breaks `swift test` while `test` stays green.
-  # This job is the only thing that notices.
+  # The `test` job cannot catch drift in that hand-enumerated source list: the
+  # Xcode target globs whole directories, so a new cross-file dependency breaks
+  # `swift test` while `test` stays green. This job is the only thing that notices.
   #
   # Runs in parallel with `test` and needs no simulator, so it reports in well
   # under a minute.
@@ -50,27 +45,29 @@ jobs:
         with:
           fetch-depth: 1
 
+      # `-v2-` is a cache generation marker, not a version of anything.
+      # Bump it again if the cached path ever moves.
       - name: Restore cache
         id: spm-cache-restore
         uses: actions/cache/restore@v5
         with:
-          path: .build
-          key: ${{ runner.os }}-spm-algorithm-${{ hashFiles('Package.swift', 'Trio/Sources/**/*.swift', 'TrioTests/OpenAPSSwiftTests/**/*.swift') }}
+          path: AlgorithmPackage/.build
+          key: ${{ runner.os }}-spm-algorithm-v2-${{ hashFiles('AlgorithmPackage/Package.swift', 'Trio/Sources/**/*.swift', 'TrioTests/OpenAPSSwiftTests/**/*.swift') }}
           restore-keys: |
-            ${{ runner.os }}-spm-algorithm-
+            ${{ runner.os }}-spm-algorithm-v2-
 
       - name: Show Swift version
         run: swift --version
 
       - name: Run algorithm tests
-        run: time swift test
+        run: time swift test --package-path AlgorithmPackage
 
       - name: Save cache
         if: always() && steps.spm-cache-restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: .build
-          key: ${{ runner.os }}-spm-algorithm-${{ hashFiles('Package.swift', 'Trio/Sources/**/*.swift', 'TrioTests/OpenAPSSwiftTests/**/*.swift') }}
+          path: AlgorithmPackage/.build
+          key: ${{ runner.os }}-spm-algorithm-v2-${{ hashFiles('AlgorithmPackage/Package.swift', 'Trio/Sources/**/*.swift', 'TrioTests/OpenAPSSwiftTests/**/*.swift') }}
 
       - name: Annotate algorithm package results
         if: always()
@@ -83,11 +80,11 @@ jobs:
             {
               echo "## ❌ Algorithm package (\`swift test\`) failed"
               echo ""
-              echo "\`Package.swift\` enumerates its sources by hand, so it drifts when a"
-              echo "listed file gains a dependency on a file that is not listed."
+              echo "\`AlgorithmPackage/Package.swift\` enumerates its sources by hand, so it"
+              echo "drifts when a listed file gains a dependency on a file that is not listed."
               echo ""
               echo "If the error is \`cannot find 'X' in scope\`, add the file declaring \`X\`"
-              echo "to \`algorithmModels\` or \`algorithmHelpers\` in \`Package.swift\`."
+              echo "to \`algorithmModels\` or \`algorithmHelpers\` in that manifest."
             } >> $GITHUB_STEP_SUMMARY
           fi
         shell: bash

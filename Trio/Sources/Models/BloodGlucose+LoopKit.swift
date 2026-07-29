@@ -5,7 +5,7 @@ import LoopKit
 // LoopKit/HealthKit adapter for `BloodGlucose`.
 //
 // Kept out of `BloodGlucose.swift` so that the model itself stays Foundation-only and can be
-// compiled by the algorithm package (see the repo-root `Package.swift`). Consumed by
+// compiled by the algorithm package (see `AlgorithmPackage/Package.swift`). Consumed by
 // `GlucoseStorage`.
 extension BloodGlucose {
     func convertStoredGlucoseSample(isManualGlucose: Bool) -> StoredGlucoseSample {

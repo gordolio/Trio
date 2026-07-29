@@ -7,11 +7,17 @@ import PackageDescription
 // This is a "shadow" package: it compiles the *existing* files in
 // place rather than owning its own copy, so there is exactly one
 // copy of every source file and the Xcode app target keeps
-// compiling the same ones.
+// compiling the same ones. `Sources` and `OpenAPSSwiftTests` are
+// symlinks back to Trio/Sources and TrioTests/OpenAPSSwiftTests.
+//
+// This lives in a subdirectory, not the repo root, because Xcode
+// prefers a root Package.swift over Trio.xcworkspace when opening
+// a folder — a root manifest makes `xed .` open the package and
+// hides every app scheme.
 //
 // Usage:
-//   swift test                            # whole algorithm suite
-//   swift test --filter IobGenerateTests  # one suite
+//   swift test --package-path AlgorithmPackage
+//   swift test --package-path AlgorithmPackage --filter IobGenerateTests
 
 let algorithmModels = [
     "Autosens",
@@ -54,7 +60,7 @@ let package = Package(
     targets: [
         .target(
             name: "Trio",
-            path: "Trio/Sources",
+            path: "Sources",
             sources: [
                 "APS/OpenAPSSwift",
                 "APS/Extensions/DecimalExtensions.swift"
@@ -64,7 +70,7 @@ let package = Package(
         .testTarget(
             name: "OpenAPSSwiftTests",
             dependencies: ["Trio"],
-            path: "TrioTests/OpenAPSSwiftTests",
+            path: "OpenAPSSwiftTests",
             resources: [.copy("json")],
             swiftSettings: [.define("TRIO_ALGORITHM_PACKAGE")]
         )

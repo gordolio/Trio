@@ -13,7 +13,7 @@ These instructions allow you to build Trio without having access to a Mac.
 >
 > * automatically checks for updates weekly and if updates are found, it will build a new version of the app
 >   - even when there are no updates, it builds on the second Sunday of the month
-> * with each scheduled weekly run, a successful build log appears - if the time is very short, it did not need to build - only the longer actions (>10 minutes) built a new app
+> *  if a scheduled run finds nothing new to build, the run is cancelled and shows as cancelled (grey) in the Actions list - a green check always means a new build was made and uploaded to TestFlight
 >
 > The [**Optional**](#optional) section provides instructions to modify the default behavior if desired.
 

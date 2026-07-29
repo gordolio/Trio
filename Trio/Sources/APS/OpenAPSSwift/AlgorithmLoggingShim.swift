@@ -3,10 +3,10 @@ import Foundation
 // MARK: - Package-only logging shim
 
 //
-// This file exists solely for the `Trio` SPM target declared in the repo-root
-// `Package.swift`, which compiles the oref algorithm (plus its models) as a
-// standalone macOS-capable module so `swift test` can run the algorithm suite
-// without building the iOS app or booting a simulator.
+// This file exists solely for the `Trio` SPM target declared in
+// `AlgorithmPackage/Package.swift`, which compiles the oref algorithm (plus its
+// models) as a standalone macOS-capable module so `swift test` can run the
+// algorithm suite without building the iOS app or booting a simulator.
 //
 
 #if TRIO_ALGORITHM_PACKAGE

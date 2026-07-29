@@ -4,7 +4,7 @@ import LoopKit
 // LoopKit adapter for `EventType`.
 //
 // Kept out of `PumpHistoryEvent.swift` so that the model itself stays Foundation-only and can be
-// compiled by the algorithm package (see the repo-root `Package.swift`). Consumed by
+// compiled by the algorithm package (see `AlgorithmPackage/Package.swift`). Consumed by
 // `TidepoolManager`.
 extension EventType {
     func mapEventTypeToPumpEventType() -> PumpEventType? {
