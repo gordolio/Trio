@@ -28,10 +28,18 @@ extension AIServiceSettings {
                     Button {
                         showingModelPicker = true
                     } label: {
-                        Label("Add Model", systemImage: "plus.circle")
+                        if state.isLoadingCatalog {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Loading Models…")
+                            }
+                        } else {
+                            Label("Add Model", systemImage: "plus.circle")
+                        }
                     }
                     .disabled(
-                        state.modelConfiguration.selectedModelIDs.count >= OpenRouterModelConfiguration.maximumModelCount
+                        state.isLoadingCatalog ||
+                            state.modelConfiguration.selectedModelIDs.count >= OpenRouterModelConfiguration.maximumModelCount
                     )
                 }
                 .listRowBackground(Color.chart)
@@ -81,7 +89,7 @@ extension AIServiceSettings {
             .onAppear(perform: configureView)
             .task { await state.refreshCatalog() }
             .sheet(isPresented: $showingModelPicker) {
-                ModelPickerView(state: state, isPresented: $showingModelPicker)
+                ModelPickerView(state: state)
             }
         }
 
@@ -126,17 +134,23 @@ extension AIServiceSettings {
 
 private struct ModelPickerView: View {
     @ObservedObject var state: AIServiceSettings.StateModel
-    @Binding var isPresented: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var models: [OpenRouterModel]
     @State private var searchText = ""
     @State private var selectedProvider = "All"
     @State private var favoritesOnly = false
 
+    init(state: AIServiceSettings.StateModel) {
+        _state = ObservedObject(wrappedValue: state)
+        _models = State(initialValue: OpenRouterModelCatalogService.normalizedModels(state.catalogModels))
+    }
+
     private var providers: [String] {
-        ["All"] + Array(Set(state.catalogModels.map(\.providerName))).sorted()
+        ["All"] + Array(Set(models.map(\.providerName))).sorted()
     }
 
     private var filteredModels: [OpenRouterModel] {
-        state.catalogModels
+        models
             .filter(\.isFoodAnalysisCompatible)
             .filter { selectedProvider == "All" || $0.providerName == selectedProvider }
             .filter { !favoritesOnly || state.favoriteModelIDs.contains($0.id) }
@@ -147,38 +161,48 @@ private struct ModelPickerView: View {
             .sorted {
                 let lhsFavorite = state.favoriteModelIDs.contains($0.id)
                 let rhsFavorite = state.favoriteModelIDs.contains($1.id)
-                return lhsFavorite == rhsFavorite ? $0.name < $1.name : lhsFavorite
+                guard lhsFavorite == rhsFavorite else { return lhsFavorite }
+                let nameOrder = $0.name.localizedCaseInsensitiveCompare($1.name)
+                return nameOrder == .orderedSame ? $0.id < $1.id : nameOrder == .orderedAscending
             }
     }
 
     var body: some View {
         NavigationStack {
-            List {
-                if let catalogError = state.catalogError {
-                    Text(catalogError)
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                }
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if let catalogError = state.catalogError {
+                        Text(catalogError)
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    }
 
-                ForEach(filteredModels) { model in
-                    ModelCatalogRow(
-                        model: model,
-                        isFavorite: state.favoriteModelIDs.contains(model.id),
-                        isSelected: state.modelConfiguration.selectedModelIDs.contains(model.id),
-                        onFavorite: { state.toggleFavorite(model.id) },
-                        onSelect: {
-                            state.addModel(model.id)
-                            isPresented = false
-                        }
-                    )
+                    ForEach(filteredModels, id: \.id) { model in
+                        ModelCatalogRow(
+                            model: model,
+                            isFavorite: state.favoriteModelIDs.contains(model.id),
+                            isSelected: state.modelConfiguration.selectedModelIDs.contains(model.id),
+                            onFavorite: { state.toggleFavorite(model.id) },
+                            onSelect: {
+                                state.addModel(model.id)
+                                dismiss()
+                            }
+                        )
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 70)
+                    }
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .searchable(text: $searchText, prompt: "Search models")
             .navigationTitle("OpenRouter Models")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { isPresented = false }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { favoritesOnly.toggle() } label: {
@@ -194,7 +218,7 @@ private struct ModelPickerView: View {
                 }
             }
             .overlay {
-                if state.isLoadingCatalog, state.catalogModels.isEmpty {
+                if state.isLoadingCatalog, models.isEmpty {
                     ProgressView("Loading OpenRouter models…")
                 } else if filteredModels.isEmpty {
                     Text("No compatible models match these filters.")
@@ -202,6 +226,11 @@ private struct ModelPickerView: View {
                         .multilineTextAlignment(.center)
                         .padding()
                 }
+            }
+            .task {
+                guard models.isEmpty else { return }
+                await state.refreshCatalog()
+                models = OpenRouterModelCatalogService.normalizedModels(state.catalogModels)
             }
         }
     }
@@ -219,6 +248,7 @@ private struct ModelCatalogRow: View {
             Button(action: onFavorite) {
                 Image(systemName: isFavorite ? "star.fill" : "star")
                     .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(isFavorite ? "Remove favorite" : "Add favorite")

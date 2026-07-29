@@ -151,7 +151,7 @@ struct OpenRouterModel: JSON, Identifiable, Equatable {
     var isFoodAnalysisCompatible: Bool { supportsImages && supportsStructuredResponses }
 
     func pricePerMillionTokens(_ value: String?) -> String? {
-        guard let value, let decimal = Decimal(string: value) else { return nil }
+        guard let value, let decimal = Decimal(string: value), decimal >= 0 else { return nil }
         return NSDecimalNumber(decimal: decimal * 1_000_000).stringValue
     }
 }
@@ -182,7 +182,7 @@ final class OpenRouterModelCatalogService {
     var cachedModels: [OpenRouterModel] {
         guard let data = defaults.data(forKey: cacheKey),
               let cache = try? JSONDecoder().decode(Cache.self, from: data) else { return [] }
-        return cache.models
+        return Self.normalizedModels(cache.models)
     }
 
     var favoriteModelIDs: Set<String> {
@@ -196,11 +196,20 @@ final class OpenRouterModelCatalogService {
               (200 ... 299).contains(httpResponse.statusCode) else {
             throw OpenAIServiceError.invalidResponse(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
         }
-        let models = try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data).data
+        let decodedModels = try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data).data
+        let models = Self.normalizedModels(decodedModels)
         if let cache = try? JSONEncoder().encode(Cache(models: models, savedAt: Date())) {
             defaults.set(cache, forKey: cacheKey)
         }
         return models
+    }
+
+    static func normalizedModels(_ models: [OpenRouterModel]) -> [OpenRouterModel] {
+        var seen = Set<String>()
+        return models.filter { model in
+            let id = model.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !id.isEmpty && seen.insert(model.id).inserted
+        }
     }
 }
 

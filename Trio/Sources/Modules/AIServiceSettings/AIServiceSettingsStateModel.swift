@@ -20,7 +20,10 @@ extension AIServiceSettings {
             isLoadingCatalog = true
             defer { isLoadingCatalog = false }
             do {
-                catalogModels = try await catalogService.loadModels()
+                let models = try await catalogService.loadModels()
+                if catalogModels != models {
+                    catalogModels = models
+                }
                 catalogError = nil
             } catch {
                 catalogError = String(localized: "Could not refresh the OpenRouter catalog. Showing cached models when available.")

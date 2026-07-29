@@ -133,7 +133,9 @@ import Testing
         #expect(vision.supportsTools)
         #expect(vision.isFoodAnalysisCompatible)
         #expect(vision.pricePerMillionTokens(vision.pricing?.prompt) == "1")
+        #expect(vision.pricePerMillionTokens("-1") == nil)
         #expect(!catalog.data[1].isFoodAnalysisCompatible)
+        #expect(OpenRouterModelCatalogService.normalizedModels([vision, vision]) == [vision])
     }
 
     @Test("Favorites persist independently of catalog availability") func favoritesPersist() {
