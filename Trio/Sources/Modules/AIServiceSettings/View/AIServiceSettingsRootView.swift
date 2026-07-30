@@ -111,8 +111,6 @@ extension AIServiceSettings {
                         .lineLimit(2)
                 }
                 Spacer()
-                Image(systemName: "line.3.horizontal")
-                    .foregroundStyle(.tertiary)
             }
         }
 
