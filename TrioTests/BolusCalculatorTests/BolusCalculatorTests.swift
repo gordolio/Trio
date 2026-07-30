@@ -424,6 +424,13 @@ import Testing
         )
     }
 
+    @Test("Suppress auto-applied bolus when its forecast is very low")
+    func testAutoAppliedBolusForecastGuard() {
+        #expect(Treatments.StateModel.shouldSuppressAutoAppliedBolus(candidate: 1.4, minPredBG: 53))
+        #expect(!Treatments.StateModel.shouldSuppressAutoAppliedBolus(candidate: 1.4, minPredBG: 54))
+        #expect(!Treatments.StateModel.shouldSuppressAutoAppliedBolus(candidate: 0, minPredBG: 53))
+    }
+
     @Test("Calculate insulin with stale loop (longer than 15min ago)") func testStaleLoopBolusCalculation() async throws {
         // STEP 1: Setup test scenario
         // We need to provide a CalculationInput struct

@@ -92,6 +92,7 @@ extension Treatments {
         var useFattyMealCorrectionFactor: Bool = false
         var displayPresets: Bool = true
         var confirmBolus: Bool = false
+        var recommendedBolusForecastIsVeryLow: Bool = false
 
         var currentBasal: Decimal = 0
         var currentCarbRatio: Decimal = 0
@@ -322,6 +323,7 @@ extension Treatments {
         /// In-flight work started by this instance; cancelled in `cleanupTreatmentState()`.
         @ObservationIgnored private var setupTask: Task<Void, Never>?
         @ObservationIgnored private var determinationUpdateTask: Task<Void, Never>?
+        @ObservationIgnored private var recommendationRevision = 0
 
         func cleanupTreatmentState() {
             guard !hasCleanedUp else { return }
@@ -543,7 +545,7 @@ extension Treatments {
         // MARK: CALCULATIONS FOR THE BOLUS CALCULATOR
 
         /// Calculate insulin recommendation
-        func calculateInsulin() async -> Decimal {
+        func calculateInsulin(expectedRecommendationRevision: Int? = nil) async -> Decimal {
             // Safely get minPredBG on main thread
             let localMinPredBG = await MainActor.run {
                 minPredBG
@@ -571,11 +573,15 @@ extension Treatments {
                 isBackdated: isBackdated
             )
 
-            // A superseded run must not overwrite the breakdown a newer run published.
-            guard !Task.isCancelled else { return apsManager.roundBolus(amount: result.insulinCalculated) }
+            guard !Task.isCancelled else {
+                return apsManager.roundBolus(amount: result.insulinCalculated)
+            }
 
-            // Update state properties with calculation results on main thread
-            await MainActor.run {
+            // A superseded run must not overwrite the breakdown a newer run published.
+            let didPublish = await MainActor.run {
+                guard expectedRecommendationRevision == nil || expectedRecommendationRevision == recommendationRevision else {
+                    return false
+                }
                 targetDifference = result.targetDifference
                 targetDifferenceInsulin = result.targetDifferenceInsulin
                 wholeCob = result.wholeCob
@@ -585,9 +591,84 @@ extension Treatments {
                 wholeCalc = result.wholeCalc
                 factoredInsulin = result.factoredInsulin
                 fifteenMinInsulin = result.fifteenMinutesInsulin
+                return true
+            }
+            guard didPublish else {
+                return apsManager.roundBolus(amount: result.insulinCalculated)
             }
 
             return apsManager.roundBolus(amount: result.insulinCalculated)
+        }
+
+        /// Calculates from a zero-bolus forecast, then validates the auto-applied dose against
+        /// the forecast that includes that dose. This keeps the recommendation and forecast in sync.
+        @MainActor func calculateAndApplyInsulin(baselineForecast: Determination? = nil) async {
+            recommendationRevision += 1
+            let revision = recommendationRevision
+            recommendedBolusForecastIsVeryLow = false
+
+            if let baselineForecast {
+                await updateForecasts(with: baselineForecast, expectedRecommendationRevision: revision)
+            } else {
+                await updateForecasts(simulatedBolusAmount: 0, expectedRecommendationRevision: revision)
+            }
+            guard !Task.isCancelled, isActive, revision == recommendationRevision else { return }
+
+            let candidate = await calculateInsulin(expectedRecommendationRevision: revision)
+            guard !Task.isCancelled, isActive, revision == recommendationRevision else { return }
+
+            guard candidate > 0 else {
+                insulinCalculated = 0
+                amount = 0
+                return
+            }
+
+            let candidateForecast = await apsManager.simulateDetermineBasal(
+                simulatedCarbsAmount: carbs,
+                simulatedBolusAmount: candidate,
+                simulatedCarbsDate: date
+            )
+            guard !Task.isCancelled, isActive, revision == recommendationRevision else { return }
+
+            guard let candidateForecast,
+                  let candidateMinPredBG = candidateForecast.minPredBG ?? candidateForecast.minPredBGFromReason
+            else {
+                insulinCalculated = 0
+                amount = 0
+                return
+            }
+
+            if Self.shouldSuppressAutoAppliedBolus(
+                candidate: candidate,
+                minPredBG: candidateMinPredBG
+            ) {
+                recommendedBolusForecastIsVeryLow = true
+                insulinCalculated = 0
+                amount = 0
+                return
+            }
+
+            insulinCalculated = candidate
+            amount = candidate
+            await updateForecasts(
+                with: candidateForecast,
+                updateGlucoseValues: true,
+                expectedRecommendationRevision: revision
+            )
+        }
+
+        @MainActor
+        @discardableResult
+        func invalidateRecommendation(clearSuppressedWarning: Bool = false) -> Int {
+            recommendationRevision += 1
+            if clearSuppressedWarning {
+                recommendedBolusForecastIsVeryLow = false
+            }
+            return recommendationRevision
+        }
+
+        static func shouldSuppressAutoAppliedBolus(candidate: Decimal, minPredBG: Decimal?) -> Bool {
+            candidate > 0 && minPredBG.map { $0 < 54 } == true
         }
 
         // MARK: - Button tasks
@@ -1418,10 +1499,9 @@ extension Treatments {
                 selectedItemIds: Array(selection.selectedItemIds)
             )
 
+            invalidateRecommendation()
             Task { @MainActor in
-                await updateForecasts()
-                insulinCalculated = await calculateInsulin()
-                amount = insulinCalculated
+                await calculateAndApplyInsulin()
             }
         }
 
@@ -1798,13 +1878,12 @@ extension Treatments.StateModel {
     /// previous in-flight run so a superseded run cannot publish stale results.
     @MainActor private func scheduleInsulinAndForecastUpdate() {
         determinationUpdateTask?.cancel()
+        invalidateRecommendation()
         determinationUpdateTask = Task { @MainActor in
-            let insulinCalculated = await self.calculateInsulin()
-            guard !Task.isCancelled else { return }
-            self.insulinCalculated = insulinCalculated
-            self.amount = insulinCalculated
-            let forecastData = self.mapForecastsFromController()
-            await self.updateForecasts(with: forecastData)
+            let isBackdated = abs(self.date.timeIntervalSince(self.defaultDate)) > 1.0
+            await self.calculateAndApplyInsulin(
+                baselineForecast: isBackdated ? nil : self.mapForecastsFromController()
+            )
         }
     }
 
@@ -1862,7 +1941,12 @@ extension Treatments.StateModel {
 }
 
 extension Treatments.StateModel {
-    @MainActor func updateForecasts(with forecastData: Determination? = nil) async {
+    @MainActor func updateForecasts(
+        with forecastData: Determination? = nil,
+        simulatedBolusAmount: Decimal? = nil,
+        updateGlucoseValues: Bool = false,
+        expectedRecommendationRevision: Int? = nil
+    ) async {
         guard isActive else {
             return
                 debug(.bolusState, "updateForecasts not fired")
@@ -1870,26 +1954,35 @@ extension Treatments.StateModel {
 
         debug(.bolusState, "updateForecasts fired")
         if let forecastData = forecastData {
+            guard expectedRecommendationRevision == nil || expectedRecommendationRevision == recommendationRevision else {
+                return
+            }
             simulatedDetermination = forecastData
+            if updateGlucoseValues {
+                evBG = Decimal(forecastData.eventualBG ?? 0)
+                minPredBG = forecastData.minPredBG ?? forecastData.minPredBGFromReason ?? 0
+            }
             debugPrint("\(DebuggingIdentifiers.failed) minPredBG: \(minPredBG)")
         } else {
             let simulated = await Task { [self] in
                 debug(.bolusState, "calling simulateDetermineBasal to get forecast data")
                 return await apsManager.simulateDetermineBasal(
                     simulatedCarbsAmount: carbs,
-                    simulatedBolusAmount: amount,
+                    simulatedBolusAmount: simulatedBolusAmount ?? amount,
                     simulatedCarbsDate: date
                 )
             }.value
 
             // Stale minPredBG/cob from a superseded run would feed the next bolus calculation.
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isActive,
+                  expectedRecommendationRevision == nil || expectedRecommendationRevision == recommendationRevision
+            else { return }
             simulatedDetermination = simulated
 
             // Update evBG and minPredBG from simulated determination
             if let simDetermination = simulated {
                 evBG = Decimal(simDetermination.eventualBG ?? 0)
-                minPredBG = simDetermination.minPredBGFromReason ?? 0
+                minPredBG = simDetermination.minPredBG ?? simDetermination.minPredBGFromReason ?? 0
                 debugPrint("\(DebuggingIdentifiers.inProgress) minPredBG: \(minPredBG)")
             }
         }
@@ -1929,7 +2022,9 @@ extension Treatments.StateModel {
         let minResult = await minForecastResult
         let maxResult = await maxForecastResult
 
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, isActive,
+              expectedRecommendationRevision == nil || expectedRecommendationRevision == recommendationRevision
+        else { return }
 
         minForecast = minResult
         maxForecast = maxResult

@@ -830,7 +830,7 @@ struct PopupView: View {
             } else if state.currentBG < 54 {
                 Text("Glucose is very low.")
                     .warningStyle(.red)
-            } else if state.minPredBG < 54 {
+            } else if state.minPredBG < 54 || state.recommendedBolusForecastIsVeryLow {
                 Text("Glucose forecast is very low.")
                     .warningStyle(warningColor)
             } else if state.factoredInsulin > state.maxBolus, state.maxBolus <= iobAvailable {

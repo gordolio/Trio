@@ -90,12 +90,11 @@ extension Treatments {
 
         /// Handles macro input (carb, fat, protein) in a debounced fashion.
         func handleDebouncedInput() {
+            state.invalidateRecommendation()
             debounce?.cancel()
             debounce = DispatchWorkItem { [self] in
                 Task {
-                    await state.updateForecasts()
-                    state.insulinCalculated = await state.calculateInsulin()
-                    state.amount = state.insulinCalculated
+                    await state.calculateAndApplyInsulin()
                 }
             }
             if let debounce = debounce {
@@ -315,12 +314,9 @@ extension Treatments {
                                         ).controlSize(.mini)
                                             .labelsHidden()
                                             .onChange(of: state.date) { _, _ in
-                                                // Trigger simulation when date changes to update forecasts for backdated carbs
+                                                state.invalidateRecommendation()
                                                 Task {
-                                                    // `updateForecasts()` does update the `simulatedDetermination` of type `Determination?` var on the main thread, so I can use this to pass its cob value into the bolus calc manager
-                                                    await state.updateForecasts()
-                                                    state.insulinCalculated = await state.calculateInsulin()
-                                                    state.amount = state.insulinCalculated
+                                                    await state.calculateAndApplyInsulin()
                                                 }
                                             }
                                         Button {
@@ -351,12 +347,12 @@ extension Treatments {
                                             .toggleStyle(RadioButtonToggleStyle())
                                             .font(.footnote)
                                             .onChange(of: state.useFattyMealCorrectionFactor) {
+                                                state.invalidateRecommendation()
+                                                if state.useFattyMealCorrectionFactor {
+                                                    state.useSuperBolus = false
+                                                }
                                                 Task {
-                                                    state.insulinCalculated = await state.calculateInsulin()
-                                                    state.amount = state.insulinCalculated
-                                                    if state.useFattyMealCorrectionFactor {
-                                                        state.useSuperBolus = false
-                                                    }
+                                                    await state.calculateAndApplyInsulin()
                                                 }
                                             }
                                         }
@@ -367,12 +363,12 @@ extension Treatments {
                                             .toggleStyle(RadioButtonToggleStyle())
                                             .font(.footnote)
                                             .onChange(of: state.useSuperBolus) {
+                                                state.invalidateRecommendation()
+                                                if state.useSuperBolus {
+                                                    state.useFattyMealCorrectionFactor = false
+                                                }
                                                 Task {
-                                                    state.insulinCalculated = await state.calculateInsulin()
-                                                    state.amount = state.insulinCalculated
-                                                    if state.useSuperBolus {
-                                                        state.useFattyMealCorrectionFactor = false
-                                                    }
+                                                    await state.calculateAndApplyInsulin()
                                                 }
                                             }
                                         }
@@ -428,8 +424,11 @@ extension Treatments {
                                         unitsText: String(localized: "U", comment: "Units for bolus amount")
                                     ).focused($focusedField, equals: .bolus)
                                         .onChange(of: state.amount) {
+                                            let revision = state.invalidateRecommendation(
+                                                clearSuppressedWarning: state.amount > 0
+                                            )
                                             Task {
-                                                await state.updateForecasts()
+                                                await state.updateForecasts(expectedRecommendationRevision: revision)
                                             }
                                         }
                                 }
@@ -493,8 +492,7 @@ extension Treatments {
                 configureView {
                     state.isActive = true
                     Task { @MainActor in
-                        state.insulinCalculated = await state.calculateInsulin()
-                        state.amount = state.insulinCalculated
+                        await state.calculateAndApplyInsulin()
                     }
 
                     if PropertyPersistentFlags.shared.hasSeenFatProteinOrderChange != true {
@@ -560,10 +558,10 @@ extension Treatments {
 
         private var bolusWarning: (shouldConfirm: Bool, warningMessage: String, color: Color) {
             let isGlucoseVeryLow = state.currentBG < 54
-            let isForecastVeryLow = state.minPredBG < 54
+            let isForecastVeryLow = state.minPredBG < 54 || state.recommendedBolusForecastIsVeryLow
 
             // Only warn when enacting a bolus via pump
-            guard !state.externalInsulin, state.amount > 0 else {
+            guard !state.externalInsulin, state.amount > 0 || state.recommendedBolusForecastIsVeryLow else {
                 return (false, "", .primary)
             }
 
@@ -573,7 +571,7 @@ extension Treatments {
 
             let warningColor: Color = isGlucoseVeryLow ? .red : colorScheme == .dark ? .orange : .accentColor
 
-            let shouldConfirm = state.confirmBolus && (isGlucoseVeryLow || isForecastVeryLow)
+            let shouldConfirm = state.amount > 0 && state.confirmBolus && (isGlucoseVeryLow || isForecastVeryLow)
 
             return (shouldConfirm, warningMessage, warningColor)
         }
