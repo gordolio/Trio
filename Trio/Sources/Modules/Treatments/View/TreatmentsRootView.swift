@@ -212,6 +212,14 @@ extension Treatments {
                         }.listRowBackground(Color.chart)
 
                         Section {
+                            AIFoodAnalysisView(resolver: resolver) { nutrition in
+                                state.carbs = nutrition.carbs
+                                state.fat = nutrition.fat
+                                state.protein = nutrition.protein
+                                state.note = nutrition.note
+                                handleDebouncedInput()
+                            }
+
                             carbsTextField()
 
                             if state.useFPUconversion {
