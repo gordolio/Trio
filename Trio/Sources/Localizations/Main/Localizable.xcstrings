@@ -8251,6 +8251,16 @@
         }
       }
     },
+    "%@ · %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ · %2$@"
+          }
+        }
+      }
+    },
     "%@ (%@-%@)" : {
       "localizations" : {
         "bg" : {
@@ -9538,6 +9548,9 @@
           }
         }
       }
+    },
+    "%@ is unavailable or does not support image analysis with structured responses." : {
+
     },
     "%@ min" : {
       "localizations" : {
@@ -11840,6 +11853,9 @@
           }
         }
       }
+    },
+    "%lldK" : {
+
     },
     "•" : {
       "localizations" : {
@@ -21894,6 +21910,16 @@
         }
       }
     },
+    "$%@ input / $%@ output per 1M tokens" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "$%1$@ input / $%2$@ output per 1M tokens"
+          }
+        }
+      }
+    },
     "0 U/hr" : {
       "comment" : "when 0 U/hr",
       "extractionState" : "manual",
@@ -28169,6 +28195,9 @@
         }
       }
     },
+    "About Model Choices" : {
+
+    },
     "About Quick-Pick Boluses" : {
       "comment" : "Info sheet title for quick-pick boluses feature"
     },
@@ -31829,6 +31858,9 @@
         }
       }
     },
+    "Add favorite" : {
+
+    },
     "Add Garmin Device to Trio. This happens via Garmin Connect. If you have multiple phones with Garmin Connect and the same Garmin device, you will run into connectivity issue between watch and phone depending of proximity of the phones, which might also affect your watchface function." : {
       "localizations" : {
         "bg" : {
@@ -32853,6 +32885,9 @@
           }
         }
       }
+    },
+    "Add Model" : {
+
     },
     "Add Omnipod" : {
       "comment" : "Add Omnipod pump",
@@ -34737,9 +34772,6 @@
           }
         }
       }
-    },
-    "Adding carbs or bolusing now will invalidate the calibration test. Status: %@" : {
-
     },
     "Additional notification types" : {
       "extractionState" : "manual",
@@ -67538,9 +67570,6 @@
     "Calibration" : {
 
     },
-    "Calibration In Progress" : {
-
-    },
     "Calibration Info" : {
 
     },
@@ -75264,9 +75293,6 @@
         }
       }
     },
-    "ChatGPT" : {
-
-    },
     "Check" : {
 
     },
@@ -75904,6 +75930,9 @@
           }
         }
       }
+    },
+    "Choose 1 to 4 OpenRouter models. Drag to set tab order and tap the checkmark to choose the default model. Missing catalog entries remain configured and are never silently replaced." : {
+
     },
     "Choose a value that covers your highest insulin needs — think about a correction for a very high glucose reading plus your biggest meal bolus. This gives Trio room to work while keeping you safe." : {
       "localizations" : {
@@ -78139,12 +78168,6 @@
         }
       }
     },
-    "Claude" : {
-
-    },
-    "Claude (Anthropic)" : {
-
-    },
     "Clear" : {
       "comment" : "Button",
       "extractionState" : "manual",
@@ -79897,9 +79920,6 @@
           }
         }
       }
-    },
-    "Compare Providers" : {
-
     },
     "Completed" : {
 
@@ -85602,6 +85622,9 @@
           }
         }
       }
+    },
+    "Could not refresh the OpenRouter catalog. Showing cached models when available." : {
+
     },
     "Count" : {
       "localizations" : {
@@ -92928,6 +92951,9 @@
           }
         }
       }
+    },
+    "Default model" : {
+
     },
     "Default notification banner. Suppressed by Silence & Focus Mode by default." : {
       "localizations" : {
@@ -134293,6 +134319,9 @@
         }
       }
     },
+    "Food Analysis Models" : {
+
+    },
     "Food Description Context" : {
 
     },
@@ -170476,6 +170505,12 @@
         }
       }
     },
+    "Loading Models…" : {
+
+    },
+    "Loading OpenRouter models…" : {
+
+    },
     "Local glucose source" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -177264,6 +177299,9 @@
           }
         }
       }
+    },
+    "Make default model" : {
+
     },
     "Make sure your phone and pod are close to each other. If communication issues persist, move to a new area." : {
       "comment" : "The action string on pod status page when pod data is stale",
@@ -190243,6 +190281,12 @@
         }
       }
     },
+    "Model Execution" : {
+
+    },
+    "Models differ in capabilities, price, latency, retention policies, and downstream providers. OpenRouter catalog metadata can change; verify a model's provider terms before sending health-related images." : {
+
+    },
     "Modes" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -193784,6 +193828,9 @@
     },
     "No bolus history yet" : {
       "comment" : "Alert title when no quick-pick boluses history exists"
+    },
+    "No compatible models match these filters." : {
+
     },
     "No confidence reminders are used." : {
       "comment" : "Description for BeepPreference.silent",
@@ -204643,6 +204690,9 @@
         }
       }
     },
+    "Off loads the default model first and other model tabs only when opened. On starts every configured model immediately and may increase cost." : {
+
+    },
     "Ok" : {
       "localizations" : {
         "bg" : {
@@ -207396,9 +207446,6 @@
         }
       }
     },
-    "OpenAI" : {
-
-    },
     "OpenAPS main settings" : {
       "comment" : "Headers for settings -----------------------",
       "extractionState" : "manual",
@@ -207926,6 +207973,9 @@
     },
     "OpenRouter API key is not configured" : {
       "comment" : "Error when OpenRouter API key is missing"
+    },
+    "OpenRouter Models" : {
+
     },
     "Opens the camera to scan food in Trio" : {
       "localizations" : {
@@ -228296,6 +228346,9 @@
         }
       }
     },
+    "Remove favorite" : {
+
+    },
     "Remove Last" : {
       "localizations" : {
         "bg" : {
@@ -232192,6 +232245,9 @@
         }
       }
     },
+    "Run all models immediately" : {
+
+    },
     "Run now" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -235525,6 +235581,9 @@
         }
       }
     },
+    "Search models" : {
+
+    },
     "Search Results" : {
       "localizations" : {
         "bg" : {
@@ -238020,12 +238079,6 @@
           }
         }
       }
-    },
-    "Selects which model runs first for AI-assisted carb entry. Both models are accessed through OpenRouter." : {
-
-    },
-    "Send to all providers simultaneously" : {
-
     },
     "Sens Ratio" : {
       "comment" : "Name of the secondary attribute choice for the SwissAlpine watchface.",
@@ -258090,6 +258143,9 @@
       }
     },
     "Strong (-25)" : {
+
+    },
+    "Structured" : {
 
     },
     "Style" : {
@@ -298063,6 +298119,9 @@
         }
       }
     },
+    "Unavailable in current catalog · %@" : {
+
+    },
     "unit" : {
       "localizations" : {
         "bg" : {
@@ -306144,6 +306203,9 @@
     "View source on GitHub" : {
 
     },
+    "Vision" : {
+
+    },
     "W" : {
       "comment" : "Abbreviation for week",
       "localizations" : {
@@ -311032,9 +311094,6 @@
           }
         }
       }
-    },
-    "When enabled, both models appear as tabs. The selected model runs first; the other loads when you open its tab." : {
-
     },
     "When enabled, long-pressing the + button on the home screen opens a Quick-Pick Boluses sheet. It suggests up to three bolus amounts based on your bolus history at similar times of day, weighted by recency and day type (weekday vs. weekend)." : {
       "comment" : "Verbose hint for enable quick-pick boluses toggle, part 1"

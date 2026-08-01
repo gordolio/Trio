@@ -271,7 +271,8 @@ private struct ModelCatalogRow: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     if let input = model.pricePerMillionTokens(model.pricing?.prompt),
-                       let output = model.pricePerMillionTokens(model.pricing?.completion) {
+                       let output = model.pricePerMillionTokens(model.pricing?.completion)
+                    {
                         Text("$\(input) input / $\(output) output per 1M tokens")
                             .font(.caption2)
                             .foregroundStyle(.secondary)

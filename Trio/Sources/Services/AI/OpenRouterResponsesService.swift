@@ -219,7 +219,8 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
     ) async throws -> PublishedNutritionResult {
         let catalog = OpenRouterModelCatalogService.shared.cachedModels
         if !catalog.isEmpty,
-           catalog.first(where: { $0.id == modelID })?.supportsTools != true {
+           catalog.first(where: { $0.id == modelID })?.supportsTools != true
+        {
             throw OpenAIServiceError.incompatibleModel(modelID)
         }
         let apiKey = try getAPIKey()

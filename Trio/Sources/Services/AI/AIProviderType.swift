@@ -32,7 +32,9 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case selectedModelIDs, defaultModelID, runAllModelsSimultaneously
+        case selectedModelIDs
+        case defaultModelID
+        case runAllModelsSimultaneously
     }
 
     init(
@@ -127,7 +129,11 @@ struct OpenRouterModel: JSON, Identifiable, Equatable {
     let supportedParameters: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, description, architecture, pricing
+        case id
+        case name
+        case description
+        case architecture
+        case pricing
         case contextLength = "context_length"
         case supportedParameters = "supported_parameters"
     }
@@ -193,7 +199,8 @@ final class OpenRouterModelCatalogService {
     func loadModels() async throws -> [OpenRouterModel] {
         let (data, response) = try await session.data(from: endpoint)
         guard let httpResponse = response as? HTTPURLResponse,
-              (200 ... 299).contains(httpResponse.statusCode) else {
+              (200 ... 299).contains(httpResponse.statusCode)
+        else {
             throw OpenAIServiceError.invalidResponse(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
         }
         let decodedModels = try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data).data

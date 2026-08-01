@@ -26,7 +26,8 @@ extension AIServiceSettings {
                 }
                 catalogError = nil
             } catch {
-                catalogError = String(localized: "Could not refresh the OpenRouter catalog. Showing cached models when available.")
+                catalogError =
+                    String(localized: "Could not refresh the OpenRouter catalog. Showing cached models when available.")
             }
         }
 
