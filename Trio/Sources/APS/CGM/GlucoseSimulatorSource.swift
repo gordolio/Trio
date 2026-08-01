@@ -348,6 +348,8 @@ class OscillatingGenerator: BloodGlucoseGenerator {
         static let period: Double = 10800.0 // 3 hours in seconds
         static let noiseAmplitude: Double = 5.0
         static let produceStaleValues: Bool = false
+        /// Default target glucose delta at 90 minutes for tablet simulation (mg/dL)
+        static let tabletTargetDelta: Double = 25.0
     }
 
     /// UserDefaults keys for storing simulator parameters
@@ -357,37 +359,51 @@ class OscillatingGenerator: BloodGlucoseGenerator {
         static let period = "GlucoseSimulator_Period"
         static let noiseAmplitude = "GlucoseSimulator_NoiseAmplitude"
         static let produceStaleValues = "GlucoseSimulator_ProduceStaleValues"
+        /// TimeIntervalSince1970 when the simulated tablet was taken (0 = no active tablet)
+        static let tabletTakenDate = "GlucoseSimulator_TabletTakenDate"
+        /// Target glucose delta in mg/dL at 90 minutes after taking the tablet
+        static let tabletTargetDelta = "GlucoseSimulator_TabletTargetDelta"
     }
 
-    /// Amplitude of the oscillation (±45 mg/dL to create range from ~80 to ~170)
+    /// Amplitude of the oscillation (±45 mg/dL to create range from ~80 to ~170).
+    /// Note: 0 is a valid value (flat line), so the getter uses `object(forKey:)` nil check.
     private var amplitude: Double {
-        get { UserDefaults.standard.double(forKey: UserDefaultsKeys.amplitude) != 0 ?
-            UserDefaults.standard.double(forKey: UserDefaultsKeys.amplitude) :
-            Defaults.amplitude }
+        get {
+            UserDefaults.standard.object(forKey: UserDefaultsKeys.amplitude) != nil
+                ? UserDefaults.standard.double(forKey: UserDefaultsKeys.amplitude)
+                : Defaults.amplitude
+        }
         set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.amplitude) }
     }
 
     /// Period of the oscillation in seconds (3 hours = 10800 seconds)
     private var period: Double {
-        get { UserDefaults.standard.double(forKey: UserDefaultsKeys.period) != 0 ?
-            UserDefaults.standard.double(forKey: UserDefaultsKeys.period) :
-            Defaults.period }
+        get {
+            UserDefaults.standard.object(forKey: UserDefaultsKeys.period) != nil
+                ? UserDefaults.standard.double(forKey: UserDefaultsKeys.period)
+                : Defaults.period
+        }
         set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.period) }
     }
 
     /// Center value of the oscillation (target glucose level)
     private var centerValue: Double {
-        get { UserDefaults.standard.double(forKey: UserDefaultsKeys.centerValue) != 0 ?
-            UserDefaults.standard.double(forKey: UserDefaultsKeys.centerValue) :
-            Defaults.centerValue }
+        get {
+            UserDefaults.standard.object(forKey: UserDefaultsKeys.centerValue) != nil
+                ? UserDefaults.standard.double(forKey: UserDefaultsKeys.centerValue)
+                : Defaults.centerValue
+        }
         set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.centerValue) }
     }
 
-    /// Amplitude of random noise to add to the values (±5 mg/dL)
+    /// Amplitude of random noise to add to the values (±5 mg/dL).
+    /// Note: 0 is a valid value (no noise), so the getter uses `object(forKey:)` nil check.
     private var noiseAmplitude: Double {
-        get { UserDefaults.standard.double(forKey: UserDefaultsKeys.noiseAmplitude) != 0 ?
-            UserDefaults.standard.double(forKey: UserDefaultsKeys.noiseAmplitude) :
-            Defaults.noiseAmplitude }
+        get {
+            UserDefaults.standard.object(forKey: UserDefaultsKeys.noiseAmplitude) != nil
+                ? UserDefaults.standard.double(forKey: UserDefaultsKeys.noiseAmplitude)
+                : Defaults.noiseAmplitude
+        }
         set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.noiseAmplitude) }
     }
 
@@ -395,6 +411,57 @@ class OscillatingGenerator: BloodGlucoseGenerator {
     var produceStaleValues: Bool {
         get { UserDefaults.standard.bool(forKey: UserDefaultsKeys.produceStaleValues) }
         set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.produceStaleValues) }
+    }
+
+    // MARK: - Glucose Tablet Simulation
+
+    /// Date when the simulated glucose tablet was taken (nil = no active tablet).
+    /// Stored as TimeIntervalSince1970 in UserDefaults; 0 means no tablet.
+    var tabletTakenDate: Date? {
+        get {
+            let ti = UserDefaults.standard.double(forKey: UserDefaultsKeys.tabletTakenDate)
+            return ti > 0 ? Date(timeIntervalSince1970: ti) : nil
+        }
+        set {
+            if let date = newValue {
+                UserDefaults.standard.set(date.timeIntervalSince1970, forKey: UserDefaultsKeys.tabletTakenDate)
+            } else {
+                UserDefaults.standard.set(0.0, forKey: UserDefaultsKeys.tabletTakenDate)
+            }
+        }
+    }
+
+    /// Target glucose delta in mg/dL at 90 minutes after taking the simulated tablet.
+    ///
+    /// This controls the net glucose change the tablet produces at the end of the
+    /// calibration observation period:
+    /// - **Positive** (e.g., +25): glucose rises → calibration suggests lowering CR (ratio too weak)
+    /// - **Negative** (e.g., -25): glucose drops → calibration suggests raising CR (ratio too strong)
+    /// - **Zero**: glucose unchanged → calibration confirms CR is correct
+    ///
+    /// Note: 0.0 is a valid value (tests "ratio correct"), so the getter checks whether
+    /// the key exists rather than checking for zero.
+    var tabletTargetDelta: Double {
+        get {
+            let key = UserDefaultsKeys.tabletTargetDelta
+            if UserDefaults.standard.object(forKey: key) == nil {
+                return Defaults.tabletTargetDelta
+            }
+            return UserDefaults.standard.double(forKey: key)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: UserDefaultsKeys.tabletTargetDelta) }
+    }
+
+    /// Whether a tablet simulation is currently active (within the 120-minute effect window).
+    var isTabletActive: Bool {
+        guard let takenDate = tabletTakenDate else { return false }
+        return Date().timeIntervalSince(takenDate) < 7200 // 120 minutes
+    }
+
+    /// Simulate taking a glucose tablet at the current time.
+    /// The tablet effect will be added to the glucose generation for the next 120 minutes.
+    func simulateTablet() {
+        tabletTakenDate = Date()
     }
 
     /// Start date for the simulation
@@ -416,6 +483,8 @@ class OscillatingGenerator: BloodGlucoseGenerator {
         noiseAmplitude = Defaults.noiseAmplitude
         produceStaleValues = Defaults.produceStaleValues
         lastGeneratedGlucose = nil
+        tabletTakenDate = nil
+        tabletTargetDelta = Defaults.tabletTargetDelta
     }
 
     /// Generates blood glucose values between the specified dates at the given interval
@@ -467,7 +536,19 @@ class OscillatingGenerator: BloodGlucoseGenerator {
         return result
     }
 
-    /// Generates a glucose value for the specified date using a sinusoidal function
+    /// Returns the deterministic glucose value at a given date (no random noise).
+    /// Useful for UI previews showing "Current BG" and "Next BG" without jitter.
+    /// - Parameter date: The date for which to preview the glucose value
+    /// - Returns: An integer representing the glucose value in mg/dL
+    func previewGlucose(at date: Date) -> Int {
+        let timeSeconds = date.timeIntervalSince1970
+        let sinValue = sin(2.0 * .pi * timeSeconds / period)
+        let tablet = tabletEffect(at: date)
+        return Int(centerValue + amplitude * sinValue + tablet)
+    }
+
+    /// Generates a glucose value for the specified date using a sinusoidal function,
+    /// with an optional glucose tablet effect overlaid on top.
     /// - Parameter date: The date for which to generate the glucose value
     /// - Returns: An integer representing the glucose value in mg/dL
     private func generate(date: Date) -> Int {
@@ -480,27 +561,100 @@ class OscillatingGenerator: BloodGlucoseGenerator {
         // Random noise
         let noise = Double.random(in: -noiseAmplitude ... noiseAmplitude)
 
-        // Calculate glucose value: center + amplitude * sine + noise
-        let glucoseValue = centerValue + amplitude * sinValue + noise
+        // Glucose tablet effect (additive; 0 if no tablet active)
+        let tablet = tabletEffect(at: date)
+
+        // Auto-cleanup expired tablet (120+ minutes after taken)
+        if let takenDate = tabletTakenDate, date.timeIntervalSince(takenDate) >= 7200 {
+            tabletTakenDate = nil
+        }
+
+        // Calculate glucose value: center + amplitude * sine + noise + tablet effect
+        let glucoseValue = centerValue + amplitude * sinValue + noise + tablet
 
         // Return as integer
         return Int(glucoseValue)
     }
 
-    /// Calculates the direction (trend) of glucose change at the specified date
+    // MARK: - Tablet Effect Math
+
+    /// Calculates the glucose effect of a simulated tablet at the given date.
+    ///
+    /// Uses a piecewise model with three phases:
+    ///
+    /// 1. **Rise (0 → 30 min):** Quadratic rise to a ~35 mg/dL peak.
+    ///    Starts strong, decelerates into peak — mimicking fast glucose tablet absorption.
+    ///
+    /// 2. **Decline (30 → 90 min):** Linear decline from peak toward `targetDelta`.
+    ///    Reaches exactly `targetDelta` at the 90-minute observation mark.
+    ///
+    /// 3. **Tail (90 → 120 min):** Linear fade from `targetDelta` to 0.
+    ///
+    /// The net effect at 90 minutes equals exactly `targetDelta`:
+    /// - **targetDelta = 0 ("Correct")**: rises ~35, declines linearly back to 0
+    /// - **targetDelta > 0 ("Weak")**: rises ~35, gentle decline to +delta
+    /// - **targetDelta < 0 ("Strong")**: rises ~35, steeper decline through 0 to -delta
+    ///
+    /// At t ≥ 120 min the effect is zero and the tablet record auto-cleaned.
+    ///
+    /// - Parameter date: The date for which to calculate the tablet effect
+    /// - Returns: The glucose offset in mg/dL to add to the base sine wave
+    func tabletEffect(at date: Date) -> Double {
+        guard let takenDate = tabletTakenDate else { return 0 }
+
+        let t = date.timeIntervalSince(takenDate)
+
+        // Before tablet was taken or after the 120-minute cutoff
+        guard t >= 0, t < 7200 else { return 0 }
+
+        let tMin = t / 60.0
+        let peakMg: Double = 35.0
+        let riseDuration: Double = 30.0 // minutes to reach peak
+        let observationEnd: Double = 90.0
+        let totalDuration: Double = 120.0
+
+        if tMin <= riseDuration {
+            // Phase 1: Quadratic rise — fast initial rise, decelerating into peak
+            let frac = tMin / riseDuration
+            return peakMg * (2.0 * frac - frac * frac)
+        } else if tMin <= observationEnd {
+            // Phase 2: Linear decline from peak toward targetDelta at 90 min
+            let elapsed = tMin - riseDuration
+            let duration = observationEnd - riseDuration
+            return peakMg - (peakMg - tabletTargetDelta) * (elapsed / duration)
+        } else {
+            // Phase 3: Linear fade from targetDelta to 0 at 120 min
+            let elapsed = tMin - observationEnd
+            let duration = totalDuration - observationEnd
+            return tabletTargetDelta * (1.0 - elapsed / duration)
+        }
+    }
+
+    /// Calculates the direction (trend) of glucose change at the specified date.
+    /// Combines the sine wave derivative with the tablet effect rate of change.
     /// - Parameter date: The date for which to calculate the direction
     /// - Returns: A BloodGlucose.Direction value indicating the trend
     private func calculateDirection(at date: Date) -> BloodGlucose.Direction {
         // Time in seconds since 1970
         let timeSeconds = date.timeIntervalSince1970
 
-        // Calculate derivative of sine function (cosine)
+        // Sine wave derivative (cosine)
         let cosValue = cos(2.0 * .pi * timeSeconds / period)
+        let sineSlope = -amplitude * 2.0 * .pi / period * cosValue
 
-        // Slope of the curve at this point
-        let slope = -amplitude * 2.0 * .pi / period * cosValue
+        // Tablet effect derivative (numerical finite difference)
+        var tabletSlope: Double = 0
+        if tabletTakenDate != nil {
+            let dt: Double = 30 // 30-second finite difference
+            let tabletNow = tabletEffect(at: date)
+            let tabletNext = tabletEffect(at: date.addingTimeInterval(dt))
+            tabletSlope = (tabletNext - tabletNow) / dt
+        }
 
-        // Determine direction based on slope
+        // Combined slope from sine wave + tablet effect
+        let slope = sineSlope + tabletSlope
+
+        // Determine direction based on combined slope
         if abs(slope) < 0.2 {
             return .flat
         } else if slope > 0 {

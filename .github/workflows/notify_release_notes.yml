@@ -1,0 +1,36 @@
+name: Notify release notes
+
+on:
+  workflow_call:
+    inputs:
+      source_run_id:
+        description: Successful Trio workflow run ID
+        required: true
+        type: string
+    secrets:
+      RELEASE_NOTES_DISPATCH_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch release-note generation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch release-note generation
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_NOTES_DISPATCH_TOKEN }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::RELEASE_NOTES_DISPATCH_TOKEN is not configured."
+            exit 1
+          fi
+
+          gh api \
+            --method POST \
+            repos/gordolio/Trio-release-notes/actions/workflows/generate.yml/dispatches \
+            -f ref=main \
+            -f "inputs[source_run_id]=$SOURCE_RUN_ID"

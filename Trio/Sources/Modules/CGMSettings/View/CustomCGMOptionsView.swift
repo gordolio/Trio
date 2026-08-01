@@ -16,12 +16,45 @@ extension CGMSettings {
 
         @State private var shouldDisplayDeletionConfirmation: Bool = false
 
-        // Simulator settings
-        @State private var centerValue: Double = UserDefaults.standard.double(forKey: "GlucoseSimulator_CenterValue")
-        @State private var amplitude: Double = UserDefaults.standard.double(forKey: "GlucoseSimulator_Amplitude")
-        @State private var period: Double = UserDefaults.standard.double(forKey: "GlucoseSimulator_Period")
-        @State private var noiseAmplitude: Double = UserDefaults.standard.double(forKey: "GlucoseSimulator_NoiseAmplitude")
+        // Simulator settings — use object(forKey:) nil checks so that 0 is preserved as a valid saved value
+        @State private var centerValue: Double = {
+            UserDefaults.standard.object(forKey: "GlucoseSimulator_CenterValue") != nil
+                ? UserDefaults.standard.double(forKey: "GlucoseSimulator_CenterValue")
+                : OscillatingGenerator.Defaults.centerValue
+        }()
+
+        @State private var amplitude: Double = {
+            UserDefaults.standard.object(forKey: "GlucoseSimulator_Amplitude") != nil
+                ? UserDefaults.standard.double(forKey: "GlucoseSimulator_Amplitude")
+                : OscillatingGenerator.Defaults.amplitude
+        }()
+
+        @State private var period: Double = {
+            UserDefaults.standard.object(forKey: "GlucoseSimulator_Period") != nil
+                ? UserDefaults.standard.double(forKey: "GlucoseSimulator_Period")
+                : OscillatingGenerator.Defaults.period
+        }()
+
+        @State private var noiseAmplitude: Double = {
+            UserDefaults.standard.object(forKey: "GlucoseSimulator_NoiseAmplitude") != nil
+                ? UserDefaults.standard.double(forKey: "GlucoseSimulator_NoiseAmplitude")
+                : OscillatingGenerator.Defaults.noiseAmplitude
+        }()
+
         @State private var produceStaleValues: Bool = UserDefaults.standard.bool(forKey: "GlucoseSimulator_ProduceStaleValues")
+
+        // Tablet simulation settings
+        @State private var tabletTargetDelta: Double = {
+            UserDefaults.standard.object(forKey: "GlucoseSimulator_TabletTargetDelta") != nil
+                ? UserDefaults.standard.double(forKey: "GlucoseSimulator_TabletTargetDelta")
+                : OscillatingGenerator.Defaults.tabletTargetDelta
+        }()
+
+        @State private var isTabletActive: Bool = false
+
+        // Timer for live BG preview updates
+        @State private var now = Date()
+        private let previewTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
         /// Drives the synthetic `cgmStatusHighlight`
         @State private var simulatedScenarioRaw: String = UserDefaults.standard
@@ -47,21 +80,11 @@ extension CGMSettings {
             resolver.resolve(TrioAlertManager.self)?.issueAlert(alert)
         }
 
-        // Initialize state variables with defaults if needed
+        // Refresh state from UserDefaults on view appear (handles returning to this screen after changes)
         private func initializeSimulatorSettings() {
-            if centerValue == 0 {
-                centerValue = OscillatingGenerator.Defaults.centerValue
-            }
-            if amplitude == 0 {
-                amplitude = OscillatingGenerator.Defaults.amplitude
-            }
-            if period == 0 {
-                period = OscillatingGenerator.Defaults.period
-            }
-            if noiseAmplitude == 0 {
-                noiseAmplitude = OscillatingGenerator.Defaults.noiseAmplitude
-            }
-            // produceStaleValues is already initialized as false by default
+            // Re-read all values from UserDefaults/OscillatingGenerator to pick up any external changes
+            let gen = OscillatingGenerator()
+            isTabletActive = gen.isTabletActive
         }
 
         // Save simulator settings to UserDefaults
@@ -71,6 +94,7 @@ extension CGMSettings {
             UserDefaults.standard.set(period, forKey: "GlucoseSimulator_Period")
             UserDefaults.standard.set(noiseAmplitude, forKey: "GlucoseSimulator_NoiseAmplitude")
             UserDefaults.standard.set(produceStaleValues, forKey: "GlucoseSimulator_ProduceStaleValues")
+            UserDefaults.standard.set(tabletTargetDelta, forKey: "GlucoseSimulator_TabletTargetDelta")
         }
 
         var body: some View {
@@ -144,7 +168,73 @@ extension CGMSettings {
                         initializeSimulatorSettings()
                     }
                 }
+                .onReceive(previewTimer) { now = $0 }
             }
+        }
+
+        /// Live preview of the simulator's current and next BG values
+        private var simulatorBGPreview: some View {
+            let gen = OscillatingGenerator()
+            let currentBG = gen.previewGlucose(at: now)
+            let nextBG = gen.previewGlucose(at: now.addingTimeInterval(300))
+            let tabletOffset = gen.tabletEffect(at: now)
+
+            return VStack(spacing: 8) {
+                Text("BG Preview")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 0) {
+                    VStack(spacing: 2) {
+                        Text("Current")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(currentBG)")
+                            .font(.title3.monospacedDigit())
+                            .fontWeight(.semibold)
+                        Text(state.units.rawValue)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    Image(systemName: "arrow.right")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+
+                    VStack(spacing: 2) {
+                        Text("Next (5 min)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(nextBG)")
+                            .font(.title3.monospacedDigit())
+                            .fontWeight(.semibold)
+                        Text(state.units.rawValue)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    if isTabletActive {
+                        VStack(spacing: 2) {
+                            Text("Tablet Effect")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "%+.0f", tabletOffset))
+                                .font(.title3.monospacedDigit())
+                                .fontWeight(.semibold)
+                                .foregroundStyle(tabletOffset > 0 ? .red : tabletOffset < 0 ? .blue : .primary)
+                            Text(state.units.rawValue)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .padding(.bottom)
         }
 
         var nightscoutSection: some View {
@@ -438,6 +528,155 @@ extension CGMSettings {
                     }.listRowBackground(Color.chart)
                 }
 
+                // MARK: - Glucose Tablet Simulation
+
+                Section(header: Text("Glucose Tablet Simulation")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        // Settings guidance banner — shown when amplitude or noise are too high for reliable calibration testing
+                        if amplitude > 10 || noiseAmplitude > 2 {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Label("Recommended: Reduce Simulator Noise", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(.orange)
+
+                                Text(
+                                    "For calibration testing, use a quiet glucose trace so preflight checks pass. Reduce amplitude to ≤10 and noise to 0."
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+
+                                Button {
+                                    // Apply quiet-mode settings for calibration testing
+                                    centerValue = 105
+                                    amplitude = 5
+                                    noiseAmplitude = 0
+                                    period = 21600 // 6 hours — slowest cycle
+                                    saveSimulatorSettings()
+                                } label: {
+                                    Label("Apply Quiet Settings", systemImage: "waveform.path")
+                                        .font(.subheadline.weight(.medium))
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.orange)
+                            }
+                            .padding(.vertical, 6)
+
+                            Divider()
+                        }
+
+                        // Target delta slider header
+                        HStack {
+                            Text("Target Delta at 90 min:").bold()
+                            Spacer()
+                            Text(
+                                state.units == .mgdL
+                                    ? String(format: "%+.0f", tabletTargetDelta)
+                                    : String(format: "%+.1f", tabletTargetDelta / 18.0)
+                            ).bold()
+                            Text(state.units.rawValue).foregroundStyle(Color.secondary)
+                        }.padding(.top)
+
+                        // Target delta slider: -50 to +50 mg/dL
+                        Slider(value: $tabletTargetDelta, in: -50 ... 50, step: 5)
+                            .accentColor(.accentColor)
+                            .onChange(of: tabletTargetDelta) { _, newValue in
+                                UserDefaults.standard.set(newValue, forKey: "GlucoseSimulator_TabletTargetDelta")
+                            }
+                            .padding(.vertical)
+
+                        // Preset buttons for the three calibration test scenarios
+                        HStack(spacing: 8) {
+                            Button("Correct (0)") {
+                                tabletTargetDelta = 0
+                                UserDefaults.standard.set(0.0, forKey: "GlucoseSimulator_TabletTargetDelta")
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+
+                            Button("Strong (-25)") {
+                                tabletTargetDelta = -25
+                                UserDefaults.standard.set(-25.0, forKey: "GlucoseSimulator_TabletTargetDelta")
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+
+                            Button("Weak (+25)") {
+                                tabletTargetDelta = 25
+                                UserDefaults.standard.set(25.0, forKey: "GlucoseSimulator_TabletTargetDelta")
+                            }
+                            .buttonStyle(.bordered)
+                            .font(.caption)
+                        }
+                        .padding(.bottom, 4)
+
+                        // Dynamic explanation based on current delta value
+                        Group {
+                            if tabletTargetDelta > 0 {
+                                Text(
+                                    "Glucose will rise, then partially come back down, settling at +\(Int(tabletTargetDelta)) mg/dL after 90 min. Calibration will suggest lowering your CR (ratio too weak)."
+                                )
+                            } else if tabletTargetDelta < 0 {
+                                Text(
+                                    "Glucose will rise from carbs, then insulin pulls it below baseline to \(Int(tabletTargetDelta)) mg/dL after 90 min. Calibration will suggest raising your CR (ratio too strong)."
+                                )
+                            } else {
+                                Text(
+                                    "Glucose will rise from carbs then return to baseline by 90 min. Calibration will confirm your CR is correct."
+                                )
+                            }
+                        }
+                        .font(.footnote)
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(nil)
+
+                        Divider()
+
+                        // Take Tablet button / Active Tablet status
+                        if isTabletActive {
+                            HStack {
+                                Image(systemName: "pills.fill")
+                                    .foregroundStyle(.green)
+                                Text("Tablet Active")
+                                    .bold()
+                                    .foregroundStyle(.green)
+                                Spacer()
+                                Button("Clear") {
+                                    UserDefaults.standard.set(0.0, forKey: "GlucoseSimulator_TabletTakenDate")
+                                    isTabletActive = false
+                                }
+                                .foregroundStyle(.red)
+                                .buttonStyle(.bordered)
+                                .font(.caption)
+                            }
+                            .padding(.vertical, 4)
+                        } else {
+                            Button {
+                                OscillatingGenerator().simulateTablet()
+                                isTabletActive = true
+                            } label: {
+                                Label("Simulate Glucose Tablet", systemImage: "pills.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.vertical, 4)
+                        }
+
+                        Text(
+                            "The tablet starts a glucose response curve that peaks at ~24 min and reaches the target delta at 90 min. The effect clears automatically after 120 min."
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(Color.secondary)
+                        .lineLimit(nil)
+
+                        Divider()
+
+                        // Live BG preview
+                        simulatorBGPreview
+                    }
+                }.listRowBackground(Color.chart)
+
                 Section {
                     Button(action: {
                         centerValue = OscillatingGenerator.Defaults.centerValue
@@ -445,6 +684,9 @@ extension CGMSettings {
                         period = OscillatingGenerator.Defaults.period
                         noiseAmplitude = OscillatingGenerator.Defaults.noiseAmplitude
                         produceStaleValues = OscillatingGenerator.Defaults.produceStaleValues
+                        tabletTargetDelta = OscillatingGenerator.Defaults.tabletTargetDelta
+                        UserDefaults.standard.set(0.0, forKey: "GlucoseSimulator_TabletTakenDate")
+                        isTabletActive = false
                         saveSimulatorSettings()
                     }, label: {
                         Text("Reset to Defaults")

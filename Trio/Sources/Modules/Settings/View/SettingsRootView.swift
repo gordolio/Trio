@@ -173,6 +173,8 @@ extension Settings {
                                     }
                                 }
                             }
+
+                            BuildReleaseNotesLink()
                         }
                     ).listRowBackground(Color.chart)
 

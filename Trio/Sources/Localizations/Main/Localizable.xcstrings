@@ -5722,6 +5722,12 @@
         }
       }
     },
+    "· %@" : {
+
+    },
+    "\"%@\"" : {
+
+    },
     "“Trio” Would Like to Use Bluetooth" : {
       "localizations" : {
         "bg" : {
@@ -5969,6 +5975,9 @@
           }
         }
       }
+    },
+    "(%@)" : {
+
     },
     "(50% current basal rate)" : {
       "localizations" : {
@@ -9397,6 +9406,15 @@
         }
       }
     },
+    "%@ g/U" : {
+
+    },
+    "%@ is currently rate-limiting requests. Please try again in a moment." : {
+      "comment" : "Alert shown when a provider returns HTTP 429 without an insufficient_quota code"
+    },
+    "%@ is out of credits. Please top up your account before analyzing more images." : {
+      "comment" : "Alert shown when a provider responds with an out-of-credits signal"
+    },
     "%@ is running" : {
       "localizations" : {
         "bg" : {
@@ -9641,6 +9659,20 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 分鐘"
+          }
+        }
+      }
+    },
+    "%@ per serving" : {
+
+    },
+    "%@ rejected the API key (status %d). Check the key configured in ConfigOverride.xcconfig." : {
+      "comment" : "Alert shown when a provider returns HTTP 401/403",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ rejected the API key (status %2$d). Check the key configured in ConfigOverride.xcconfig."
           }
         }
       }
@@ -10153,6 +10185,17 @@
         }
       }
     },
+    "%@%@ +%d" : {
+      "comment" : "Summary showing main food item and count of others (1: emoji, 2: item name, 3: count of other items)",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@%2$@ +%3$d"
+          }
+        }
+      }
+    },
     "%@%% Insulin" : {
       "localizations" : {
         "bg" : {
@@ -10276,6 +10319,15 @@
           }
         }
       }
+    },
+    "%@g" : {
+
+    },
+    "%@g carbs per tablet" : {
+
+    },
+    "%@U" : {
+
     },
     "%1$@ for %2$@" : {
       "comment" : "Summary string for temporary basal rate configuration page",
@@ -11404,6 +11456,9 @@
         }
       }
     },
+    "%lld items" : {
+      "comment" : "Item count in compact view\nMultiple item count"
+    },
     "%lld min" : {
       "localizations" : {
         "bg" : {
@@ -11648,6 +11703,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld x"
+          }
+        }
+      }
+    },
+    "%lld/%lld conditions met" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld/%2$lld conditions met"
           }
         }
       }
@@ -20090,6 +20155,9 @@
         }
       }
     },
+    "+%lld more" : {
+
+    },
     "+6" : {
       "localizations" : {
         "bg" : {
@@ -22334,6 +22402,9 @@
         }
       }
     },
+    "1 item" : {
+      "comment" : "Single item count"
+    },
     "1 U and over" : {
       "comment" : "Name to display for the \"1 U and over\" bolus display threshold option.",
       "localizations" : {
@@ -22458,6 +22529,9 @@
           }
         }
       }
+    },
+    "1 unit of insulin covers %@g of carbs" : {
+
     },
     "1. Open the Settings app on your iOS device." : {
       "localizations" : {
@@ -26591,6 +26665,9 @@
         }
       }
     },
+    "A calibration override is active. We're monitoring until conditions are stable enough to begin the test." : {
+
+    },
     "A display of On/On indicates both Dynamic ISF and CR are enabled. On/Off indicates only Dynamic ISF is enabled. Dynamic CR cannot be enabled when Dynamic ISF is disabled." : {
       "localizations" : {
         "bg" : {
@@ -27217,6 +27294,9 @@
           }
         }
       }
+    },
+    "A lowercase restaurant name for suggesting an official domain." : {
+
     },
     "A new version (%@) is available. It is recommended to update." : {
       "comment" : "Message for update available alert",
@@ -28472,6 +28552,12 @@
           }
         }
       }
+    },
+    "Accept" : {
+      "comment" : "Button to accept the published nutrition value"
+    },
+    "Accept These Values" : {
+      "comment" : "Button to accept AI carb estimates"
     },
     "Acknowledge all alerts" : {
       "extractionState" : "stale",
@@ -30108,6 +30194,9 @@
         }
       }
     },
+    "Add a tablespoon of ranch dressing." : {
+
+    },
     "Add Alarm" : {
       "comment" : "A title for a sheet that lets the user add a glucose alert.",
       "localizations" : {
@@ -31357,6 +31446,9 @@
           }
         }
       }
+    },
+    "Add context (optional)" : {
+      "comment" : "Label for food description text field"
     },
     "Add Device" : {
       "localizations" : {
@@ -34646,6 +34738,9 @@
         }
       }
     },
+    "Adding carbs or bolusing now will invalidate the calibration test. Status: %@" : {
+
+    },
     "Additional notification types" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -37568,6 +37663,21 @@
         }
       }
     },
+    "AI" : {
+
+    },
+    "AI Analysis Error" : {
+
+    },
+    "AI Estimate" : {
+      "comment" : "Label for AI-generated carb estimate"
+    },
+    "AI Prompts" : {
+
+    },
+    "AI Provider" : {
+
+    },
     "Alarm" : {
       "comment" : "Name of a critical-alarm sound file.",
       "localizations" : {
@@ -39974,6 +40084,12 @@
         }
       }
     },
+    "All time slots" : {
+
+    },
+    "All time slots (adjust proportionally)" : {
+
+    },
     "Allow" : {
       "localizations" : {
         "bg" : {
@@ -40221,6 +40337,9 @@
           }
         }
       }
+    },
+    "Allow camera access in Settings, then try again." : {
+      "comment" : "Camera unavailable alert message"
     },
     "Allow Fetching from Nightscout" : {
       "localizations" : {
@@ -47523,6 +47642,15 @@
         }
       }
     },
+    "Analyze Food with AI" : {
+      "comment" : "Button label for AI-assisted food analysis"
+    },
+    "Analyzing image…" : {
+      "comment" : "Status shown while immediate food image analysis waits for its first result"
+    },
+    "Analyzing…" : {
+      "comment" : "Placeholder shown while the selected AI provider is being queried"
+    },
     "Animated Background" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -48025,6 +48153,9 @@
           }
         }
       }
+    },
+    "API Key Status" : {
+
     },
     "API secret" : {
       "comment" : "API secret in NS",
@@ -50136,6 +50267,15 @@
           }
         }
       }
+    },
+    "Apply Quiet Settings" : {
+
+    },
+    "Apply Ratio Change" : {
+
+    },
+    "Apply Suggested Ratio" : {
+
     },
     "Applying ${bolusQuantity} U" : {
       "localizations" : {
@@ -55534,6 +55674,9 @@
         }
       }
     },
+    "Available Placeholders" : {
+
+    },
     "Available Rings:" : {
       "localizations" : {
         "bg" : {
@@ -59691,6 +59834,12 @@
         }
       }
     },
+    "Begin Calibration Prep?" : {
+
+    },
+    "Begin Prep" : {
+
+    },
     "Behavior" : {
       "localizations" : {
         "bg" : {
@@ -60187,6 +60336,9 @@
           }
         }
       }
+    },
+    "BG Preview" : {
+
     },
     "BGI" : {
       "localizations" : {
@@ -63208,6 +63360,9 @@
           }
         }
       }
+    },
+    "Bolus Delivered" : {
+
     },
     "Bolus Display Threshold" : {
       "localizations" : {
@@ -67380,6 +67535,18 @@
         }
       }
     },
+    "Calibration" : {
+
+    },
+    "Calibration In Progress" : {
+
+    },
+    "Calibration Info" : {
+
+    },
+    "Calibration test timed out. Conditions did not stabilize within %lld minutes." : {
+
+    },
     "Calibration unavailable" : {
       "localizations" : {
         "bg" : {
@@ -67759,6 +67926,12 @@
         }
       }
     },
+    "Camera" : {
+
+    },
+    "Camera Unavailable" : {
+      "comment" : "Camera unavailable alert title"
+    },
     "Can't find the default Nightscout Profile." : {
       "comment" : "Import ErrorImport Error",
       "extractionState" : "manual",
@@ -67892,7 +68065,7 @@
       }
     },
     "Cancel" : {
-      "comment" : "Cancel preset name",
+      "comment" : "Cancel button\nCancel description input\nDismiss camera accessibility label\nDismiss camera alert",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -68388,6 +68561,9 @@
           }
         }
       }
+    },
+    "Cancel Calibration Test?" : {
+
     },
     "Cancel override" : {
       "localizations" : {
@@ -69149,6 +69325,12 @@
         }
       }
     },
+    "Cancel Test" : {
+
+    },
+    "Cancelled" : {
+
+    },
     "Cannot Enable This Setting" : {
       "localizations" : {
         "bg" : {
@@ -69652,6 +69834,9 @@
         }
       }
     },
+    "Carb Ratio" : {
+
+    },
     "Carb Ratio (%@)" : {
       "localizations" : {
         "bg" : {
@@ -69775,6 +69960,9 @@
           }
         }
       }
+    },
+    "Carb Ratio Calibration" : {
+
     },
     "Carb Ratios" : {
       "comment" : "Carb Ratios header",
@@ -70025,8 +70213,11 @@
         }
       }
     },
+    "carbs" : {
+      "comment" : "Nutrient label for carbohydrates"
+    },
     "Carbs" : {
-      "comment" : "Treatment type",
+      "comment" : "Carbohydrates nutrient label in published nutrition summary\nTreatment type",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -74691,6 +74882,16 @@
         }
       }
     },
+    "Change: %@%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Change: %1$@%2$@ %3$@"
+          }
+        }
+      }
+    },
     "Chart" : {
       "localizations" : {
         "bg" : {
@@ -75062,6 +75263,12 @@
           }
         }
       }
+    },
+    "ChatGPT" : {
+
+    },
+    "Check" : {
+
     },
     "Check Cannula" : {
       "extractionState" : "manual",
@@ -75566,6 +75773,12 @@
           }
         }
       }
+    },
+    "Checking Conditions" : {
+
+    },
+    "Checking if conditions are right for calibration" : {
+
     },
     "Chime" : {
       "comment" : "Name of a sound file.",
@@ -77926,6 +78139,12 @@
         }
       }
     },
+    "Claude" : {
+
+    },
+    "Claude (Anthropic)" : {
+
+    },
     "Clear" : {
       "comment" : "Button",
       "extractionState" : "manual",
@@ -79678,6 +79897,21 @@
           }
         }
       }
+    },
+    "Compare Providers" : {
+
+    },
+    "Completed" : {
+
+    },
+    "Conditions are stable. Open Trio to start your carb ratio test." : {
+
+    },
+    "Conditions Not Met" : {
+
+    },
+    "Conditions Required" : {
+
     },
     "Cone" : {
       "localizations" : {
@@ -81585,7 +81819,11 @@
         }
       }
     },
+    "Configured" : {
+
+    },
     "Confirm" : {
+      "comment" : "Confirm button",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -84727,6 +84965,12 @@
         }
       }
     },
+    "Conversation Image Reference" : {
+
+    },
+    "Conversation Refinement" : {
+
+    },
     "Copied" : {
       "localizations" : {
         "bg" : {
@@ -85098,6 +85342,9 @@
           }
         }
       }
+    },
+    "Correct (0)" : {
+
     },
     "Could not access documents directory" : {
       "localizations" : {
@@ -86731,6 +86978,9 @@
         }
       }
     },
+    "Current Carb Ratio" : {
+
+    },
     "Current CGM Models Supported:" : {
       "localizations" : {
         "bg" : {
@@ -86984,6 +87234,9 @@
           }
         }
       }
+    },
+    "Current items, nutrient estimates, IDs, and sources." : {
+
     },
     "Current Loop Status" : {
       "localizations" : {
@@ -87364,6 +87617,12 @@
           }
         }
       }
+    },
+    "Current time slot only" : {
+
+    },
+    "Current time slot only (%@)" : {
+
     },
     "CurrentBG" : {
       "extractionState" : "manual",
@@ -101315,6 +101574,12 @@
         }
       }
     },
+    "Deliver %@U Bolus" : {
+
+    },
+    "Deliver Bolus" : {
+
+    },
     "Delivery limits" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -110919,6 +111184,12 @@
         }
       }
     },
+    "During prep, a 'Calibration Mode' override will be activated to disable Super Micro Boluses (SMB). Your basal rate will continue normally. The override will be removed when the test completes or is cancelled. Any currently active override will be replaced." : {
+
+    },
+    "During the Test" : {
+
+    },
     "Dynamic" : {
       "localizations" : {
         "bg" : {
@@ -112420,6 +112691,9 @@
         }
       }
     },
+    "e.g., sugar-free, homemade…" : {
+      "comment" : "Placeholder for food description"
+    },
     "eA1c" : {
       "localizations" : {
         "bg" : {
@@ -112667,6 +112941,9 @@
           }
         }
       }
+    },
+    "Earlier Builds" : {
+
     },
     "Edit" : {
       "localizations" : {
@@ -122864,7 +123141,7 @@
       }
     },
     "Error" : {
-      "comment" : "Error title",
+      "comment" : "Error alert title",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -125274,6 +125551,9 @@
           }
         }
       }
+    },
+    "Example User Messages" : {
+
     },
     "exceeded" : {
       "comment" : "Limit Exceeded label",
@@ -128465,6 +128745,9 @@
         }
       }
     },
+    "Failed to deliver bolus. Please try again or cancel the test." : {
+
+    },
     "Failed to execute a batch delete request in %@ from %@." : {
       "localizations" : {
         "bg" : {
@@ -129357,6 +129640,9 @@
         }
       }
     },
+    "Failed to log carbs. Please try again." : {
+
+    },
     "Failed to Suspend Insulin Delivery" : {
       "comment" : "Alert title for suspend error",
       "extractionState" : "manual",
@@ -129875,8 +130161,14 @@
         }
       }
     },
+    "Fast-acting glucose tablets, 4g carbs each" : {
+
+    },
+    "fat" : {
+      "comment" : "Nutrient label for fat"
+    },
     "Fat" : {
-      "comment" : "Add Fat",
+      "comment" : "Fat nutrient label in published nutrition summary",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -134001,6 +134293,9 @@
         }
       }
     },
+    "Food Description Context" : {
+
+    },
     "for" : {
       "comment" : "Temp target set for ... minutes",
       "localizations" : {
@@ -134249,6 +134544,9 @@
           }
         }
       }
+    },
+    "For calibration testing, use a quiet glucose trace so preflight checks pass. Reduce amplitude to ≤10 and noise to 0." : {
+
     },
     "For everyday heads-up notifications. These behave like a standard banner — they stay quiet when your phone is silenced or a Focus is on. Examples: an algorithm error, a sensor expiration reminder, or a time-zone change being detected." : {
       "localizations" : {
@@ -141271,6 +141569,9 @@
         }
       }
     },
+    "Glucose During Test" : {
+
+    },
     "Glucose Error" : {
       "localizations" : {
         "bg" : {
@@ -142900,6 +143201,12 @@
         }
       }
     },
+    "Glucose Tablet Simulation" : {
+
+    },
+    "Glucose Tablets" : {
+
+    },
     "Glucose Target" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -143905,6 +144212,15 @@
           }
         }
       }
+    },
+    "Glucose will rise from carbs then return to baseline by 90 min. Calibration will confirm your CR is correct." : {
+
+    },
+    "Glucose will rise from carbs, then insulin pulls it below baseline to %lld mg/dL after 90 min. Calibration will suggest raising your CR (ratio too strong)." : {
+
+    },
+    "Glucose will rise, then partially come back down, settling at +%lld mg/dL after 90 min. Calibration will suggest lowering your CR (ratio too weak)." : {
+
     },
     "Glucose, " : {
       "extractionState" : "manual",
@@ -147707,6 +148023,9 @@
         }
       }
     },
+    "Hide items" : {
+
+    },
     "High" : {
       "comment" : "High Glucose Threshold in Statistics settings",
       "localizations" : {
@@ -149596,6 +149915,9 @@
         }
       }
     },
+    "Highlights" : {
+
+    },
     "History" : {
       "comment" : "Header",
       "localizations" : {
@@ -151001,6 +151323,9 @@
         }
       }
     },
+    "How it works" : {
+
+    },
     "How it Works" : {
       "localizations" : {
         "bg" : {
@@ -151622,6 +151947,9 @@
         }
       }
     },
+    "How would you like to apply the new ratio?" : {
+
+    },
     "hr" : {
       "comment" : "Hours abbreviation",
       "localizations" : {
@@ -151871,6 +152199,9 @@
         }
       }
     },
+    "Human review recommended" : {
+
+    },
     "I have read and accept the" : {
       "localizations" : {
         "bg" : {
@@ -152118,6 +152449,9 @@
           }
         }
       }
+    },
+    "I've Taken the Tablets" : {
+
     },
     "If \"Display IOB and COB\" is also enabled, \"IOB\" and \"COB\" will be replaced with the following emojis:" : {
       "localizations" : {
@@ -158903,6 +159237,15 @@
         }
       }
     },
+    "Initial analysis could not be completed. Continue will retry." : {
+
+    },
+    "Initial analysis ready" : {
+      "comment" : "Status shown when immediate food image analysis has completed"
+    },
+    "Initial analysis updating…" : {
+      "comment" : "Status shown while immediate food image analysis streams provisional results"
+    },
     "Initiating…" : {
       "comment" : "A label displayed when the pump is waiting to start bolusing.",
       "isCommentAutoGenerated" : true
@@ -159037,6 +159380,9 @@
           }
         }
       }
+    },
+    "Instructions" : {
+
     },
     "Insulin" : {
       "comment" : "Title for insulin-related statistics",
@@ -164583,6 +164929,12 @@
         }
       }
     },
+    "Keep any placeholders needed to include live context in the request." : {
+
+    },
+    "Keep Current Ratio" : {
+
+    },
     "Keep these turned ON in your phone’s settings to ensure you receive Trio Notifications, Critical Alerts, and Time Sensitive Notifications." : {
       "localizations" : {
         "bg" : {
@@ -164706,6 +165058,9 @@
           }
         }
       }
+    },
+    "Key details" : {
+
     },
     "Largest basal rate allowed." : {
       "localizations" : {
@@ -166837,6 +167192,9 @@
           }
         }
       }
+    },
+    "Let's make sure conditions are right for an accurate test." : {
+
     },
     "Libre 2 Direct" : {
       "comment" : "Libre 2 Direct",
@@ -190016,6 +190374,12 @@
         }
       }
     },
+    "Monitoring glucose response" : {
+
+    },
+    "Monitoring your glucose response. You'll be notified when results are ready." : {
+
+    },
     "Monochrome" : {
       "localizations" : {
         "bg" : {
@@ -191156,6 +191520,12 @@
         }
       }
     },
+    "Network error: %@" : {
+      "comment" : "Network error with description"
+    },
+    "New" : {
+
+    },
     "NEW" : {
       "localizations" : {
         "bg" : {
@@ -191907,6 +192277,9 @@
           }
         }
       }
+    },
+    "Next (5 min)" : {
+
     },
     "Night only" : {
       "comment" : "A label for \"Night only\".",
@@ -193668,6 +194041,9 @@
         }
       }
     },
+    "No content returned from AI" : {
+      "comment" : "Error when AI returns empty response"
+    },
     "No Data" : {
       "localizations" : {
         "bg" : {
@@ -195166,6 +195542,9 @@
         }
       }
     },
+    "No items selected" : {
+      "comment" : "Text shown when no food items are selected"
+    },
     "No Libre Transmitter Selected" : {
       "comment" : "No Libre Transmitter Selected",
       "extractionState" : "manual",
@@ -196173,6 +196552,9 @@
         }
       }
     },
+    "No Release Notes Available" : {
+
+    },
     "No Reminder" : {
       "comment" : "Value text for no expiration reminder",
       "extractionState" : "manual",
@@ -196304,6 +196686,9 @@
           }
         }
       }
+    },
+    "No results from this provider." : {
+      "comment" : "Placeholder when the selected AI provider tab failed and returned no results"
     },
     "No Sensor Detected" : {
       "comment" : "No Sensor Detected",
@@ -197064,6 +197449,9 @@
           }
         }
       }
+    },
+    "No user-facing changes" : {
+
     },
     "Noise:" : {
       "localizations" : {
@@ -198469,6 +198857,9 @@
         }
       }
     },
+    "Not configured" : {
+
+    },
     "Not Connected" : {
       "localizations" : {
         "bg" : {
@@ -199221,6 +199612,9 @@
           }
         }
       }
+    },
+    "Not Started" : {
+
     },
     "Note" : {
       "comment" : "Food Type / Meal Note",
@@ -203611,6 +204005,12 @@
         }
       }
     },
+    "Number of tablets:" : {
+
+    },
+    "Nutrition Lookup Detection" : {
+
+    },
     "ø" : {
       "localizations" : {
         "bg" : {
@@ -203734,6 +204134,9 @@
           }
         }
       }
+    },
+    "Observing" : {
+
     },
     "Occlusion" : {
       "localizations" : {
@@ -206983,6 +207386,19 @@
         }
       }
     },
+    "Open Treatment" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Treatment"
+          }
+        }
+      }
+    },
+    "OpenAI" : {
+
+    },
     "OpenAPS main settings" : {
       "comment" : "Headers for settings -----------------------",
       "extractionState" : "manual",
@@ -207508,6 +207924,29 @@
         }
       }
     },
+    "OpenRouter API key is not configured" : {
+      "comment" : "Error when OpenRouter API key is missing"
+    },
+    "Opens the camera to scan food in Trio" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens the camera to scan food in Trio"
+          }
+        }
+      }
+    },
+    "Opens the Treatment panel in Trio" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens the Treatment panel in Trio"
+          }
+        }
+      }
+    },
     "Opt out" : {
       "localizations" : {
         "bg" : {
@@ -207631,6 +208070,9 @@
           }
         }
       }
+    },
+    "Optional description addendum" : {
+
     },
     "Oref Algorithm" : {
       "localizations" : {
@@ -207887,6 +208329,9 @@
           }
         }
       }
+    },
+    "Other detected items and their nutrients." : {
+
     },
     "Other Elements & Shapes" : {
       "localizations" : {
@@ -214209,6 +214654,9 @@
         }
       }
     },
+    "Photo Library" : {
+
+    },
     "Pick a duration to mute every Trio alarm. Critical alerts (e.g. occlusion, urgent low) still pierce the snooze." : {
       "localizations" : {
         "bg" : {
@@ -216231,6 +216679,20 @@
         }
       }
     },
+    "Position food or label within the frame" : {
+      "comment" : "Camera overlay subtitle for AI food scanning",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Position food or label within the frame"
+          }
+        }
+      }
+    },
+    "Pre-flight Checks" : {
+
+    },
     "Prediction Type" : {
       "localizations" : {
         "bg" : {
@@ -216610,6 +217072,12 @@
         }
       }
     },
+    "Preliminary total" : {
+      "comment" : "Label for provisional total carbohydrate estimate"
+    },
+    "Prep" : {
+
+    },
     "Prepare Trio" : {
       "localizations" : {
         "bg" : {
@@ -216733,6 +217201,12 @@
           }
         }
       }
+    },
+    "Preparing" : {
+
+    },
+    "Preparing for the test" : {
+
     },
     "Preset" : {
       "localizations" : {
@@ -217487,6 +217961,9 @@
         }
       }
     },
+    "Previous user, assistant, and system messages." : {
+
+    },
     "Primary" : {
       "localizations" : {
         "bg" : {
@@ -217610,6 +218087,9 @@
           }
         }
       }
+    },
+    "Primary prompt" : {
+
     },
     "Privacy" : {
       "localizations" : {
@@ -218999,8 +219479,14 @@
         }
       }
     },
+    "Prompt" : {
+
+    },
+    "protein" : {
+      "comment" : "Nutrient label for protein"
+    },
     "Protein" : {
-      "comment" : "Add Protein",
+      "comment" : "Protein nutrient label in published nutrition summary",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -219620,6 +220106,18 @@
           }
         }
       }
+    },
+    "Provider" : {
+
+    },
+    "Published" : {
+      "comment" : "Badge indicating nutrition data comes from official published source\nLabel for published nutrition data"
+    },
+    "Published Nutrition Facts" : {
+      "comment" : "Title for the published nutrition source verification sheet"
+    },
+    "Published Nutrition Search" : {
+
     },
     "Pump" : {
       "extractionState" : "manual",
@@ -224266,6 +224764,12 @@
         }
       }
     },
+    "Ratio too strong (need less insulin per gram)" : {
+
+    },
+    "Ratio too weak (need more insulin per gram)" : {
+
+    },
     "raw: %lf" : {
       "localizations" : {
         "bg" : {
@@ -224770,6 +225274,12 @@
           }
         }
       }
+    },
+    "Ready to Begin" : {
+
+    },
+    "Ready to Test" : {
+
     },
     "Rec. %" : {
       "localizations" : {
@@ -226276,6 +226786,9 @@
         }
       }
     },
+    "Recommended: Reduce Simulator Noise" : {
+
+    },
     "Red = Below Range" : {
       "localizations" : {
         "bg" : {
@@ -226896,6 +227409,21 @@
           }
         }
       }
+    },
+    "Refine Food Analysis" : {
+      "comment" : "Title for AI chat view"
+    },
+    "Refine with AI" : {
+      "comment" : "Button to open AI chat for refining food analysis"
+    },
+    "Reject" : {
+      "comment" : "Button to reject published nutrition value and use AI estimate instead"
+    },
+    "Release notes will appear here after they are generated." : {
+
+    },
+    "ReliOn glucose tablets, 4g carbs each" : {
+
     },
     "Remaining Carbs Cap" : {
       "comment" : "Remaining Carbs Cap",
@@ -227891,6 +228419,9 @@
           }
         }
       }
+    },
+    "Remove the fries; I didn't eat them." : {
+
     },
     "Remove Widget" : {
       "localizations" : {
@@ -229755,6 +230286,15 @@
         }
       }
     },
+    "Restaurant Classification" : {
+
+    },
+    "Result" : {
+
+    },
+    "Results Ready" : {
+
+    },
     "Resume" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -230779,6 +231319,9 @@
           }
         }
       }
+    },
+    "Review your results" : {
+
     },
     "Rewind Resets Autosens" : {
       "comment" : "Rewind Resets Autosens",
@@ -233937,6 +234480,30 @@
         }
       }
     },
+    "Scan Food" : {
+
+    },
+    "Scan Food or Nutrition Facts" : {
+      "comment" : "Camera overlay instruction for AI food scanning",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan Food or Nutrition Facts"
+          }
+        }
+      }
+    },
+    "Scan Food with AI" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan Food with AI"
+          }
+        }
+      }
+    },
     "Scenario" : {
       "localizations" : {
         "bg" : {
@@ -236322,6 +236889,9 @@
         }
       }
     },
+    "Select Photo Source" : {
+
+    },
     "Select Pump Model" : {
       "localizations" : {
         "bg" : {
@@ -236569,6 +237139,9 @@
           }
         }
       }
+    },
+    "Select specific slots..." : {
+
     },
     "Select Temporary Target" : {
       "localizations" : {
@@ -236948,6 +237521,9 @@
           }
         }
       }
+    },
+    "Select your glucose tablets and confirm consumption to start the test." : {
+
     },
     "Selected Date" : {
       "localizations" : {
@@ -237444,6 +238020,12 @@
           }
         }
       }
+    },
+    "Selects which model runs first for AI-assisted carb entry. Both models are accessed through OpenRouter." : {
+
+    },
+    "Send to all providers simultaneously" : {
+
     },
     "Sens Ratio" : {
       "comment" : "Name of the secondary attribute choice for the SwissAlpine watchface.",
@@ -240152,6 +240734,12 @@
         }
       }
     },
+    "Sent after the initial image result as an optional description addendum, while preserving the primary prompt as the cacheable request prefix." : {
+
+    },
+    "Sent with the original food image on each conversational refinement request." : {
+
+    },
     "Series" : {
       "localizations" : {
         "bg" : {
@@ -240275,6 +240863,9 @@
           }
         }
       }
+    },
+    "Server returned error (status %d)" : {
+      "comment" : "Server error with status code"
     },
     "Services" : {
       "comment" : "Services menu item in the Settings main view.",
@@ -242019,7 +242610,7 @@
         "sv" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Inställd till ett glukosvärde, t.ex. 160 (mg/dl = 8,9 mmol/l), vilket innebär att när det temporära målvärdet är 8,9 mmol/l och 'motinsläge' är på, används endast en 50%%-ig basal vid detta blodglukosvärde (120 = 75%; 140 = 60%). Detta kan justeras, för att ge dig mer kontroll över dina temporära målvärden vid träning."
+            "value" : "Inställd till ett glukosvärde, t.ex. 160 (mg/dl = 8,9 mmol/l), vilket innebär att när det temporära målvärdet är 8,9 mmol/l och 'motinsläge' är på, används endast en 50%-ig basal vid detta blodglukosvärde (120 = 75%; 140 = 60%). Detta kan justeras, för att ge dig mer kontroll över dina temporära målvärden vid träning."
           }
         },
         "tr" : {
@@ -244932,6 +245523,9 @@
         }
       }
     },
+    "Show items" : {
+
+    },
     "Show live activity" : {
       "comment" : "Notification option",
       "extractionState" : "manual",
@@ -247048,6 +247642,9 @@
         }
       }
     },
+    "Simulate Glucose Tablet" : {
+
+    },
     "Simulator Build has no expiry" : {
       "localizations" : {
         "bg" : {
@@ -247171,6 +247768,9 @@
           }
         }
       }
+    },
+    "Single-Item Correction" : {
+
     },
     "Skip Bolus screen after carbs" : {
       "comment" : "Do you want to show bolus screen after added carbs?",
@@ -254718,6 +255318,9 @@
         }
       }
     },
+    "Starts immediately after image capture and streams detected items and nutrient estimates into the interface." : {
+
+    },
     "Starts in %@" : {
       "localizations" : {
         "bg" : {
@@ -257355,6 +257958,12 @@
         }
       }
     },
+    "Streaming Food Analysis" : {
+
+    },
+    "Streaming Food Analysis is the main image prompt. Food Description Context is its optional addendum when the user supplies more information." : {
+
+    },
     "Strength" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -257479,6 +258088,9 @@
           }
         }
       }
+    },
+    "Strong (-25)" : {
+
     },
     "Style" : {
       "localizations" : {
@@ -258099,6 +258711,9 @@
           }
         }
       }
+    },
+    "Suggested" : {
+
     },
     "Suggested at" : {
       "comment" : "Headline in suggested pop up (at: at what time)",
@@ -259223,6 +259838,9 @@
           }
         }
       }
+    },
+    "Supporting Prompts" : {
+
     },
     "Suspend" : {
       "extractionState" : "manual",
@@ -260607,6 +261225,9 @@
         }
       }
     },
+    "Switch Camera" : {
+      "comment" : "Switch camera accessibility label"
+    },
     "Synth" : {
       "comment" : "Display name for the synth alarm sound.",
       "localizations" : {
@@ -261104,6 +261725,12 @@
         }
       }
     },
+    "Tablet Active" : {
+
+    },
+    "Tablet Effect" : {
+
+    },
     "Take a deep breath — you've got this." : {
       "localizations" : {
         "bg" : {
@@ -261227,6 +261854,15 @@
           }
         }
       }
+    },
+    "Take glucose tablets and deliver bolus" : {
+
+    },
+    "Take Photo" : {
+      "comment" : "Camera shutter accessibility label"
+    },
+    "Take Tablets" : {
+
     },
     "Tap a percentile or tap and hold a bar to reveal more details. Swipe to scroll through time." : {
       "localizations" : {
@@ -262723,6 +263359,9 @@
         }
       }
     },
+    "Target Delta at 90 min:" : {
+
+    },
     "Target Glucose" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -263106,6 +263745,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目標預設"
+          }
+        }
+      }
+    },
+    "Target range: ±%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Target range: ±%1$@ %2$@"
           }
         }
       }
@@ -265390,6 +266039,24 @@
         }
       }
     },
+    "Test" : {
+
+    },
+    "Test Complete" : {
+
+    },
+    "Test Details" : {
+
+    },
+    "Test in Progress" : {
+
+    },
+    "Test Summary" : {
+
+    },
+    "That was two slices of pizza, not one." : {
+
+    },
     "The Adjustment Factor (AF) allows you to control how quickly and effectively Dynamic ISF responds to changes in glucose levels." : {
       "localizations" : {
         "bg" : {
@@ -265513,6 +266180,9 @@
           }
         }
       }
+    },
+    "The AI provider is out of credits." : {
+      "comment" : "Error shown when an AI provider responds with an out-of-credits signal"
     },
     "The app Garmin Connect must be installed to use for Trio.\n Go to App Store to download it" : {
       "extractionState" : "manual",
@@ -266140,6 +266810,9 @@
           }
         }
       }
+    },
+    "The coffee had oat milk and no syrup." : {
+
     },
     "The current version has a critical issue and should be updated as soon as possible." : {
       "comment" : "Message for critical update alert",
@@ -268272,6 +268945,9 @@
         }
       }
     },
+    "The food items currently shown." : {
+
+    },
     "The forecasted glucose value in 4 hours based on current deviations ramping down to zero at the same rate they have been recently." : {
       "localizations" : {
         "bg" : {
@@ -268767,6 +269443,9 @@
           }
         }
       }
+    },
+    "The identified restaurant name." : {
+
     },
     "The lowest forecasted glucose during the remaining duration of insulin action (DIA)." : {
       "localizations" : {
@@ -269388,6 +270067,9 @@
         }
       }
     },
+    "The menu item to find." : {
+
+    },
     "The Night window runs from 'Night Starts' back around to 'Day Starts' — so by default, Night covers %1$@ through %2$@ the next morning." : {
       "localizations" : {
         "bg" : {
@@ -270008,6 +270690,18 @@
         }
       }
     },
+    "The original carbohydrate estimate." : {
+
+    },
+    "The original fat estimate." : {
+
+    },
+    "The original item name." : {
+
+    },
+    "The original protein estimate." : {
+
+    },
     "The other side of the autosens safety limits, putting a cap on how low autosens can adjust basals, and how high it can adjust ISF and BG targets." : {
       "comment" : "\"Autosens Min\"",
       "extractionState" : "manual",
@@ -270511,6 +271205,9 @@
           }
         }
       }
+    },
+    "The restaurant or brand name." : {
+
     },
     "The Sensitivity Ratio is used to calculate the amount of adjustment needed to basal rates and ISF." : {
       "localizations" : {
@@ -271133,6 +271830,9 @@
         }
       }
     },
+    "The tablet starts a glucose response curve that peaks at ~24 min and reaches the target delta at 90 min. The effect clears automatically after 120 min." : {
+
+    },
     "The time it takes to complete one full cycle from high to low and back to high." : {
       "localizations" : {
         "bg" : {
@@ -271380,6 +272080,12 @@
           }
         }
       }
+    },
+    "The user's corrected description." : {
+
+    },
+    "The user's food description." : {
+
     },
     "The Warsaw Method helps account for the delayed glucose spikes caused by fat and protein in meals. It uses Fat-Protein Units (FPU) to calculate the carb effect from fat and protein. The system spreads insulin delivery over several hours to mimic natural insulin release, helping to manage post-meal glucose spikes." : {
       "localizations" : {
@@ -273505,6 +274211,9 @@
           }
         }
       }
+    },
+    "This Build" : {
+
     },
     "This cap prevents the system from overestimating how much insulin is needed when carb absorption isn't visible, offering a safeguard for accurate dosing." : {
       "localizations" : {
@@ -280685,6 +281394,9 @@
         }
       }
     },
+    "This test checks whether your Carb Ratio (CR) setting is accurate by measuring how your glucose responds to a known amount of carbs and insulin." : {
+
+    },
     "This will add your current glucose on the top right of your Trio icon as a red notification badge. Changing setting takes effect on next Glucose reading." : {
       "localizations" : {
         "bg" : {
@@ -280933,6 +281645,9 @@
         }
       }
     },
+    "This will cancel the calibration test, deactivate the calibration override, and restore your previous settings. Any progress will be lost." : {
+
+    },
     "This will change settings back to your normal profile." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -281060,6 +281775,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "這將將設定恢復為您的正常個人設置。"
+          }
+        }
+      }
+    },
+    "This will log %@g carbs and deliver a %@U bolus. The 90-minute observation will begin immediately." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This will log %1$@g carbs and deliver a %2$@U bolus. The 90-minute observation will begin immediately."
           }
         }
       }
@@ -282569,6 +283294,12 @@
         }
       }
     },
+    "Time Remaining" : {
+
+    },
+    "Time to Test" : {
+
+    },
     "Time-Sensitive" : {
       "localizations" : {
         "bg" : {
@@ -282692,6 +283423,9 @@
           }
         }
       }
+    },
+    "Timed Out" : {
+
     },
     "Tip: Decreasing this value allows automatic adjustments of basal rates to be lower and ISF to be higher." : {
       "localizations" : {
@@ -286306,6 +287040,9 @@
           }
         }
       }
+    },
+    "Total Carbs" : {
+
     },
     "Total Daily Dose" : {
       "comment" : "Live Activity widget icon label for Total Daily Dose",
@@ -294552,6 +295289,9 @@
         }
       }
     },
+    "TruePlus glucose tablets, 3.75g carbs each" : {
+
+    },
     "Try again in a moment, or configure your Therapy Settings manually instead." : {
       "localizations" : {
         "bg" : {
@@ -295421,6 +296161,9 @@
           }
         }
       }
+    },
+    "Type a message..." : {
+      "comment" : "Placeholder for chat input"
     },
     "U" : {
       "comment" : "Insulin unit\nInsulin unit abbreviation\nThe short unit display string for international units of insulin\nUnits for bolus amount",
@@ -296677,6 +297420,12 @@
           }
         }
       }
+    },
+    "Unable to parse the AI response" : {
+      "comment" : "Error when response parsing fails"
+    },
+    "Unable to process the selected image" : {
+      "comment" : "Error when image data is invalid"
     },
     "Unable to render payload." : {
       "localizations" : {
@@ -302978,6 +303727,24 @@
         }
       }
     },
+    "Used after an initial analysis when the user chats with AI to add, remove, correct, or resize food items." : {
+
+    },
+    "Used during food chat to decide whether a message requests published restaurant nutrition facts." : {
+
+    },
+    "Used for corrections, conversation, intent detection, and restaurant or published-nutrition workflows." : {
+
+    },
+    "Used to decide whether the user's food description names a restaurant, chain, or branded menu item." : {
+
+    },
+    "Used to search the web for official nutrition facts after a restaurant and menu item are identified." : {
+
+    },
+    "Used when the user edits one detected food item's description and asks AI to recalculate its nutrients." : {
+
+    },
     "User Interface" : {
       "localizations" : {
         "bg" : {
@@ -304622,6 +305389,9 @@
         }
       }
     },
+    "Verify" : {
+      "comment" : "Button to verify published nutrition source"
+    },
     "Very High (>%@)" : {
       "localizations" : {
         "bg" : {
@@ -305368,6 +306138,12 @@
         }
       }
     },
+    "View Results" : {
+
+    },
+    "View source on GitHub" : {
+
+    },
     "W" : {
       "comment" : "Abbreviation for week",
       "localizations" : {
@@ -305623,6 +306399,9 @@
           }
         }
       }
+    },
+    "Waiting for Conditions" : {
+
     },
     "Want a hand? You can open our full Startup Guide here:" : {
       "localizations" : {
@@ -308370,6 +309149,9 @@
         }
       }
     },
+    "Weak (+25)" : {
+
+    },
     "Week" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -309253,6 +310035,9 @@
         }
       }
     },
+    "What is this?" : {
+
+    },
     "What it Adjusts" : {
       "localizations" : {
         "bg" : {
@@ -309624,6 +310409,9 @@
           }
         }
       }
+    },
+    "What's New" : {
+
     },
     "What's NOT limited:" : {
       "localizations" : {
@@ -310244,6 +311032,9 @@
           }
         }
       }
+    },
+    "When enabled, both models appear as tabs. The selected model runs first; the other loads when you open its tab." : {
+
     },
     "When enabled, long-pressing the + button on the home screen opens a Quick-Pick Boluses sheet. It suggests up to three bolus amounts based on your bolus history at similar times of day, weighted by recency and day type (weekday vs. weekend)." : {
       "comment" : "Verbose hint for enable quick-pick boluses toggle, part 1"
@@ -311875,6 +312666,9 @@
         }
       }
     },
+    "When This Prompt Is Used" : {
+
+    },
     "When true, raises BG target when autosens detects sensitivity" : {
       "comment" : "”Sensitivity Raises Target\"",
       "extractionState" : "manual",
@@ -312758,6 +313552,9 @@
           }
         }
       }
+    },
+    "While you wait:" : {
+
     },
     "Why does Trio collect this data?" : {
       "localizations" : {
@@ -316515,6 +317312,21 @@
           }
         }
       }
+    },
+    "Your blood glucose dropped more than expected. Consider raising your carb ratio (g/U) to deliver less insulin per gram of carbs." : {
+
+    },
+    "Your blood glucose rose more than expected. Consider lowering your carb ratio (g/U) to deliver more insulin per gram of carbs." : {
+
+    },
+    "Your blood glucose stayed within the expected range. No adjustment needed." : {
+
+    },
+    "Your carb ratio calibration results are ready." : {
+
+    },
+    "Your carb ratio is correct!" : {
+
     },
     "Your carb ratio tells how many grams of carbohydrates one unit of insulin will cover. This is essential for accurate meal bolus calculations." : {
       "localizations" : {

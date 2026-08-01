@@ -268,4 +268,27 @@
             <fetchIndexElement property="isPreset" type="Binary" order="descending"/>
         </fetchIndex>
     </entity>
+    <entity name="CalibrationTestStored" representedClassName="CalibrationTestStored" syncable="YES">
+        <attribute name="bolusAmount" optional="YES" attributeType="Decimal" defaultValueString="0.0"/>
+        <attribute name="carbRatioAtTestTime" optional="YES" attributeType="Decimal" defaultValueString="0.0"/>
+        <attribute name="date" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="endingGlucose" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="glucoseReadingsJSON" optional="YES" attributeType="Binary"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="observationEndDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="preflightStartDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="prepStartDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="ratioWasApplied" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="resultInterpretation" optional="YES" attributeType="String"/>
+        <attribute name="startingGlucose" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="startingIOB" optional="YES" attributeType="Decimal" defaultValueString="0.0"/>
+        <attribute name="suggestedNewRatio" optional="YES" attributeType="Decimal" defaultValueString="0.0"/>
+        <attribute name="tabletBrand" optional="YES" attributeType="String"/>
+        <attribute name="tabletCount" optional="YES" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="testStartDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="totalCarbs" optional="YES" attributeType="Decimal" defaultValueString="0.0"/>
+        <fetchIndex name="byDate">
+            <fetchIndexElement property="date" type="Binary" order="descending"/>
+        </fetchIndex>
+    </entity>
 </model>
