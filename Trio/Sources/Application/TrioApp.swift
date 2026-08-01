@@ -100,6 +100,7 @@ extension Notification.Name {
 
     init() {
         FileProtectionFixer.fixFlagFileProtectionForPropertyPersistentFlags() // TODO: ‼️ REMOVE ME BEFORE PUBLIC BETA / RELEASE
+        AIPromptSettings.removeObsoletePromptValues()
 
         let notificationCenter = Foundation.NotificationCenter.default
         notificationCenter.addObserver(

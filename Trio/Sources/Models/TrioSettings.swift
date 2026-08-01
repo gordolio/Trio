@@ -84,6 +84,16 @@ struct TrioSettings: JSON, Equatable, Encodable {
     /// Controls whether watchface data transmission is enabled
     var isWatchfaceDataEnabled: Bool = false
 
+    /// Selected AI provider for AI-assisted carb entry features
+    var aiProvider: AIProviderType = .openai
+
+    /// When enabled, food image analysis is available from every configured AI provider.
+    /// The selected provider runs first; other providers load when their tab is opened.
+    var sendToAllAIProvidersSimultaneously: Bool = false
+
+    /// Ordered dynamic OpenRouter configuration. Legacy provider fields above remain for migration.
+    var openRouterModelConfiguration = OpenRouterModelConfiguration()
+
     /// Computed property that groups all Garmin settings into a single struct
     var garminSettings: GarminWatchSettings {
         get {
@@ -350,6 +360,38 @@ extension TrioSettings: Decodable {
 
         if let isWatchfaceDataEnabled = try? container.decode(Bool.self, forKey: .isWatchfaceDataEnabled) {
             settings.isWatchfaceDataEnabled = isWatchfaceDataEnabled
+        }
+
+        if let aiProvider = try? container.decode(AIProviderType.self, forKey: .aiProvider) {
+            settings.aiProvider = aiProvider
+        }
+
+        if let sendToAllAIProvidersSimultaneously = try? container.decode(
+            Bool.self,
+            forKey: .sendToAllAIProvidersSimultaneously
+        ) {
+            settings.sendToAllAIProvidersSimultaneously = sendToAllAIProvidersSimultaneously
+        }
+
+        if let configuration = try? container.decode(
+            OpenRouterModelConfiguration.self,
+            forKey: .openRouterModelConfiguration
+        ) {
+            settings.openRouterModelConfiguration = OpenRouterModelConfiguration(
+                selectedModelIDs: configuration.selectedModelIDs,
+                defaultModelID: configuration.defaultModelID,
+                runAllModelsSimultaneously: configuration.runAllModelsSimultaneously
+            )
+        } else {
+            let legacyProvider = settings.aiProvider
+            let selectedIDs = settings.sendToAllAIProvidersSimultaneously
+                ? [OpenRouterModels.defaultModelID, OpenRouterModels.legacyClaudeModelID]
+                : [legacyProvider.modelID]
+            settings.openRouterModelConfiguration = OpenRouterModelConfiguration(
+                selectedModelIDs: selectedIDs,
+                defaultModelID: legacyProvider.modelID,
+                runAllModelsSimultaneously: false
+            )
         }
 
         self = settings

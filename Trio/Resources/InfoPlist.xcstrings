@@ -925,6 +925,18 @@
         }
       }
     },
+    "NSCameraUsageDescription" : {
+      "comment" : "Privacy - Camera Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Camera is used to take photos of food for AI-assisted carb estimation."
+          }
+        }
+      }
+    },
     "NSContactsUsageDescription" : {
       "comment" : "Privacy - Contacts Usage Description",
       "localizations" : {
@@ -1578,6 +1590,18 @@
           "stringUnit" : {
             "state" : "new",
             "value" : ""
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryUsageDescription" : {
+      "comment" : "Privacy - Photo Library Usage Description",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Photo library access is used to select food photos for AI-assisted carb estimation."
           }
         }
       }

@@ -75,5 +75,14 @@ struct AppShortcuts: AppShortcutsProvider {
             shortTitle: "Restart Live Activity",
             systemImageName: "arrow.clockwise.circle.fill"
         )
+        AppShortcut(
+            intent: ScanFoodIntent(),
+            phrases: [
+                "Scan food with \(.applicationName)",
+                "\(.applicationName) scan food"
+            ],
+            shortTitle: "Scan Food",
+            systemImageName: "camera.fill"
+        )
     }
 }

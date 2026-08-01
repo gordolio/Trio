@@ -44,6 +44,7 @@ enum Screen: Identifiable, Hashable {
     case calendarEventSettings
     case contactImage
     case serviceSettings
+    case aiServiceSettings
     case remoteControlConfig
     case autosensSettings
     case smbSettings
@@ -158,6 +159,8 @@ extension Screen {
             ContactImage.RootView(resolver: resolver)
         case .serviceSettings:
             ServicesView(resolver: resolver, state: Settings.StateModel())
+        case .aiServiceSettings:
+            AIServiceSettings.RootView(resolver: resolver)
         case .autosensSettings:
             AutosensSettings.RootView(resolver: resolver)
         case .smbSettings:
