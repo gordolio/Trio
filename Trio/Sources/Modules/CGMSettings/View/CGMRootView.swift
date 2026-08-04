@@ -212,6 +212,8 @@ extension CGMSettings {
                                     Text("• Dexcom G7 / ONE+")
                                     Text("• Dexcom Share")
                                     Text("• Freestyle Libre")
+                                    Text("• Eversense E3/365")
+                                    Text("• Accu-Chek SmartGuide")
                                     Text("• Freestyle Libre Demo")
                                     Text("• Glucose Simulator")
                                     Text("• Medtronic Enlite")
