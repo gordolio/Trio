@@ -51,7 +51,7 @@ struct GarminWatchState: Hashable, Equatable, Sendable, Encodable {
     /// Current insulin sensitivity factor as an integer (only in first array entry)
     var isf: Int16?
 
-    /// Sensitivity ratio 
+    /// Sensitivity ratio
     var sensRatio: Double?
 
     // MARK: - Display Configuration Fields

@@ -250,10 +250,14 @@ final class BaseGarminManager: NSObject, GarminManager, Injectable {
         settingsManager.settings.garminSettings.isWatchfaceDataEnabled
     }
 
-    /// SwissAlpine watchface uses historical glucose data (24 entries)
-    /// Trio watchface only uses current reading
+    /// SwissAlpine watchface and the complication app use historical glucose data (24 entries).
+    /// Trio watchface only uses current reading.
+    ///
+    /// The complication app needs it for the 2 h graph in its own view; the complications
+    /// it publishes read only element 0 and work without history.
     private var needsHistoricalGlucoseData: Bool {
         currentWatchface == .swissalpine
+            || currentWatchface == .complication
     }
 
     /// Returns the display name for an app UUID (watchface or datafield).
