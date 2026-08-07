@@ -40,6 +40,18 @@ struct MealStatsView: View {
 
     /// Updates the macronutrient averages based on the visible date range.
     private func updateAverages() {
+        if selectedInterval.usesHourlyData {
+            let visibleStats = mealStats.filter {
+                $0.date >= visibleDateRange.start && $0.date <= visibleDateRange.end
+            }
+            currentAverages = visibleStats.reduce(into: (carbs: 0, fat: 0, protein: 0)) { totals, stat in
+                totals.carbs += stat.carbs
+                totals.fat += stat.fat
+                totals.protein += stat.protein
+            }
+            return
+        }
+
         currentAverages = state.getCachedMealAverages(for: visibleDateRange)
     }
 
@@ -127,7 +139,7 @@ struct MealStatsView: View {
             ForEach(mealStats) { stat in
                 // Carbs Bar (bottom)
                 BarMark(
-                    x: .value("Date", stat.date, unit: selectedInterval == .day ? .hour : .day),
+                    x: .value("Date", stat.date, unit: selectedInterval.usesHourlyData ? .hour : .day),
                     y: .value("Amount", stat.carbs)
                 )
                 .foregroundStyle(by: .value("Type", "Carbs"))
@@ -140,7 +152,7 @@ struct MealStatsView: View {
                 if state.useFPUconversion {
                     // Fat Bar (middle)
                     BarMark(
-                        x: .value("Date", stat.date, unit: selectedInterval == .day ? .hour : .day),
+                        x: .value("Date", stat.date, unit: selectedInterval.usesHourlyData ? .hour : .day),
                         y: .value("Amount", stat.fat)
                     )
                     .foregroundStyle(by: .value("Type", "Fat"))
@@ -152,7 +164,7 @@ struct MealStatsView: View {
                     )
                     // Protein Bar (top)
                     BarMark(
-                        x: .value("Date", stat.date, unit: selectedInterval == .day ? .hour : .day),
+                        x: .value("Date", stat.date, unit: selectedInterval.usesHourlyData ? .hour : .day),
                         y: .value("Amount", stat.protein)
                     )
                     .foregroundStyle(by: .value("Type", "Protein"))
@@ -191,7 +203,7 @@ struct MealStatsView: View {
 
             // Dummy PointMark to force SwiftCharts to render a visible domain of 00:00-23:59
             // i.e. single day from midnight to midnight
-            if selectedInterval == .day {
+            if selectedInterval == .today {
                 let calendar = Calendar.current
                 let midnight = calendar.startOfDay(for: Date())
                 let nextMidnight = calendar.date(byAdding: .day, value: 1, to: midnight)!
@@ -235,12 +247,13 @@ struct MealStatsView: View {
             }
         }
         .chartXAxis {
-            AxisMarks(preset: .aligned, values: .stride(by: selectedInterval == .day ? .hour : .day)) { value in
+            AxisMarks(preset: .aligned, values: .stride(by: selectedInterval.usesHourlyData ? .hour : .day)) { value in
                 if let date = value.as(Date.self) {
                     let hour = Calendar.current.component(.hour, from: date)
 
                     switch selectedInterval {
-                    case .day:
+                    case .day,
+                         .today:
                         if hour % 6 == 0 { // Show only every 6 hours
                             AxisValueLabel(format: StatChartUtils.dateFormat(for: selectedInterval), centered: true)
                                 .font(.footnote)
@@ -274,7 +287,7 @@ struct MealStatsView: View {
         .chartScrollPosition(x: $scrollPosition)
         .chartScrollTargetBehavior(
             .valueAligned(
-                matching: selectedInterval == .day ?
+                matching: selectedInterval.usesHourlyData ?
                     DateComponents(minute: 0) :
                     DateComponents(hour: 0),
                 majorAlignment: .matching(StatChartUtils.alignmentComponents(for: selectedInterval))
@@ -309,7 +322,7 @@ private struct MealSelectionPopover: View {
     @Environment(\.colorScheme) var colorScheme
 
     private var timeText: String {
-        if selectedInterval == .day {
+        if selectedInterval.usesHourlyData {
             let hour = Calendar.current.component(.hour, from: selectedDate)
             return selectedDate.formatted(.dateTime.month().day().weekday()) + "\n" + "\(hour):00-\(hour + 1):00"
         } else {

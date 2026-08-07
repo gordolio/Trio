@@ -8,7 +8,8 @@ struct StatChartUtils {
     /// - Returns: The time interval in seconds.
     static func visibleDomainLength(for selectedInterval: Stat.StateModel.StatsTimeInterval) -> TimeInterval {
         switch selectedInterval {
-        case .day: return 24 * 3600
+        case .day,
+             .today: return 24 * 3600
         case .week: return 7 * 24 * 3600
         case .month: return 30 * 24 * 3600
         case .total: return 90 * 24 * 3600
@@ -26,8 +27,9 @@ struct StatChartUtils {
     ) -> (start: Date, end: Date) {
         let calendar = Calendar.current
 
-        if selectedInterval == .day {
-            // For day view, don't modify the scroll position
+        if selectedInterval.usesHourlyData {
+            // Hourly views retain their exact scroll position. `Today` starts
+            // at midnight, while `D` starts exactly 24 hours before now.
             let end = scrollPosition.addingTimeInterval(visibleDomainLength(for: selectedInterval) - 1)
             return (scrollPosition, end)
         } else {
@@ -54,7 +56,8 @@ struct StatChartUtils {
     /// - Returns: A Date.FormatStyle configured for the current time interval.
     static func dateFormat(for selectedInterval: Stat.StateModel.StatsTimeInterval) -> Date.FormatStyle {
         switch selectedInterval {
-        case .day: return .dateTime.hour()
+        case .day,
+             .today: return .dateTime.hour()
         case .week: return .dateTime.weekday(.abbreviated)
         case .month: return .dateTime.day()
         case .total: return .dateTime.month(.abbreviated)
@@ -66,7 +69,8 @@ struct StatChartUtils {
     /// - Returns: DateComponents configured for the appropriate alignment.
     static func alignmentComponents(for selectedInterval: Stat.StateModel.StatsTimeInterval) -> DateComponents {
         switch selectedInterval {
-        case .day: return DateComponents(hour: 0)
+        case .day,
+             .today: return DateComponents(hour: 0)
         case .week:
             let calendar = Calendar.current
             return DateComponents(weekday: calendar.firstWeekday)
@@ -85,8 +89,10 @@ struct StatChartUtils {
 
         let baseDate: Date
         switch selectedInterval {
+        case .today:
+            return today
         case .day:
-            baseDate = today
+            return now.addingTimeInterval(-visibleDomainLength(for: selectedInterval))
         case .week:
             baseDate = calendar.date(byAdding: .day, value: -6, to: today)!
         case .month:
@@ -111,7 +117,8 @@ struct StatChartUtils {
     ) -> Bool {
         let calendar = Calendar.current
         switch selectedInterval {
-        case .day:
+        case .day,
+             .today:
             return calendar.isDate(date1, equalTo: date2, toGranularity: .hour)
         default:
             return calendar.isDate(date1, inSameDayAs: date2)
@@ -131,7 +138,12 @@ struct StatChartUtils {
     ) -> String {
         let calendar = Calendar.current
 
-        // If not .day, we just return "startText - endText", e.g. "Jan 1 - Jan 8"
+        if selectedInterval == .today {
+            return Calendar.current.startOfDay(for: start)
+                .formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        }
+
+        // If not .day, return "startText - endText", e.g. "Jan 1 - Jan 8"
         guard selectedInterval == .day else {
             let formatDate: (Date) -> String = { date in
                 date.formatted(.dateTime.day().month())

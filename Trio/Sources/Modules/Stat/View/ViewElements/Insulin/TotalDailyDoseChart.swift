@@ -21,7 +21,7 @@ struct TotalDailyDoseChart: View {
     @State private var currentAverage: Double = 0
     /// Timer to throttle updates when scrolling.
     @State private var updateTimer = Stat.UpdateTimer()
-    /// Sum of hourly doses for `Day` view
+    /// Sum of hourly doses for the `Today` and rolling `Day` views
     @State private var sumOfHourlyDoses: Double = 0
     /// The actual chart plot's width in pixel
     @State private var chartWidth: CGFloat = 0
@@ -84,7 +84,7 @@ struct TotalDailyDoseChart: View {
         .onChange(of: scrollPosition) {
             updateTimer.scheduleUpdate {
                 updateAverages()
-                if selectedInterval == .day {
+                if selectedInterval.usesHourlyData {
                     updateTotalDoses()
                 }
             }
@@ -95,7 +95,7 @@ struct TotalDailyDoseChart: View {
                 // Use async dispatch to ensure scroll position is updated before calculating averages
                 await MainActor.run {
                     updateAverages()
-                    if selectedInterval == .day {
+                    if selectedInterval.usesHourlyData {
                         updateTotalDoses()
                     }
                 }
@@ -106,7 +106,7 @@ struct TotalDailyDoseChart: View {
     /// A view displaying the statistics summary including average TDD.
     private var statsView: some View {
         HStack {
-            if selectedInterval == .day {
+            if selectedInterval.usesHourlyData {
                 Grid(alignment: .leading) {
                     GridRow {
                         Text("Average:")
@@ -144,7 +144,7 @@ struct TotalDailyDoseChart: View {
         Chart {
             ForEach(tddStats) { stat in
                 BarMark(
-                    x: .value("Date", stat.date, unit: selectedInterval == .day ? .hour : .day),
+                    x: .value("Date", stat.date, unit: selectedInterval.usesHourlyData ? .hour : .day),
                     y: .value("Amount", stat.amount)
                 )
                 .foregroundStyle(Color.insulin)
@@ -180,7 +180,7 @@ struct TotalDailyDoseChart: View {
 
             // Dummy PointMark to force SwiftCharts to render a visible domain of 00:00-23:59
             // i.e. single day from midnight to midnight
-            if selectedInterval == .day {
+            if selectedInterval == .today {
                 let calendar = Calendar.current
                 let midnight = calendar.startOfDay(for: Date())
                 let nextMidnight = calendar.date(byAdding: .day, value: 1, to: midnight)!
@@ -204,13 +204,14 @@ struct TotalDailyDoseChart: View {
             }
         }
         .chartXAxis {
-            AxisMarks(preset: .aligned, values: .stride(by: selectedInterval == .day ? .hour : .day)) { value in
+            AxisMarks(preset: .aligned, values: .stride(by: selectedInterval.usesHourlyData ? .hour : .day)) { value in
                 if let date = value.as(Date.self) {
                     let day = Calendar.current.component(.day, from: date)
                     let hour = Calendar.current.component(.hour, from: date)
 
                     switch selectedInterval {
-                    case .day:
+                    case .day,
+                         .today:
                         if hour % 6 == 0 { // Show only every 6 hours
                             AxisValueLabel(format: StatChartUtils.dateFormat(for: selectedInterval), centered: true)
                                 .font(.footnote)
@@ -243,7 +244,7 @@ struct TotalDailyDoseChart: View {
         .chartScrollPosition(x: $scrollPosition)
         .chartScrollTargetBehavior(
             .valueAligned(
-                matching: selectedInterval == .day ?
+                matching: selectedInterval.usesHourlyData ?
                     DateComponents(minute: 0) :
                     DateComponents(hour: 0),
                 majorAlignment: .matching(StatChartUtils.alignmentComponents(for: selectedInterval))
@@ -273,7 +274,7 @@ private struct TDDSelectionPopover: View {
     @Environment(\.colorScheme) var colorScheme
 
     private var timeText: String {
-        if selectedInterval == .day {
+        if selectedInterval.usesHourlyData {
             let hour = Calendar.current.component(.hour, from: selectedDate)
             return selectedDate.formatted(.dateTime.month().day().weekday()) + "\n" + "\(hour):00-\(hour + 1):00"
         } else {

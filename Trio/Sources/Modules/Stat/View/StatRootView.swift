@@ -258,7 +258,7 @@ extension Stat {
                     } else {
                         TotalDailyDoseChart(
                             selectedInterval: $state.selectedIntervalForInsulinStats,
-                            tddStats: state.selectedIntervalForInsulinStats == .day ?
+                            tddStats: state.selectedIntervalForInsulinStats.usesHourlyData ?
                                 state.hourlyTDDStats : state.dailyTDDStats,
                             state: state
                         )
@@ -278,7 +278,7 @@ extension Stat {
                     } else {
                         BolusStatsView(
                             selectedInterval: $state.selectedIntervalForInsulinStats,
-                            bolusStats: state.selectedIntervalForInsulinStats == .day ?
+                            bolusStats: state.selectedIntervalForInsulinStats.usesHourlyData ?
                                 state.hourlyBolusStats : state.dailyBolusStats,
                             state: state
                         )
@@ -396,7 +396,7 @@ extension Stat {
                     } else {
                         MealStatsView(
                             selectedInterval: $state.selectedIntervalForMealStats,
-                            mealStats: state.selectedIntervalForMealStats == .day ?
+                            mealStats: state.selectedIntervalForMealStats.usesHourlyData ?
                                 state.hourlyMealStats : state.dailyMealStats,
                             state: state
                         )

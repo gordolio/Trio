@@ -52,10 +52,10 @@ extension Stat {
         }
 
         // Selected Duration for Insulin Stats
-        var selectedIntervalForInsulinStats: StatsTimeInterval = .day
+        var selectedIntervalForInsulinStats: StatsTimeInterval = .today
 
         // Selected Duration for Meal Stats
-        var selectedIntervalForMealStats: StatsTimeInterval = .day
+        var selectedIntervalForMealStats: StatsTimeInterval = .today
 
         // Selected Duration for Loop Stats
         var selectedIntervalForLoopStats: StatsTimeIntervalWithToday = .today {
@@ -325,6 +325,8 @@ extension Stat.StateModel {
 
     /// Defines the available time periods for duration-based statistics
     enum StatsTimeInterval: String, CaseIterable, Identifiable {
+        /// Current calendar day, from midnight until now
+        case today
         /// Single day interval
         case day = "D"
         /// Week interval
@@ -336,8 +338,12 @@ extension Stat.StateModel {
 
         var id: Self { self }
 
+        var usesHourlyData: Bool { self == .today || self == .day }
+
         var displayName: String {
             switch self {
+            case .today:
+                return String(localized: "Today")
             case .day:
                 return String(localized: "D", comment: "Abbreviation for day")
             case .week:

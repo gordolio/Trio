@@ -42,6 +42,19 @@ struct BolusStatsView: View {
 
     /// Updates the bolus insulin averages based on the visible date range.
     private func updateCalculatedValues() {
+        if selectedInterval.usesHourlyData {
+            let visibleStats = bolusStats.filter {
+                $0.date >= visibleDateRange.start && $0.date <= visibleDateRange.end
+            }
+            currentAverages = visibleStats.reduce(into: (manual: 0, smb: 0, external: 0)) { totals, stat in
+                totals.manual += stat.manualBolus
+                totals.smb += stat.smb
+                totals.external += stat.external
+            }
+            currentTotal = currentAverages.manual + currentAverages.smb + currentAverages.external
+            return
+        }
+
         currentAverages = state.getCachedBolusAverages(for: visibleDateRange)
         currentTotal = state.getCachedBolusTotals(for: visibleDateRange)
     }
@@ -51,7 +64,7 @@ struct BolusStatsView: View {
         HStack {
             Grid(alignment: .leading) {
                 GridRow {
-                    if selectedInterval != .day {
+                    if !selectedInterval.usesHourlyData {
                         Text("ø") + Text("\u{00A0}") + Text("Manual:")
                     } else {
                         Text("Manual:")
@@ -60,7 +73,7 @@ struct BolusStatsView: View {
                         + Text("\u{00A0}") + Text("U")
                 }
                 GridRow {
-                    if selectedInterval != .day {
+                    if !selectedInterval.usesHourlyData {
                         Text("ø") + Text("\u{00A0}") + Text("SMB:")
                     } else {
                         Text("SMB:")
@@ -69,7 +82,7 @@ struct BolusStatsView: View {
                         + Text("\u{00A0}") + Text("U")
                 }
                 GridRow {
-                    if selectedInterval != .day {
+                    if !selectedInterval.usesHourlyData {
                         Text("ø") + Text("\u{00A0}") + Text("External:")
                     } else {
                         Text("External:")
@@ -148,7 +161,7 @@ struct BolusStatsView: View {
             ForEach(bolusStats) { stat in
                 // Total Bolus Bar
                 BarMark(
-                    x: .value("Date", stat.date, unit: selectedInterval == .day ? .hour : .day),
+                    x: .value("Date", stat.date, unit: selectedInterval.usesHourlyData ? .hour : .day),
                     y: .value("Amount", stat.manualBolus)
                 )
                 .foregroundStyle(by: .value("Type", "Manual"))
@@ -161,7 +174,7 @@ struct BolusStatsView: View {
 
                 // Carb Bolus Bar
                 BarMark(
-                    x: .value("Date", stat.date, unit: selectedInterval == .day ? .hour : .day),
+                    x: .value("Date", stat.date, unit: selectedInterval.usesHourlyData ? .hour : .day),
                     y: .value("Amount", stat.smb)
                 )
                 .foregroundStyle(by: .value("Type", "SMB"))
@@ -173,7 +186,7 @@ struct BolusStatsView: View {
                 )
                 // Correction Bolus Bar
                 BarMark(
-                    x: .value("Date", stat.date, unit: selectedInterval == .day ? .hour : .day),
+                    x: .value("Date", stat.date, unit: selectedInterval.usesHourlyData ? .hour : .day),
                     y: .value("Amount", stat.external)
                 )
                 .foregroundStyle(by: .value("Type", "External"))
@@ -187,7 +200,7 @@ struct BolusStatsView: View {
 
             // Dummy PointMark to force SwiftCharts to render a visible domain of 00:00-23:59
             // i.e. single day from midnight to midnight
-            if selectedInterval == .day {
+            if selectedInterval == .today {
                 let calendar = Calendar.current
                 let midnight = calendar.startOfDay(for: Date())
                 let nextMidnight = calendar.date(byAdding: .day, value: 1, to: midnight)!
@@ -254,10 +267,11 @@ struct BolusStatsView: View {
             }
         }
         .chartXAxis {
-            AxisMarks(preset: .aligned, values: .stride(by: selectedInterval == .day ? .hour : .day)) { value in
+            AxisMarks(preset: .aligned, values: .stride(by: selectedInterval.usesHourlyData ? .hour : .day)) { value in
                 if let date = value.as(Date.self) {
                     switch selectedInterval {
-                    case .day:
+                    case .day,
+                         .today:
                         let hour = Calendar.current.component(.hour, from: date)
                         if hour % 6 == 0 { // Show only every 6 hours
                             AxisValueLabel(format: StatChartUtils.dateFormat(for: selectedInterval), centered: true)
@@ -293,7 +307,7 @@ struct BolusStatsView: View {
         .chartScrollTargetBehavior(
             .valueAligned(
                 matching:
-                selectedInterval == .day ?
+                selectedInterval.usesHourlyData ?
                     DateComponents(minute: 0) : // Align to next hour for Day view
                     DateComponents(hour: 0), // Align to start of day for other views
                 majorAlignment: .matching(
@@ -318,7 +332,7 @@ private struct BolusSelectionPopover: View {
     @Environment(\.colorScheme) var colorScheme
 
     private var timeText: String {
-        if selectedInterval == .day {
+        if selectedInterval.usesHourlyData {
             let hour = Calendar.current.component(.hour, from: selectedDate)
             return selectedDate.formatted(.dateTime.month().day().weekday()) + "\n" + "\(hour):00-\(hour + 1):00"
         } else {
