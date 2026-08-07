@@ -1,4 +1,3 @@
-import FirebaseCrashlytics
 import Observation
 import SwiftUI
 
@@ -31,7 +30,10 @@ extension AppDiagnostics {
 
             PropertyPersistentFlags.shared.crashlyticsSharingEnabled = diagnosticsSharingOption.crashlyticsEnabled
             PropertyPersistentFlags.shared.telemetrySharingEnabled = diagnosticsSharingOption.telemetryEnabled
-            Crashlytics.crashlytics().setCrashlyticsCollectionEnabled(diagnosticsSharingOption.crashlyticsEnabled)
+
+            // Opting out also drops whatever GoogleDataTransport already queued,
+            // so no crash-reporting upload survives the switch.
+            CrashReportingGate.setEnabled(diagnosticsSharingOption.crashlyticsEnabled)
 
             // Fire an inaugural send on a fresh re-opt-in so the first data
             // point arrives immediately rather than 24h later.
