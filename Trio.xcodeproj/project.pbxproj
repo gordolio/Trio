@@ -270,6 +270,12 @@
 		3B2A3BC12E2B19C600658FB9 /* DynamicISF.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2A3BC02E2B19C600658FB9 /* DynamicISF.swift */; };
 		3B2A3BC32E2B19F700658FB9 /* DynamicISFTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2A3BC22E2B19F700658FB9 /* DynamicISFTests.swift */; };
 		3B2CE68B2E24ADF7005EF782 /* IobGenerateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2CE68A2E24ADF3005EF782 /* IobGenerateTests.swift */; };
+		FAB1E00000000000000000C1 /* ParityHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAB1E00000000000000000B1 /* ParityHarness.swift */; };
+		FAB1E00000000000000000C2 /* ParityInputs.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAB1E00000000000000000B2 /* ParityInputs.swift */; };
+		FAB1E00000000000000000C3 /* ParityScenarios.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAB1E00000000000000000B3 /* ParityScenarios.swift */; };
+		FAB1E00000000000000000C4 /* ParityGoldenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAB1E00000000000000000B4 /* ParityGoldenTests.swift */; };
+		7A11AC0DE000000000000060 /* WallClockParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11AC0DE000000000000160 /* WallClockParityTests.swift */; };
+		FAB1E00000000000000000C5 /* ParityPerformanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAB1E00000000000000000B5 /* ParityPerformanceTests.swift */; };
 		3B2F77862D7E52ED005ED9FA /* TDD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2F77852D7E52ED005ED9FA /* TDD.swift */; };
 		3B2F77882D7E5387005ED9FA /* CurrentTDDSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B2F77872D7E5387005ED9FA /* CurrentTDDSetup.swift */; };
 		3B3B4F542E661A1200B668E3 /* DetermineBasalGlucoseFallingFasterThanExpectedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B3B4F532E6619FF00B668E3 /* DetermineBasalGlucoseFallingFasterThanExpectedTests.swift */; };
@@ -1375,6 +1381,12 @@
 		3B2A3BC02E2B19C600658FB9 /* DynamicISF.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DynamicISF.swift; sourceTree = "<group>"; };
 		3B2A3BC22E2B19F700658FB9 /* DynamicISFTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DynamicISFTests.swift; sourceTree = "<group>"; };
 		3B2CE68A2E24ADF3005EF782 /* IobGenerateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IobGenerateTests.swift; sourceTree = "<group>"; };
+		FAB1E00000000000000000B1 /* ParityHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParityHarness.swift; sourceTree = "<group>"; };
+		FAB1E00000000000000000B2 /* ParityInputs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParityInputs.swift; sourceTree = "<group>"; };
+		FAB1E00000000000000000B3 /* ParityScenarios.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParityScenarios.swift; sourceTree = "<group>"; };
+		FAB1E00000000000000000B4 /* ParityGoldenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParityGoldenTests.swift; sourceTree = "<group>"; };
+		7A11AC0DE000000000000160 /* WallClockParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WallClockParityTests.swift; sourceTree = "<group>"; };
+		FAB1E00000000000000000B5 /* ParityPerformanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParityPerformanceTests.swift; sourceTree = "<group>"; };
 		3B2F77852D7E52ED005ED9FA /* TDD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TDD.swift; sourceTree = "<group>"; };
 		3B2F77872D7E5387005ED9FA /* CurrentTDDSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentTDDSetup.swift; sourceTree = "<group>"; };
 		3B3B4F532E6619FF00B668E3 /* DetermineBasalGlucoseFallingFasterThanExpectedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetermineBasalGlucoseFallingFasterThanExpectedTests.swift; sourceTree = "<group>"; };
@@ -3401,6 +3413,7 @@
 			isa = PBXGroup;
 			children = (
 				3B1C5C3C2D68E269004E9273 /* json */,
+				FAB1E00000000000000000A0 /* Parity */,
 				3B1C5C3F2D68E269004E9273 /* utils */,
 				3BBC22622DF5B93900169236 /* AutosensTests.swift */,
 				3BA643E92ED9FAD8007BC31F /* DetermineBasalAggressiveDosingTests.swift */,
@@ -3431,6 +3444,19 @@
 				3BAC92CC2E57859600B853DA /* SetTempBasalTests.swift */,
 			);
 			path = OpenAPSSwiftTests;
+			sourceTree = "<group>";
+		};
+		FAB1E00000000000000000A0 /* Parity */ = {
+			isa = PBXGroup;
+			children = (
+				FAB1E00000000000000000B1 /* ParityHarness.swift */,
+				FAB1E00000000000000000B2 /* ParityInputs.swift */,
+				FAB1E00000000000000000B3 /* ParityScenarios.swift */,
+				FAB1E00000000000000000B4 /* ParityGoldenTests.swift */,
+				7A11AC0DE000000000000160 /* WallClockParityTests.swift */,
+				FAB1E00000000000000000B5 /* ParityPerformanceTests.swift */,
+			);
+			path = Parity;
 			sourceTree = "<group>";
 		};
 		3B997DD22DC02AEF006B6BB2 /* JSONImporterData */ = {
@@ -5999,6 +6025,12 @@
 				3BE2F1EA2E031951009E2900 /* MealCobBucketingTests.swift in Sources */,
 				3B1C5C472D68E269004E9273 /* IobCalculateTests.swift in Sources */,
 				3B2CE68B2E24ADF7005EF782 /* IobGenerateTests.swift in Sources */,
+				FAB1E00000000000000000C1 /* ParityHarness.swift in Sources */,
+				FAB1E00000000000000000C2 /* ParityInputs.swift in Sources */,
+				FAB1E00000000000000000C3 /* ParityScenarios.swift in Sources */,
+				FAB1E00000000000000000C4 /* ParityGoldenTests.swift in Sources */,
+				7A11AC0DE000000000000060 /* WallClockParityTests.swift in Sources */,
+				FAB1E00000000000000000C5 /* ParityPerformanceTests.swift in Sources */,
 				3B1C5C482D68E269004E9273 /* IobHistoryTests.swift in Sources */,
 				38FCF3F925E902C20078B0D1 /* FileStorageTests.swift in Sources */,
 				BD11A001000000000000A002 /* AlertMuterTests.swift in Sources */,
