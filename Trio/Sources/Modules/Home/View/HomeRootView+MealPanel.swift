@@ -53,8 +53,10 @@ extension Home.RootView {
     /// Bell pill matching the header pills; countdown replaces the label while snoozed.
     @ViewBuilder var alarmsPill: some View {
         // timerDate keeps the countdown ticking
+        // measure from now, so calculation is not based off stale tick date
+        // cf. https://github.com/nightscout/Trio/issues/1381
         let isSnoozed = alarmsSnoozeUntil > state.timerDate
-        let remainingMinutes = max(Int(ceil(alarmsSnoozeUntil.timeIntervalSince(state.timerDate) / 60)), 0)
+        let remainingMinutes = max(Int(ceil(alarmsSnoozeUntil.timeIntervalSince(max(state.timerDate, Date())) / 60)), 0)
 
         Button {
             showSnoozeSheet = true

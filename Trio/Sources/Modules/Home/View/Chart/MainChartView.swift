@@ -102,6 +102,9 @@ struct MainChartView: View {
     /// Auto-pans the chart while a scrubbing finger rests in the viewport's edge zones.
     @State private var edgePanTask: Task<Void, Never>?
 
+    /// Measured plot rect of the COB/IOB pane (canvas y-coords) for overlay alignment.
+    @State private var cobIobPlotFrame: CGRect = .zero
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             MainChartCanvas(
@@ -162,6 +165,7 @@ struct MainChartView: View {
         )
         .clipped()
         .contentShape(Rectangle())
+        .onPreferenceChange(CobIobPlotFrameKey.self) { cobIobPlotFrame = $0 }
         .simultaneousGesture(panAndInspectGesture)
         .simultaneousGesture(magnifyGesture)
         .simultaneousGesture(TapGesture(count: 2).onEnded { cycleZoomPreset() })
@@ -320,7 +324,11 @@ extension MainChartView {
         )
         let span = domain.upperBound - domain.lowerBound
         let fraction = span == 0 ? 0.5 : (value - domain.lowerBound) / span
-        return basalHeight + mainHeight + cobIobHeight * CGFloat(1 - min(max(fraction, 0), 1))
+        // the pane's hour labels reserve space inside the pane frame, so the
+        // plot is shorter than cobIobHeight; map through the measured plot rect
+        let plotTop = cobIobPlotFrame == .zero ? basalHeight + mainHeight : cobIobPlotFrame.minY
+        let plotHeight = cobIobPlotFrame == .zero ? cobIobHeight : cobIobPlotFrame.height
+        return plotTop + plotHeight * CGFloat(1 - min(max(fraction, 0), 1))
     }
 
     /// Dark fade pinned to the trailing edge whenever "now" is scrolled off-screen.
@@ -375,25 +383,30 @@ extension MainChartView {
                     .frame(width: 6, height: 6)
                     .position(x: x, y: glucoseY)
 
-                // Selected COB / (scaled) IOB dots on the bottom pane.
+                // Selected COB / (scaled) IOB dots on the bottom pane, at the
+                // determination's own timestamp: the lookup picks the newest
+                // determination within ±150 s of the scrub point, so drawing its
+                // value at the rule's x floats the dot off the stepped line.
                 if let selectedCOBValue {
+                    let dotX = xPosition(for: selectedCOBValue.deliverAt ?? selectionDate)
                     let y = cobIobYPosition(forChartValue: Double(selectedCOBValue.cob))
                     Circle().fill(Color.orange.opacity(0.8))
                         .frame(width: 15, height: 15)
-                        .position(x: x, y: y)
+                        .position(x: dotX, y: y)
                     Circle().fill(Color.primary)
                         .frame(width: 6, height: 6)
-                        .position(x: x, y: y)
+                        .position(x: dotX, y: y)
                 }
                 if let selectedIOBValue {
+                    let dotX = xPosition(for: selectedIOBValue.deliverAt ?? selectionDate)
                     let scaled = MainChartHelper.scaledIobAmount(selectedIOBValue.iob?.doubleValue ?? 0)
                     let y = cobIobYPosition(forChartValue: scaled)
                     Circle().fill(Color.darkerBlue.opacity(0.8))
                         .frame(width: 15, height: 15)
-                        .position(x: x, y: y)
+                        .position(x: dotX, y: y)
                     Circle().fill(Color.primary)
                         .frame(width: 6, height: 6)
-                        .position(x: x, y: y)
+                        .position(x: dotX, y: y)
                 }
 
                 // Detail card: fixed slot at the top of the glucose pane.
@@ -855,6 +868,10 @@ struct MainChartCanvas: View {
         }
     }
 
+    /// Coordinate space for plot-frame preferences; pane-local plot rects let the
+    /// shell's selection overlay match the charts' real plot areas.
+    static let coordinateSpaceName = "mainChartCanvas"
+
     var body: some View {
         VStack(spacing: 0) {
             basalChart
@@ -862,9 +879,19 @@ struct MainChartCanvas: View {
             cobIobChart
         }
         .frame(width: canvasWidth)
+        .coordinateSpace(name: Self.coordinateSpaceName)
         .onAppear {
             calculateTempBasals()
         }
+    }
+}
+
+/// Plot-area rect of the COB/IOB pane in canvas coordinates (y is offset-independent).
+struct CobIobPlotFrameKey: PreferenceKey {
+    static let defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero { value = next }
     }
 }
 

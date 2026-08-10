@@ -1,18 +1,18 @@
 import SwiftUI
 
-extension QuickPickBolusesConfig {
+extension QuickPickTreatmentsConfig {
     final class StateModel: BaseStateModel<Provider> {
-        @Published var enableQuickBolus: Bool = false
+        @Published var enableQuickPickTreatments: Bool = false
         @Published var units: GlucoseUnits = .mgdL
 
         override func subscribe() {
-            subscribeSetting(\.enableQuickBolus, on: $enableQuickBolus) { enableQuickBolus = $0 }
+            subscribeSetting(\.enableQuickPickTreatments, on: $enableQuickPickTreatments) { enableQuickPickTreatments = $0 }
             units = settingsManager.settings.units
         }
     }
 }
 
-extension QuickPickBolusesConfig.StateModel: SettingsObserver {
+extension QuickPickTreatmentsConfig.StateModel: SettingsObserver {
     func settingsDidChange(_ settings: TrioSettings) {
         units = settings.units
     }

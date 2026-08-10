@@ -26,8 +26,8 @@ extension Home {
         @State var showTreatments = false
         @State var selectedTab: Int = 0
         static let treatmentTabTag = 4
-        @State var showQuickBolusPicker = false
-        @State var showQuickBolusNoHistory = false
+        @State var showQuickPickTreatmentsPicker = false
+        @State var showQuickPickTreatmentsNoHistory = false
         @State var showPumpSelection: Bool = false
         @State var showCGMSelection: Bool = false
         @State var showSnoozeSheet: Bool = false
@@ -84,7 +84,7 @@ extension Home {
             .frame(height: chartHeight)
             .overlay(alignment: .bottomTrailing) {
                 chartInfoButton
-                    .offset(x: 0, y: -10)
+                    .offset(x: 0, y: -18)
             }
             .overlay(alignment: .topTrailing) {
                 // borderless capsule (not a control); centered in the basal
@@ -113,13 +113,18 @@ extension Home {
             Button {
                 state.isLegendPresented.toggle()
             } label: {
+                // styled to match the alarm bell pill in the meal row
                 Image(systemName: "info")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.callout)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.primary)
                     .frame(width: 32, height: 32)
-                    .background(Circle().fill(.ultraThinMaterial))
-                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                    .overlay(
+                        Circle()
+                            .stroke(Color.primary.opacity(0.4), lineWidth: 2)
+                    )
             }
+            .buttonStyle(.plain)
             .contentShape(Circle())
             .padding(.bottom, 6)
             // same trailing inset as the alarm bell in the meal row
@@ -402,15 +407,15 @@ extension Home {
                     state.showModal(for: .treatmentView)
                 }
                 .onLongPressGesture(minimumDuration: 0.5) {
-                    guard state.enableQuickBolus else { return }
+                    guard state.enableQuickPickTreatments else { return }
                     let impactHeavy = UIImpactFeedbackGenerator(style: .heavy)
                     impactHeavy.impactOccurred()
                     Task {
-                        await state.loadQuickBolusSuggestions()
-                        if state.quickBolusHistory.isEmpty {
-                            showQuickBolusNoHistory = true
+                        await state.loadQuickPickTreatmentSuggestions()
+                        if state.quickPickBolusSuggestions.isEmpty, state.quickPickCarbSuggestions.isEmpty {
+                            showQuickPickTreatmentsNoHistory = true
                         } else {
-                            showQuickBolusPicker = true
+                            showQuickPickTreatmentsPicker = true
                         }
                     }
                 }
@@ -492,22 +497,28 @@ extension Home {
                     CustomProgressView(text: String(localized: "Updating IOB...", comment: "Progress text when updating IOB"))
                 }
             }
-            .sheet(isPresented: $showQuickBolusPicker) {
-                QuickPickBolusesView(
-                    suggestions: state.quickBolusHistory,
-                    onEnact: { amount in await state.enactQuickBolus(amount: amount) },
-                    isPresented: $showQuickBolusPicker
+            .sheet(isPresented: $showQuickPickTreatmentsPicker) {
+                QuickPickTreatmentsView(
+                    bolusSuggestions: state.quickPickBolusSuggestions,
+                    carbSuggestions: state.quickPickCarbSuggestions,
+                    onEnact: { bolusAmount, carbAmount in
+                        await state.enactQuickPickTreatment(bolusAmount: bolusAmount, carbAmount: carbAmount)
+                    },
+                    isPresented: $showQuickPickTreatmentsPicker
                 )
             }
             .alert(
-                String(localized: "No bolus history yet", comment: "Alert title when no quick-pick boluses history exists"),
-                isPresented: $showQuickBolusNoHistory
+                String(
+                    localized: "No treatment history yet",
+                    comment: "Alert title when no quick-pick treatments history exists"
+                ),
+                isPresented: $showQuickPickTreatmentsNoHistory
             ) {
                 Button(String(localized: "OK"), role: .cancel) {}
             } message: {
                 Text(String(
-                    localized: "Quick-Pick Boluses learns from your manual boluses over time. Once you've delivered a few boluses, it will suggest amounts based on what you typically enact at this time of day.",
-                    comment: "Alert body explaining that quick-pick boluses history is empty"
+                    localized: "Quick-Pick Treatments learns from your manual boluses and carb entries over time. Once you've logged a few, it will suggest amounts based on what you typically enter at this time of day.",
+                    comment: "Alert body explaining that quick-pick treatments history is empty"
                 ))
             }
         }

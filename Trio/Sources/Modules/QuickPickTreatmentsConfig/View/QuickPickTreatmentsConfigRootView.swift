@@ -1,7 +1,7 @@
 import SwiftUI
 import Swinject
 
-extension QuickPickBolusesConfig {
+extension QuickPickTreatmentsConfig {
     struct RootView: BaseView {
         let resolver: Resolver
 
@@ -20,26 +20,26 @@ extension QuickPickBolusesConfig {
             List {
                 SettingInputSection(
                     decimalValue: $decimalPlaceholder,
-                    booleanValue: $state.enableQuickBolus,
+                    booleanValue: $state.enableQuickPickTreatments,
                     shouldDisplayHint: $shouldDisplayHint,
                     selectedVerboseHint: Binding(
                         get: { selectedVerboseHint },
                         set: {
                             selectedVerboseHint = $0.map { AnyView($0) }
-                            hintLabel = String(localized: "Enable Quick-Pick Boluses")
+                            hintLabel = String(localized: "Enable Quick-Pick Treatments")
                         }
                     ),
                     units: state.units,
                     type: .boolean,
-                    label: String(localized: "Enable Quick-Pick Boluses"),
-                    miniHint: String(localized: "Long-press the + button on the home screen to enact a quick-pick bolus."),
+                    label: String(localized: "Enable Quick-Pick Treatments"),
+                    miniHint: String(localized: "Long-press the + button on the home screen to enact a quick-pick treatment."),
                     verboseHint: VStack(alignment: .leading, spacing: 10) {
                         Text("Default: OFF").bold()
                         Text(
-                            "When enabled, long-pressing the + button on the home screen opens a Quick-Pick Boluses sheet. It suggests up to three bolus amounts based on your bolus history at similar times of day, weighted by recency and day type (weekday vs. weekend)."
+                            "When enabled, long-pressing the + button on the home screen opens a Quick-Pick Treatments sheet. It suggests up to three bolus amounts and, if you have carb history, up to three carb amounts based on what you typically enter at this time of day, weighted by recency and day type (weekday vs. weekend)."
                         )
                         Text(
-                            "Slide to confirm your selected amount. Face ID or Touch ID is always required before the bolus is enacted."
+                            "Tap a bolus amount, a carb amount, or both, then slide to confirm. Face ID or Touch ID is always required before a bolus is enacted."
                         )
                     }
                 )
@@ -56,7 +56,7 @@ extension QuickPickBolusesConfig {
             }
             .scrollContentBackground(.hidden).background(appState.trioBackgroundColor(for: colorScheme))
             .onAppear(perform: configureView)
-            .navigationBarTitle("Quick-Pick Boluses")
+            .navigationBarTitle("Quick-Pick Treatments")
             .navigationBarTitleDisplayMode(.automatic)
             .settingsHighlightScroll()
         }

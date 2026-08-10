@@ -30,3 +30,10 @@ struct IOBEntry: JSON {
         let duration: Decimal
     }
 }
+
+/// Chart-ready point of the projected IOB decay curve.
+struct IobProjectionPoint: Identifiable, Equatable {
+    let date: Date
+    let iob: Double
+    var id: Date { date }
+}
