@@ -347,6 +347,12 @@ final class OpenAPS {
             determination.timestamp = deliverAt
 
             if !simulation {
+                // TODO: refactor this to core data
+                let cobEntries = (determination.cobProjection ?? []).enumerated().map { index, cob in
+                    CobEntry(cob: cob, time: deliverAt.addingTimeInterval(Double(index) * 300))
+                }
+                storage.save(cobEntries, as: Monitor.cob)
+
                 // save to core data asynchronously
                 await processDetermination(determination, on: context)
             }

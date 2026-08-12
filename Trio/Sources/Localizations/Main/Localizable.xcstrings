@@ -11473,6 +11473,9 @@
     "%lld items" : {
       "comment" : "Item count in compact view\nMultiple item count"
     },
+    "%lld m" : {
+
+    },
     "%lld min" : {
       "localizations" : {
         "bg" : {
@@ -21045,6 +21048,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "−"
+          }
+        }
+      }
+    },
+    "⌀ %@ · GMI %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "⌀ %1$@ · GMI %2$@"
           }
         }
       }
@@ -34288,6 +34301,9 @@
         }
       }
     },
+    "Add Treatment" : {
+
+    },
     "Add Variant" : {
       "localizations" : {
         "bg" : {
@@ -43546,6 +43562,7 @@
       }
     },
     "Also Change" : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -56232,6 +56249,7 @@
       }
     },
     "Axis" : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -77582,6 +77600,12 @@
           }
         }
       }
+    },
+    "Choose what the statistics panel on the home screen displays." : {
+
+    },
+    "Choose what the statistics panel on the home screen shows by default. Tapping the panel always opens the full statistics view.\n\nTime in Range: today's time in range percentage with a glucose distribution bar.\n\nDistribution Bar Only: just the glucose distribution bar, without the percentage.\n\nToday's Averages: today's average glucose and GMI (Glucose Management Index)." : {
+
     },
     "Choose whether or not to display one or both X- and Y-Axis grid lines." : {
       "localizations" : {
@@ -109880,6 +109904,9 @@
           }
         }
       }
+    },
+    "Distribution Bar Only" : {
+      "comment" : "Home stats panel face option"
     },
     "Do not enable this feature until you have optimized your CR (carb ratio) setting." : {
       "localizations" : {
@@ -150387,6 +150414,9 @@
         }
       }
     },
+    "Home Statistics Panel" : {
+
+    },
     "Home View Button Panel " : {
       "comment" : "UI/UX option",
       "extractionState" : "manual",
@@ -164275,7 +164305,11 @@
         }
       }
     },
+    "It can handle small gaps in data and ignores sensor error values. It needs 4 readings in a row, each arriving within 12 minutes of the one before it, to work properly. Only CGM readings are smoothed—manual entries are not changed." : {
+
+    },
     "It can handle small gaps in data and ignores sensor error values. It needs at least 4 readings within 12 minutes to work properly. Only CGM readings are smoothed—manual entries are not changed." : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
@@ -282849,7 +282883,7 @@
       }
     },
     "Time in Range" : {
-      "comment" : "Stats banner subtitle"
+      "comment" : "Home stats panel face option\nStats banner subtitle"
     },
     "Time in Range Type" : {
       "localizations" : {
@@ -286465,6 +286499,9 @@
         }
       }
     },
+    "today" : {
+      "comment" : "Stats banner scope"
+    },
     "Today" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -286595,6 +286632,12 @@
           }
         }
       }
+    },
+    "Today's average" : {
+      "comment" : "Stats banner subtitle"
+    },
+    "Today's Averages" : {
+      "comment" : "Home stats panel face option"
     },
     "Tomorrow" : {
       "localizations" : {

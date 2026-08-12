@@ -31,9 +31,15 @@ struct IOBEntry: JSON {
     }
 }
 
-/// Chart-ready point of the projected IOB decay curve.
-struct IobProjectionPoint: Identifiable, Equatable {
+/// One point of the projected COB decay written to monitor/cob.json each cycle.
+struct CobEntry: JSON {
+    let cob: Decimal
+    var time: Date?
+}
+
+/// Chart-ready point of a projected decay curve (IOB or COB).
+struct ProjectionPoint: Identifiable, Equatable {
     let date: Date
-    let iob: Double
+    let value: Double
     var id: Date { date }
 }

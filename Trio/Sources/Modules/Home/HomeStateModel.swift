@@ -25,6 +25,7 @@ extension Home {
         @ObservationIgnored @Injected() var overrideStorage: OverrideStorage!
         @ObservationIgnored @Injected() var bluetoothManager: BluetoothStateManager!
         @ObservationIgnored @Injected() var iobService: IOBService!
+        @ObservationIgnored @Injected() var fileStorage: FileStorage!
         @ObservationIgnored @Injected() var unlockmanager: UnlockManager!
 
         var cgmStateModel: CGMSettings.StateModel {
@@ -74,7 +75,8 @@ extension Home {
         var isSmoothingEnabled = false
         var maxIOB: Decimal = 0.0
         var currentIOB: Decimal = 0.0
-        var iobProjection: [IobProjectionPoint] = []
+        var iobProjection: [ProjectionPoint] = []
+        var cobProjection: [ProjectionPoint] = []
         var autosensMax: Decimal = 1.2
         var lowGlucose: Decimal = 70
         var highGlucose: Decimal = 180
@@ -474,7 +476,7 @@ extension Home {
                     guard let self = self else { return }
                     self.currentIOB = self.iobService.currentIOB ?? 0
                     self.iobProjection = self.iobService.iobProjection.compactMap { entry in
-                        entry.time.map { IobProjectionPoint(date: $0, iob: NSDecimalNumber(decimal: entry.iob).doubleValue) }
+                        entry.time.map { ProjectionPoint(date: $0, value: NSDecimalNumber(decimal: entry.iob).doubleValue) }
                     }
                 }
                 .store(in: &subscriptions)

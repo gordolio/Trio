@@ -8,6 +8,7 @@ extension MainChartCanvas {
             drawCurrentTimeMarker()
             drawCOBIOBChart()
             drawIobProjection()
+            drawCobProjection()
         }
         .chartLegend(.hidden)
         .frame(width: canvasWidth, height: cobIobHeight)
@@ -98,24 +99,32 @@ extension MainChartCanvas {
         }
     }
 
-    // MARK: - Projected IOB decay (dashed, from latest determination into the future)
+    // MARK: - Projected IOB/COB decay (dashed, from latest determination into the future)
+
+    /// stale projections (older than the newest determination) render nothing
+    private var projectionAnchor: Date {
+        state.enactedAndNonEnactedDeterminations.first?.deliverAt ?? state.timerDate
+    }
+
+    /// The projection files can be up to one cycle newer than the newest
+    /// determination (they are written before determineBasal); prepending the
+    /// determination's own value bridges the gap so the dashed curves connect
+    /// to the end of the historical lines.
+    private func bridged(_ points: [ProjectionPoint], anchor: Date, anchorValue: Double?) -> [ProjectionPoint] {
+        guard let first = points.first, first.date > anchor, let anchorValue else { return points }
+        return [ProjectionPoint(date: anchor, value: anchorValue)] + points
+    }
 
     func drawIobProjection() -> some ChartContent {
-        // stale projections (older than the newest determination) render nothing
-        let anchor = state.enactedAndNonEnactedDeterminations.first?.deliverAt ?? state.timerDate
-
-        var points = state.iobProjection.filter { $0.date >= anchor && $0.date <= windowEnd }
-        // the projection can be up to one cycle newer than the newest determination
-        // (iob.json is written before determineBasal); bridge the gap so the dashed
-        // curve connects to the end of the historical line
-        if let first = points.first, first.date > anchor,
-           let lastIob = state.enactedAndNonEnactedDeterminations.first?.iob?.doubleValue
-        {
-            points.insert(IobProjectionPoint(date: anchor, iob: lastIob), at: 0)
-        }
+        let anchor = projectionAnchor
+        let points = bridged(
+            state.iobProjection.filter { $0.date >= anchor && $0.date <= windowEnd },
+            anchor: anchor,
+            anchorValue: state.enactedAndNonEnactedDeterminations.first?.iob?.doubleValue
+        )
 
         return ForEach(points) { point in
-            let amount = MainChartHelper.scaledIobAmount(point.iob)
+            let amount = MainChartHelper.scaledIobAmount(point.value)
 
             AreaMark(
                 x: .value("Time", point.date),
@@ -131,6 +140,33 @@ extension MainChartCanvas {
                 series: .value("Series", "IOBProjection")
             )
             .foregroundStyle(Color.darkerBlue.opacity(0.8))
+            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+        }
+    }
+
+    func drawCobProjection() -> some ChartContent {
+        let anchor = projectionAnchor
+        let points = bridged(
+            state.cobProjection.filter { $0.date >= anchor && $0.date <= windowEnd },
+            anchor: anchor,
+            anchorValue: state.enactedAndNonEnactedDeterminations.first.map { Double($0.cob) }
+        )
+
+        return ForEach(points) { point in
+            AreaMark(
+                x: .value("Time", point.date),
+                y: .value("Value", point.value),
+                series: .value("Series", "COBProjection"),
+                stacking: .unstacked
+            )
+            .foregroundStyle(Color.orange)
+            .opacity(0.1)
+            LineMark(
+                x: .value("Time", point.date),
+                y: .value("Value", point.value),
+                series: .value("Series", "COBProjection")
+            )
+            .foregroundStyle(Color.orange.opacity(0.8))
             .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
         }
     }

@@ -138,7 +138,7 @@ extension CGMSettings {
                             }
 
                             Text(
-                                "It can handle small gaps in data and ignores sensor error values. It needs at least 4 readings within 12 minutes to work properly. Only CGM readings are smoothed—manual entries are not changed."
+                                "It can handle small gaps in data and ignores sensor error values. It needs 4 readings in a row, each arriving within 12 minutes of the one before it, to work properly. Only CGM readings are smoothed—manual entries are not changed."
                             )
 
                             Text(
