@@ -68,6 +68,8 @@
 	<string>Photo library access is used to select food photos for AI-assisted carb estimation.</string>
 	<key>OpenRouterAPIKey</key>
 	<string>$(OPENROUTER_API_KEY)</string>
+	<key>NSAlarmKitUsageDescription</key>
+	<string>Trio uses alarms so urgent glucose and pump alerts can reach you even when your phone is silenced or a Focus is on.</string>
 	<key>NFCReaderUsageDescription</key>
 	<string>NFC is used to scan Libre sensors.</string>
 	<key>NSAppTransportSecurity</key>
