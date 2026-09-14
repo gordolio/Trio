@@ -39,5 +39,11 @@ final class ServiceAssembly: Assembly {
         container.register(CalibrationModeService.self) { r in BaseCalibrationModeService(resolver: r) }
         container.register(AdjustmentManager.self) { r in BaseAdjustmentManager(resolver: r) }
             .inObjectScope(.container)
+        container.register(TrioRemoteControl.self) { r in TrioRemoteControl(resolver: r) }
+            .inObjectScope(.container)
+        container.register(TelemetryClient.self) { r in TelemetryClient(resolver: r) }
+            .inObjectScope(.container)
+        container.register(TelemetryAttestor.self) { r in TelemetryAttestor(resolver: r) }
+            .inObjectScope(.container)
     }
 }
