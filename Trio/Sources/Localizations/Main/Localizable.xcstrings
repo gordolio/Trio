@@ -251907,6 +251907,7 @@
     },
     "Previous user, assistant, and system messages." : {},
     "Previous Versions" : {
+      "extractionState" : "stale",
       "localizations" : {
         "bg" : {
           "stringUnit" : {
