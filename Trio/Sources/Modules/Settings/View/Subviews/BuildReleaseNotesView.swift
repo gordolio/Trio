@@ -216,23 +216,23 @@ private struct BuildReleaseNotesView: View {
                     tag("New", color: .red)
                 }
             }
-            let titles = summaryTitles(notes)
-            if titles.isEmpty {
+            let items = summaryItems(notes)
+            if items.isEmpty {
                 Text("No user-facing changes")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
-                let shown = titles.prefix(summaryLimit)
-                ForEach(Array(shown.enumerated()), id: \.offset) { _, title in
+                let shown = items.prefix(summaryLimit)
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 6) {
                         Text("•")
-                        Text(title)
+                        BuildReleaseNoteTitle(item: item)
                     }
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 }
-                if titles.count > summaryLimit {
-                    Text("+\(titles.count - summaryLimit) more")
+                if items.count > summaryLimit {
+                    Text("+\(items.count - summaryLimit) more")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(Color.accentColor)
                 }
@@ -256,13 +256,11 @@ private struct BuildReleaseNotesView: View {
             .foregroundStyle(color)
     }
 
-    /// High-level summary for the list: the title of each highlight/change, without bullet detail.
-    private func summaryTitles(_ notes: BuildReleaseNotes) -> [String] {
-        let highlightTitles = notes.highlights.map(\.title)
-        let categoryTitles = notes.categories
+    private func summaryItems(_ notes: BuildReleaseNotes) -> [BuildReleaseNotes.Item] {
+        let categoryItems = notes.categories
             .filter { $0.category != "highlights" }
-            .flatMap { $0.items.filter { !$0.highlight }.map(\.title) }
-        return highlightTitles + categoryTitles
+            .flatMap { $0.items.filter { !$0.highlight } }
+        return notes.highlights + categoryItems
     }
 
     private func isInstalledBuild(_ notes: BuildReleaseNotes) -> Bool {
@@ -307,7 +305,7 @@ private struct BuildDetailView: View {
     @ViewBuilder private func noteItems(_ items: [BuildReleaseNotes.Item]) -> some View {
         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.title)
+                BuildReleaseNoteTitle(item: item)
                     .font(.subheadline.weight(.semibold))
                 ForEach(item.changes, id: \.self) { change in
                     HStack(alignment: .top, spacing: 6) {
@@ -329,6 +327,49 @@ private struct BuildDetailView: View {
                 }
             }
             .padding(.vertical, 2)
+        }
+    }
+}
+
+private struct BuildReleaseNoteTitle: View {
+    let item: BuildReleaseNotes.Item
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(item.title)
+                    .fixedSize()
+                chip
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title)
+                chip
+            }
+        }
+    }
+
+    private var provenance: (label: LocalizedStringKey, color: Color)? {
+        switch item.provenance {
+        case "upstream":
+            return ("Upstream", .teal)
+        case "origin":
+            return ("Our Fork", .accentColor)
+        case "mixed":
+            return ("Mixed", .orange)
+        default:
+            return nil
+        }
+    }
+
+    @ViewBuilder private var chip: some View {
+        if let provenance {
+            Text(provenance.label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(provenance.color)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(provenance.color.opacity(0.12), in: Capsule())
+                .fixedSize()
         }
     }
 }
