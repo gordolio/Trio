@@ -351,11 +351,11 @@ private struct BuildReleaseNoteTitle: View {
     private var provenance: (label: LocalizedStringKey, color: Color)? {
         switch item.provenance {
         case "upstream":
-            return ("Upstream", .teal)
+            return ("Upstream", .darkGreen)
         case "origin":
-            return ("Our Fork", .accentColor)
+            return ("Our Fork", .darkerBlue)
         case "mixed":
-            return ("Mixed", .orange)
+            return ("Mixed", .darkOrange)
         default:
             return nil
         }
