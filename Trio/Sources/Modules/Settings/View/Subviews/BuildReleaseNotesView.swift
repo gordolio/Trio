@@ -215,6 +215,7 @@ private struct BuildReleaseNotesView: View {
                 if isUnseen {
                     tag("New", color: .red)
                 }
+                BuildProvenanceChip(provenance: notes.provenance)
             }
             let items = summaryItems(notes)
             if items.isEmpty {
@@ -226,7 +227,7 @@ private struct BuildReleaseNotesView: View {
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 6) {
                         Text("•")
-                        BuildReleaseNoteTitle(item: item)
+                        Text(item.title)
                     }
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -305,8 +306,12 @@ private struct BuildDetailView: View {
     @ViewBuilder private func noteItems(_ items: [BuildReleaseNotes.Item]) -> some View {
         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
             VStack(alignment: .leading, spacing: 4) {
-                BuildReleaseNoteTitle(item: item)
-                    .font(.subheadline.weight(.semibold))
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.subheadline.weight(.semibold))
+                    Spacer(minLength: 0)
+                    BuildProvenanceChip(provenance: BuildReleaseNotes.Provenance(rawValue: item.provenance))
+                }
                 ForEach(item.changes, id: \.self) { change in
                     HStack(alignment: .top, spacing: 6) {
                         Text("•")
@@ -331,44 +336,30 @@ private struct BuildDetailView: View {
     }
 }
 
-private struct BuildReleaseNoteTitle: View {
-    let item: BuildReleaseNotes.Item
+private struct BuildProvenanceChip: View {
+    let provenance: BuildReleaseNotes.Provenance?
 
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(item.title)
-                    .fixedSize()
-                chip
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(item.title)
-                chip
-            }
-        }
-    }
-
-    private var provenance: (label: LocalizedStringKey, color: Color)? {
-        switch item.provenance {
-        case "upstream":
+    private var appearance: (label: LocalizedStringKey, color: Color)? {
+        switch provenance {
+        case .upstream:
             return ("Upstream", .darkGreen)
-        case "origin":
+        case .origin:
             return ("Our Fork", .darkerBlue)
-        case "mixed":
+        case .mixed:
             return ("Mixed", .darkOrange)
-        default:
+        case nil:
             return nil
         }
     }
 
-    @ViewBuilder private var chip: some View {
-        if let provenance {
-            Text(provenance.label)
+    @ViewBuilder var body: some View {
+        if let appearance {
+            Text(appearance.label)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(provenance.color)
+                .foregroundStyle(appearance.color)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
-                .background(provenance.color.opacity(0.12), in: Capsule())
+                .background(appearance.color.opacity(0.12), in: Capsule())
                 .fixedSize()
         }
     }

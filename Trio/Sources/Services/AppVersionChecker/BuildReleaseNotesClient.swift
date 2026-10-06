@@ -1,6 +1,12 @@
 import Foundation
 
 struct BuildReleaseNotes: Decodable, Equatable, Sendable {
+    enum Provenance: String, Sendable {
+        case upstream
+        case origin
+        case mixed
+    }
+
     struct Metadata: Decodable, Equatable, Sendable {
         let shortSha: String
         let buildDate: String
@@ -36,6 +42,15 @@ struct BuildReleaseNotes: Decodable, Equatable, Sendable {
     let highlights: [Item]
     let categories: [Category]
     let maintenanceHotspots: [String]
+
+    var provenance: Provenance? {
+        let items = highlights + categories.flatMap(\.items)
+        let sources = Set(items.compactMap { Provenance(rawValue: $0.provenance) })
+        if sources.contains(.mixed) || (sources.contains(.upstream) && sources.contains(.origin)) {
+            return .mixed
+        }
+        return sources.first
+    }
 }
 
 actor BuildReleaseNotesClient {
