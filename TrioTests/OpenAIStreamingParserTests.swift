@@ -4,9 +4,9 @@ import Testing
 @testable import Trio
 
 @Suite("Treatments AI Availability") struct TreatmentsAIAvailabilityTests {
-    @Test("Availability is safe before dependency injection") func availabilityBeforeInjection() {
-        let state = Treatments.StateModel()
-        _ = state.isAIAvailable
+    @Test("Availability is safe after coordinator initialization") func availabilityAfterInitialization() {
+        let coordinator = AIFoodTreatmentCoordinator(resolver: TrioApp.resolver)
+        _ = coordinator.isAIAvailable
     }
 }
 
@@ -31,10 +31,12 @@ import Testing
             defaultModelID: "b/two"
         )
 
-        #expect(configuration.remove("b/two"))
+        let removedDefault = configuration.remove("b/two")
+        #expect(removedDefault)
         #expect(configuration.selectedModelIDs == ["a/one", "c/three"])
         #expect(configuration.defaultModelID == "c/three")
-        #expect(!configuration.remove("missing/model"))
+        let removedMissing = configuration.remove("missing/model")
+        #expect(!removedMissing)
     }
 
     @Test("Ordering and simultaneous execution survive persistence") func roundTrip() throws {

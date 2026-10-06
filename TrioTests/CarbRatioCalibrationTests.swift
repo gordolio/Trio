@@ -32,6 +32,7 @@ final class MockCalibrationModeService: CalibrationModeService {
     var nightscoutNotes: [String] = []
     var phasesUpdated: [CalibrationPhase] = []
     var clearTestCallCount = 0
+    var archiveCompletedTestCallCount = 0
 
     // Storage for persistence simulation
     private let storage = BaseFileStorage()
@@ -147,6 +148,10 @@ final class MockCalibrationModeService: CalibrationModeService {
 
     func postNightscoutNote(_ message: String) {
         nightscoutNotes.append(message)
+    }
+
+    func archiveCompletedTest(_: CalibrationTestState, glucoseReadings _: [CalibrationGlucoseReading]) {
+        archiveCompletedTestCallCount += 1
     }
 
     /// Helper to set up a specific test state for testing
@@ -1622,11 +1627,8 @@ final class MockCalibrationModeService: CalibrationModeService {
         #expect(at24min > at40min, "Peak at 24 min should be higher than at 40 min")
         #expect(at24min > at90min, "Peak at 24 min should be higher than at 90 min")
 
-        // Peak should be significantly higher than target delta
-        // The carb curve dominates early (fast absorption) while insulin is slower,
-        // producing a peak around 200 mg/dL for a 25 mg/dL target delta
-        #expect(at24min > 50, "Peak should be well above the 25 mg/dL target")
-        #expect(at24min < 300, "Peak should be bounded")
+        #expect(at24min > 25, "Effect should be above the 25 mg/dL target near the peak")
+        #expect(at24min <= 35, "Effect should not exceed the model's 35 mg/dL peak")
 
         // Cleanup
         gen.tabletTakenDate = nil
