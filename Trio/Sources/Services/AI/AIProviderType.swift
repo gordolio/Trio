@@ -1,7 +1,11 @@
 import Foundation
 
 enum OpenRouterModels {
-    static let defaultModelID = "openai/gpt-4o"
+    static let defaultModelID = OpenRouterFrontierOption.openAI.rawValue
+    static let defaultModelIDs = OpenRouterFrontierOption.allCases.map(\.rawValue)
+    static let fallbackOpenAIFrontierModelID = "openai/gpt-6-astra"
+    static let fallbackAnthropicFrontierModelID = "anthropic/claude-opus-5.5"
+    static let legacyOpenAIModelID = "openai/gpt-4o"
     static let legacyClaudeModelID = "anthropic/claude-opus-4.5"
     /// Utility classifiers are text-only and intentionally independent of the selected analysis model.
     static let utilityModelID = "openai/gpt-4o-mini"
@@ -15,17 +19,19 @@ enum AIProviderType: String, JSON {
     var modelID: String {
         switch self {
         case .openai: OpenRouterModels.defaultModelID
-        case .claude: OpenRouterModels.legacyClaudeModelID
+        case .claude: OpenRouterFrontierOption.anthropic.rawValue
         }
     }
 }
 
 struct OpenRouterModelConfiguration: JSON, Equatable {
     static let maximumModelCount = 4
+    static let currentMigrationVersion = 1
 
     private(set) var selectedModelIDs: [String]
     private(set) var defaultModelID: String
     var runAllModelsSimultaneously: Bool
+    private let migrationVersion: Int
 
     var initialModelIDs: [String] {
         runAllModelsSimultaneously ? selectedModelIDs : [defaultModelID]
@@ -35,12 +41,14 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         case selectedModelIDs
         case defaultModelID
         case runAllModelsSimultaneously
+        case migrationVersion
     }
 
     init(
-        selectedModelIDs: [String] = [OpenRouterModels.defaultModelID],
+        selectedModelIDs: [String] = OpenRouterModels.defaultModelIDs,
         defaultModelID: String = OpenRouterModels.defaultModelID,
-        runAllModelsSimultaneously: Bool = false
+        runAllModelsSimultaneously: Bool = false,
+        migrationVersion: Int = Self.currentMigrationVersion
     ) {
         var seen = Set<String>()
         let normalized = selectedModelIDs
@@ -52,17 +60,24 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         }
         self.defaultModelID = self.selectedModelIDs.contains(defaultModelID) ? defaultModelID : self.selectedModelIDs[0]
         self.runAllModelsSimultaneously = runAllModelsSimultaneously
+        self.migrationVersion = migrationVersion
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let migrationVersion = try container.decodeIfPresent(Int.self, forKey: .migrationVersion) ?? 0
+        guard migrationVersion >= Self.currentMigrationVersion else {
+            self.init()
+            return
+        }
         self.init(
             selectedModelIDs: try container.decode([String].self, forKey: .selectedModelIDs),
             defaultModelID: try container.decode(String.self, forKey: .defaultModelID),
             runAllModelsSimultaneously: try container.decodeIfPresent(
                 Bool.self,
                 forKey: .runAllModelsSimultaneously
-            ) ?? false
+            ) ?? false,
+            migrationVersion: migrationVersion
         )
     }
 
@@ -71,6 +86,7 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         try container.encode(selectedModelIDs, forKey: .selectedModelIDs)
         try container.encode(defaultModelID, forKey: .defaultModelID)
         try container.encode(runAllModelsSimultaneously, forKey: .runAllModelsSimultaneously)
+        try container.encode(migrationVersion, forKey: .migrationVersion)
     }
 
     @discardableResult mutating func add(_ modelID: String) -> Bool {
@@ -127,6 +143,7 @@ struct OpenRouterModel: JSON, Identifiable, Equatable {
     let architecture: Architecture?
     let pricing: Pricing?
     let supportedParameters: [String]?
+    let created: Int?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -136,6 +153,7 @@ struct OpenRouterModel: JSON, Identifiable, Equatable {
         case pricing
         case contextLength = "context_length"
         case supportedParameters = "supported_parameters"
+        case created
     }
 
     var providerName: String { id.openRouterProviderName }
@@ -173,6 +191,7 @@ final class OpenRouterModelCatalogService {
     }
 
     static let shared = OpenRouterModelCatalogService()
+    static let refreshInterval: TimeInterval = 7 * 24 * 60 * 60
 
     private let endpoint = URL(string: "https://openrouter.ai/api/v1/models")!
     private let cacheKey = "OpenRouterModelCatalog.v1"
@@ -191,13 +210,23 @@ final class OpenRouterModelCatalogService {
         return Self.normalizedModels(cache.models)
     }
 
+    func cacheIsFresh(at now: Date = Date()) -> Bool {
+        guard let data = defaults.data(forKey: cacheKey),
+              let cache = try? JSONDecoder().decode(Cache.self, from: data) else { return false }
+        return now.timeIntervalSince(cache.savedAt) < Self.refreshInterval
+    }
+
     var favoriteModelIDs: Set<String> {
         get { Set(defaults.stringArray(forKey: favoritesKey) ?? []) }
         set { defaults.set(Array(newValue).sorted(), forKey: favoritesKey) }
     }
 
-    func loadModels() async throws -> [OpenRouterModel] {
-        let (data, response) = try await session.data(from: endpoint)
+    func loadModels(forceRefresh: Bool = false, now: Date = Date()) async throws -> [OpenRouterModel] {
+        if !forceRefresh, cacheIsFresh(at: now) { return cachedModels }
+
+        var request = URLRequest(url: endpoint, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse,
               (200 ... 299).contains(httpResponse.statusCode)
         else {
@@ -205,7 +234,8 @@ final class OpenRouterModelCatalogService {
         }
         let decodedModels = try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data).data
         let models = Self.normalizedModels(decodedModels)
-        if let cache = try? JSONEncoder().encode(Cache(models: models, savedAt: Date())) {
+        guard !models.isEmpty else { throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode) }
+        if let cache = try? JSONEncoder().encode(Cache(models: models, savedAt: now)) {
             defaults.set(cache, forKey: cacheKey)
         }
         return models

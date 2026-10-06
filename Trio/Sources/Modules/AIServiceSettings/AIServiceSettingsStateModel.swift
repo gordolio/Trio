@@ -32,7 +32,10 @@ extension AIServiceSettings {
         }
 
         func model(for modelID: String) -> OpenRouterModel? {
-            catalogModels.first { $0.id == modelID }
+            if let option = OpenRouterFrontierOption(rawValue: modelID) {
+                return OpenRouterFrontierModelResolver.model(for: option, in: catalogModels)
+            }
+            return catalogModels.first { $0.id == modelID }
         }
 
         func addModel(_ modelID: String) {

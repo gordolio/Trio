@@ -78,6 +78,10 @@ enum AIServiceRegistry {
     private static func currentModelID() -> String {
         let storage = BaseFileStorage()
         let settings = storage.retrieve(OpenAPS.Trio.settings, as: TrioSettings.self)
-        return settings?.openRouterModelConfiguration.defaultModelID ?? OpenRouterModels.defaultModelID
+        let configuration = settings?.openRouterModelConfiguration ?? OpenRouterModelConfiguration()
+        return OpenRouterFrontierModelResolver.resolve(
+            configuration,
+            using: OpenRouterModelCatalogService.shared.cachedModels
+        ).defaultModelID
     }
 }

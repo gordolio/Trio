@@ -152,15 +152,19 @@ struct AIFoodTreatmentResult {
         pendingAnalysisDescription = nil
         pendingAnalysisSessionIDs.removeAll()
 
-        let provider = settingsManager.settings.openRouterModelConfiguration.defaultModelID
         let sessionID = UUID().uuidString
-        immediateAnalysisProvider = provider
-        immediateAnalysisSessionID = sessionID
         immediateAnalysisImageData = imageData
         isPreparingFoodAnalysis = true
 
         immediateFoodAnalysisTask = Task { [weak self] in
-            await self?.performImmediateFoodAnalysis(
+            guard let self else { return }
+            let provider = await OpenRouterFrontierModelResolver.resolveRefreshingCatalog(
+                self.settingsManager.settings.openRouterModelConfiguration
+            ).defaultModelID
+            guard !Task.isCancelled, self.capturedImageData == imageData else { return }
+            self.immediateAnalysisProvider = provider
+            self.immediateAnalysisSessionID = sessionID
+            await self.performImmediateFoodAnalysis(
                 imageData: imageData,
                 provider: provider,
                 sessionID: sessionID
@@ -274,7 +278,9 @@ struct AIFoodTreatmentResult {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let finalDescription = normalizedDescription?.isEmpty == false ? normalizedDescription : nil
 
-        let configuration = settingsManager.settings.openRouterModelConfiguration
+        let configuration = await OpenRouterFrontierModelResolver.resolveRefreshingCatalog(
+            settingsManager.settings.openRouterModelConfiguration
+        )
         let configuredProvider = configuration.defaultModelID
         let tabs = configuration.selectedModelIDs
         let initialModels = Set(configuration.initialModelIDs)

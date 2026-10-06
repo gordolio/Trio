@@ -415,21 +415,9 @@ extension TrioSettings: Decodable {
             OpenRouterModelConfiguration.self,
             forKey: .openRouterModelConfiguration
         ) {
-            settings.openRouterModelConfiguration = OpenRouterModelConfiguration(
-                selectedModelIDs: configuration.selectedModelIDs,
-                defaultModelID: configuration.defaultModelID,
-                runAllModelsSimultaneously: configuration.runAllModelsSimultaneously
-            )
+            settings.openRouterModelConfiguration = configuration
         } else {
-            let legacyProvider = settings.aiProvider
-            let selectedIDs = settings.sendToAllAIProvidersSimultaneously
-                ? [OpenRouterModels.defaultModelID, OpenRouterModels.legacyClaudeModelID]
-                : [legacyProvider.modelID]
-            settings.openRouterModelConfiguration = OpenRouterModelConfiguration(
-                selectedModelIDs: selectedIDs,
-                defaultModelID: legacyProvider.modelID,
-                runAllModelsSimultaneously: false
-            )
+            settings.openRouterModelConfiguration = OpenRouterModelConfiguration()
         }
 
         self = settings

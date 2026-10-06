@@ -16,7 +16,7 @@ extension AIServiceSettings {
                 Section(
                     header: Text("Food Analysis Models"),
                     footer: Text(
-                        "Choose 1 to 4 OpenRouter models. Drag to set tab order and tap the checkmark to choose the default model. Missing catalog entries remain configured and are never silently replaced."
+                        "Choose 1 to 4 OpenRouter models. Frontier choices resolve to the current model from the weekly catalog refresh. Drag to set tab order and tap the checkmark to choose the default model."
                     )
                 ) {
                     ForEach(state.modelConfiguration.selectedModelIDs, id: \.self) { modelID in
@@ -95,6 +95,7 @@ extension AIServiceSettings {
 
         @ViewBuilder private func configuredModelRow(_ modelID: String) -> some View {
             let model = state.model(for: modelID)
+            let frontierOption = OpenRouterFrontierOption(rawValue: modelID)
             HStack(spacing: 12) {
                 Button { state.setDefault(modelID) } label: {
                     Image(systemName: state.modelConfiguration.defaultModelID == modelID ? "checkmark.circle.fill" : "circle")
@@ -104,14 +105,35 @@ extension AIServiceSettings {
                 .accessibilityLabel(state.modelConfiguration.defaultModelID == modelID ? "Default model" : "Make default model")
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model?.name ?? modelID.openRouterShortDisplayName)
-                    Text(model.map { "\($0.providerName) · \($0.id)" } ?? "Unavailable in current catalog · \(modelID)")
+                    Text(
+                        model?.name ??
+                            frontierOption?.fallbackModelID.openRouterShortDisplayName ??
+                            modelID.openRouterShortDisplayName
+                    )
+                    Text(modelSubtitle(modelID: modelID, model: model, frontierOption: frontierOption))
                         .font(.caption)
                         .foregroundStyle(model == nil ? Color.orange : Color.secondary)
                         .lineLimit(2)
                 }
                 Spacer()
             }
+        }
+
+        private func modelSubtitle(
+            modelID: String,
+            model: OpenRouterModel?,
+            frontierOption: OpenRouterFrontierOption?
+        ) -> String {
+            if let frontierOption {
+                let resolvedID = model?.id ?? frontierOption.fallbackModelID
+                return String(
+                    format: String(localized: "Tracks %@ weekly · %@"),
+                    frontierOption.providerName,
+                    resolvedID
+                )
+            }
+            return model.map { "\($0.providerName) · \($0.id)" } ??
+                String(localized: "Unavailable in current catalog · \(modelID)")
         }
 
         private func keyStatusRow(label: String, configured: Bool) -> some View {
@@ -165,6 +187,22 @@ private struct ModelPickerView: View {
             }
     }
 
+    private var filteredFrontierOptions: [OpenRouterFrontierOption] {
+        guard !favoritesOnly else { return [] }
+        return OpenRouterFrontierOption.allCases.filter { option in
+            let resolvedModel = state.model(for: option.rawValue)
+            guard selectedProvider == "All" ||
+                option.providerName.caseInsensitiveCompare(selectedProvider) == .orderedSame else { return false }
+            return searchText.isEmpty ||
+                option.title.localizedCaseInsensitiveContains(searchText) ||
+                option.providerName.localizedCaseInsensitiveContains(searchText) ||
+                option.fallbackModelID.openRouterShortDisplayName.localizedCaseInsensitiveContains(searchText) ||
+                option.fallbackModelID.localizedCaseInsensitiveContains(searchText) ||
+                resolvedModel?.name.localizedCaseInsensitiveContains(searchText) == true ||
+                resolvedModel?.id.localizedCaseInsensitiveContains(searchText) == true
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -175,6 +213,21 @@ private struct ModelPickerView: View {
                             .foregroundStyle(.orange)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding()
+                    }
+
+                    ForEach(filteredFrontierOptions, id: \.rawValue) { option in
+                        FrontierModelOptionRow(
+                            option: option,
+                            resolvedModel: state.model(for: option.rawValue),
+                            isSelected: state.modelConfiguration.selectedModelIDs.contains(option.rawValue),
+                            onSelect: {
+                                state.addModel(option.rawValue)
+                                dismiss()
+                            }
+                        )
+                        .padding(.horizontal, 16)
+
+                        Divider().padding(.leading, 70)
                     }
 
                     ForEach(filteredModels, id: \.id) { model in
@@ -218,7 +271,7 @@ private struct ModelPickerView: View {
             .overlay {
                 if state.isLoadingCatalog, models.isEmpty {
                     ProgressView("Loading OpenRouter models…")
-                } else if filteredModels.isEmpty {
+                } else if filteredFrontierOptions.isEmpty, filteredModels.isEmpty {
                     Text("No compatible models match these filters.")
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -231,6 +284,40 @@ private struct ModelPickerView: View {
                 models = OpenRouterModelCatalogService.normalizedModels(state.catalogModels)
             }
         }
+    }
+}
+
+private struct FrontierModelOptionRow: View {
+    let option: OpenRouterFrontierOption
+    let resolvedModel: OpenRouterModel?
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(option.title).font(.headline)
+                        Spacer()
+                        if isSelected { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+                    }
+                    Text(resolvedModel?.name ?? option.fallbackModelID.openRouterShortDisplayName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Updates from the cached OpenRouter catalog at most once a week.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSelected)
     }
 }
 

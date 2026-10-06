@@ -69,27 +69,24 @@ import Testing
 }
 
 @Suite("Trio Settings AI Model Migration") struct TrioSettingsAIModelMigrationTests {
-    @Test("Legacy provider migrates to its stable OpenRouter model ID") func migratesLegacyProvider() throws {
+    @Test("Legacy provider migrates to the two automatic frontier choices") func migratesLegacyProvider() throws {
         let data = Data(#"{"aiProvider":"claude","sendToAllAIProvidersSimultaneously":false}"#.utf8)
         let settings = try JSONDecoder().decode(TrioSettings.self, from: data)
 
-        #expect(settings.openRouterModelConfiguration.selectedModelIDs == [OpenRouterModels.legacyClaudeModelID])
-        #expect(settings.openRouterModelConfiguration.defaultModelID == OpenRouterModels.legacyClaudeModelID)
+        #expect(settings.openRouterModelConfiguration.selectedModelIDs == OpenRouterModels.defaultModelIDs)
+        #expect(settings.openRouterModelConfiguration.defaultModelID == OpenRouterModels.defaultModelID)
     }
 
-    @Test("Legacy comparison migrates to two lazy model tabs") func migratesLegacyComparison() throws {
+    @Test("Legacy comparison migrates to two lazy frontier tabs") func migratesLegacyComparison() throws {
         let data = Data(#"{"aiProvider":"claude","sendToAllAIProvidersSimultaneously":true}"#.utf8)
         let settings = try JSONDecoder().decode(TrioSettings.self, from: data)
 
-        #expect(settings.openRouterModelConfiguration.selectedModelIDs == [
-            OpenRouterModels.defaultModelID,
-            OpenRouterModels.legacyClaudeModelID
-        ])
-        #expect(settings.openRouterModelConfiguration.defaultModelID == OpenRouterModels.legacyClaudeModelID)
+        #expect(settings.openRouterModelConfiguration.selectedModelIDs == OpenRouterModels.defaultModelIDs)
+        #expect(settings.openRouterModelConfiguration.defaultModelID == OpenRouterModels.defaultModelID)
         #expect(!settings.openRouterModelConfiguration.runAllModelsSimultaneously)
     }
 
-    @Test("New configuration takes precedence over legacy fields") func newConfigurationWins() throws {
+    @Test("Pre-frontier configuration migrates exactly once") func preFrontierConfigurationMigrates() throws {
         let data = Data(#"""
         {
           "aiProvider":"openai",
@@ -98,6 +95,24 @@ import Testing
             "selectedModelIDs":["google/gemini-test"],
             "defaultModelID":"google/gemini-test",
             "runAllModelsSimultaneously":true
+          }
+        }
+        """#.utf8)
+        let settings = try JSONDecoder().decode(TrioSettings.self, from: data)
+
+        #expect(settings.openRouterModelConfiguration.selectedModelIDs == OpenRouterModels.defaultModelIDs)
+        #expect(settings.openRouterModelConfiguration.defaultModelID == OpenRouterModels.defaultModelID)
+        #expect(!settings.openRouterModelConfiguration.runAllModelsSimultaneously)
+    }
+
+    @Test("User configuration survives after the frontier migration") func migratedUserConfigurationWins() throws {
+        let data = Data(#"""
+        {
+          "openRouterModelConfiguration":{
+            "selectedModelIDs":["google/gemini-test"],
+            "defaultModelID":"google/gemini-test",
+            "runAllModelsSimultaneously":true,
+            "migrationVersion":1
           }
         }
         """#.utf8)
@@ -145,6 +160,54 @@ import Testing
         #expect(vision.pricePerMillionTokens("-1") == nil)
         #expect(!catalog.data[1].isFoodAnalysisCompatible)
         #expect(OpenRouterModelCatalogService.normalizedModels([vision, vision]) == [vision])
+    }
+
+    @Test("Frontier choices resolve to named flagship models, not merely the newest release") func resolvesFrontierModels() throws {
+        let data = Data(#"""
+        {
+          "data":[
+            {
+              "id":"openai/gpt-6.1-sol",
+              "name":"OpenAI: GPT-6.1 Sol",
+              "description":"A newer model positioned below the flagship.",
+              "created":300,
+              "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
+              "supported_parameters":["structured_outputs"]
+            },
+            {
+              "id":"openai/gpt-6-astra",
+              "name":"OpenAI: GPT-6 Astra",
+              "description":"OpenAI's flagship model for demanding end-to-end work.",
+              "created":200,
+              "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
+              "supported_parameters":["response_format"]
+            },
+            {
+              "id":"anthropic/claude-sonnet-5.5",
+              "name":"Anthropic: Claude Sonnet 5.5",
+              "created":400,
+              "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
+              "supported_parameters":["structured_outputs"]
+            },
+            {
+              "id":"anthropic/claude-opus-5.5",
+              "name":"Anthropic: Claude Opus 5.5",
+              "created":350,
+              "architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},
+              "supported_parameters":["structured_outputs"]
+            }
+          ]
+        }
+        """#.utf8)
+        let models = try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data).data
+
+        #expect(OpenRouterFrontierModelResolver.model(for: .openAI, in: models)?.id == "openai/gpt-6-astra")
+        #expect(OpenRouterFrontierModelResolver.model(for: .anthropic, in: models)?.id == "anthropic/claude-opus-5.5")
+
+        let resolved = OpenRouterFrontierModelResolver.resolve(OpenRouterModelConfiguration(), using: models)
+        #expect(resolved.selectedModelIDs == ["openai/gpt-6-astra", "anthropic/claude-opus-5.5"])
+        #expect(resolved.defaultModelID == "openai/gpt-6-astra")
+        #expect(resolved.initialModelIDs == ["openai/gpt-6-astra"])
     }
 
     @Test("Favorites persist independently of catalog availability") func favoritesPersist() {
