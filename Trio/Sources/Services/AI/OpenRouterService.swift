@@ -461,6 +461,8 @@ final class OpenRouterService: AIProviderService {
     private let analysisTimeout: TimeInterval
     private let analysisMaxTokens: Int
     private let requireCompleteNutrition: Bool
+    private let analysisDeadline: Duration?
+    private let apiKeyProvider: (() throws -> String)?
 
     init(
         modelID: String,
@@ -468,7 +470,9 @@ final class OpenRouterService: AIProviderService {
         analysisPrompt: String = AIPromptSettings.Prompt.streamingFoodAnalysis.value,
         analysisTimeout: TimeInterval = 60,
         analysisMaxTokens: Int = 1500,
-        requireCompleteNutrition: Bool = false
+        requireCompleteNutrition: Bool = false,
+        analysisDeadline: Duration? = nil,
+        apiKey: (() throws -> String)? = nil
     ) {
         self.modelID = modelID
         self.session = session
@@ -476,10 +480,13 @@ final class OpenRouterService: AIProviderService {
         self.analysisTimeout = analysisTimeout
         self.analysisMaxTokens = analysisMaxTokens
         self.requireCompleteNutrition = requireCompleteNutrition
+        self.analysisDeadline = analysisDeadline
+        apiKeyProvider = apiKey
     }
 
     /// Retrieves the OpenRouter API key from the app's Info.plist.
     private func getAPIKey() throws -> String {
+        if let apiKeyProvider { return try apiKeyProvider() }
         guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
               !apiKey.isEmpty,
               apiKey != "$(OPENROUTER_API_KEY)"
@@ -586,6 +593,7 @@ final class OpenRouterService: AIProviderService {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    try Task.checkCancellation()
                     let apiKey = try self.getAPIKey()
 
                     os_log(
@@ -620,6 +628,7 @@ final class OpenRouterService: AIProviderService {
                     request.httpBody = try self.encoder.encode(chatRequest)
 
                     let (bytes, response) = try await self.session.bytes(for: request)
+                    defer { bytes.task.cancel() }
 
                     guard let httpResponse = response as? HTTPURLResponse else {
                         throw OpenAIServiceError.invalidResponse(statusCode: 0)
@@ -640,6 +649,7 @@ final class OpenRouterService: AIProviderService {
                     let parser = StructuredJSONStreamParser(requireCompleteNutrition: self.requireCompleteNutrition)
 
                     for try await line in bytes.lines {
+                        try Task.checkCancellation()
                         if let usage = self.streamingUsage(from: line) {
                             let cachedTokens = usage.promptTokensDetails?.cachedTokens ?? 0
                             os_log(
@@ -654,6 +664,7 @@ final class OpenRouterService: AIProviderService {
 
                         if let partialResult = parser.parseOpenAILine(line) {
                             continuation.yield(partialResult)
+                            if partialResult.isComplete { break }
                         }
                     }
 
@@ -670,8 +681,22 @@ final class OpenRouterService: AIProviderService {
                 }
             }
 
+            let deadlineTask = self.analysisDeadline.map { duration in
+                Task {
+                    do {
+                        try await Task.sleep(for: duration)
+                        try Task.checkCancellation()
+                        continuation.finish(throwing: OpenAIServiceError.networkError(URLError(.timedOut)))
+                        task.cancel()
+                    } catch {
+                        return
+                    }
+                }
+            }
+
             continuation.onTermination = { _ in
                 task.cancel()
+                deadlineTask?.cancel()
             }
         }
     }

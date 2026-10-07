@@ -11,8 +11,39 @@ struct AIFoodTreatmentResult {
     let metadata: AIAssistedCarbEntryMetadata
 }
 
+struct AIFoodAnalysisDependencies {
+    let settings: () -> TrioSettings
+    var resolveModels: (OpenRouterModelConfiguration) async -> ResolvedOpenRouterModelConfiguration = {
+        await OpenRouterFrontierModelResolver.resolveRefreshingCatalog($0)
+    }
+
+    var isModelAvailable: (String) -> Bool = { modelID in
+        guard let value = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
+              !value.isEmpty, value != "$(OPENROUTER_API_KEY)" else { return false }
+        let catalog = OpenRouterModelCatalogService.shared.cachedModels
+        return catalog.isEmpty || catalog.first(where: { $0.id == modelID })?.isFoodAnalysisCompatible == true
+    }
+
+    var classifyImage: (Data, String, String) async throws -> FoodImageRoute = {
+        try await OpenRouterImageDecisionService().classify(imageData: $0, modelID: $1, sessionID: $2)
+    }
+
+    var makeChatService: (String, String, Bool) -> AIProviderService = { modelID, prompt, isLabel in
+        OpenRouterService(
+            modelID: modelID,
+            analysisPrompt: prompt,
+            analysisTimeout: isLabel ? 20 : 60,
+            analysisMaxTokens: isLabel ? 700 : 1500,
+            requireCompleteNutrition: isLabel,
+            analysisDeadline: isLabel ? .seconds(20) : nil
+        )
+    }
+
+    var makeResponsesService: (String) -> AIResponsesProviderService = { AIServiceRegistry.responses(for: $0) }
+}
+
 @Observable final class AIFoodTreatmentCoordinator {
-    @ObservationIgnored private let settingsManager: SettingsManager
+    @ObservationIgnored private let dependencies: AIFoodAnalysisDependencies
 
     var carbs: Decimal = 0
     var fat: Decimal = 0
@@ -22,7 +53,12 @@ struct AIFoodTreatmentResult {
     var appliedNutritionRevision = 0
 
     init(resolver: Resolver) {
-        settingsManager = resolver.resolve(SettingsManager.self)!
+        let settingsManager = resolver.resolve(SettingsManager.self)!
+        dependencies = AIFoodAnalysisDependencies(settings: { settingsManager.settings })
+    }
+
+    init(dependencies: AIFoodAnalysisDependencies) {
+        self.dependencies = dependencies
     }
 
     // MARK: - AI-Assisted Entry Properties
@@ -108,10 +144,7 @@ struct AIFoodTreatmentResult {
     }
 
     func isProviderAvailable(_ modelID: String) -> Bool {
-        guard hasOpenRouterAPIKey else { return false }
-        let catalog = OpenRouterModelCatalogService.shared.cachedModels
-        guard !catalog.isEmpty else { return true }
-        return catalog.first(where: { $0.id == modelID })?.isFoodAnalysisCompatible == true
+        dependencies.isModelAvailable(modelID)
     }
 
     var autoOpenCamera: Bool = false
@@ -163,27 +196,22 @@ struct AIFoodTreatmentResult {
         immediateUsedLabelModel = false
         capturedAnalysisPrompt = AIPromptSettings.Prompt.streamingFoodAnalysis.value
         capturedLabelPrompt = AIPromptSettings.Prompt.nutritionLabelExtraction.value
-        let classifierConfiguration = settingsManager.settings.imageClassifierConfiguration
+        let settings = dependencies.settings()
+        let classifierConfiguration = settings.imageClassifierConfiguration
         let foodPrompt = AIPromptSettings.Prompt.foodImageAnalysis.value
         immediateAnalysisImageData = imageData
         isPreparingFoodAnalysis = true
 
         immediateFoodAnalysisTask = Task { [weak self] in
             guard let self else { return }
-            let provider = await OpenRouterFrontierModelResolver.resolveRefreshingCatalog(
-                self.settingsManager.settings.openRouterModelConfiguration
-            ).defaultModelID
+            let provider = await self.dependencies.resolveModels(settings.openRouterModelConfiguration).defaultModelID
             guard !Task.isCancelled, self.capturedImageData == imageData,
                   self.immediateAnalysisSessionID == sessionID else { return }
             self.immediateAnalysisProvider = provider
             var route = FoodImageRoute.uncertain
             if classifierConfiguration.enabled {
                 do {
-                    route = try await OpenRouterImageDecisionService().classify(
-                        imageData: imageData,
-                        modelID: classifierConfiguration.modelID,
-                        sessionID: sessionID
-                    )
+                    route = try await self.dependencies.classifyImage(imageData, classifierConfiguration.modelID, sessionID)
                 } catch {
                     guard !Task.isCancelled else { return }
                 }
@@ -247,12 +275,10 @@ struct AIFoodTreatmentResult {
         }
         let manager = AIConversationManager()
         manager.modelID = provider
-        let stream = OpenRouterService(
-            modelID: analysisModelID,
-            analysisPrompt: labelModelID == nil ? capturedAnalysisPrompt : capturedLabelPrompt,
-            analysisTimeout: labelModelID == nil ? 60 : 20,
-            analysisMaxTokens: labelModelID == nil ? 1500 : 700,
-            requireCompleteNutrition: labelModelID != nil
+        let stream = dependencies.makeChatService(
+            analysisModelID,
+            labelModelID == nil ? capturedAnalysisPrompt : capturedLabelPrompt,
+            labelModelID != nil
         ).analyzeFoodStreaming(
             imageData: imageData,
             userDescription: nil,
@@ -315,8 +341,8 @@ struct AIFoodTreatmentResult {
             response.overallConfidence <= 1 && response.foodItems.allSatisfy {
                 !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                     !$0.servingUnit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                    $0.servingCount.isFinite && $0.servingCount > 0 &&
-                    [$0.carbs, $0.fat, $0.protein].allSatisfy { $0.isFinite && $0 >= 0 }
+                    $0.servingCount.isFinite && (0.01 ... 10000).contains($0.servingCount) &&
+                    [$0.carbs, $0.fat, $0.protein].allSatisfy { $0.isFinite && (0 ... 1000).contains($0) }
             }
     }
 
@@ -338,9 +364,7 @@ struct AIFoodTreatmentResult {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let finalDescription = normalizedDescription?.isEmpty == false ? normalizedDescription : nil
 
-        let configuration = await OpenRouterFrontierModelResolver.resolveRefreshingCatalog(
-            settingsManager.settings.openRouterModelConfiguration
-        )
+        let configuration = await dependencies.resolveModels(dependencies.settings().openRouterModelConfiguration)
         guard !Task.isCancelled else { return }
         let configuredProvider = configuration.defaultModelID
         let tabs = configuration.selectedModelIDs
@@ -449,8 +473,8 @@ struct AIFoodTreatmentResult {
             }
             return
         }
-        let chatService = OpenRouterService(modelID: provider, analysisPrompt: capturedAnalysisPrompt)
-        let responsesService = AIServiceRegistry.responses(for: provider)
+        let chatService = dependencies.makeChatService(provider, capturedAnalysisPrompt, false)
+        let responsesService = dependencies.makeResponsesService(provider)
 
         do {
             print("🍽️ [\(provider)] Starting food analysis. Description: \(description ?? "<none>")")

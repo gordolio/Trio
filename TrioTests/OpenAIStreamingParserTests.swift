@@ -77,7 +77,6 @@ import Testing
             reasoning: "4 crackers per serving"
         )
         #expect(AIFoodTreatmentCoordinator.isValidLabelResponse(response))
-        #expect(response.foodItems[0].carbs == 22)
         #expect(
             !AIFoodTreatmentCoordinator
                 .isValidLabelResponse(.init(foodItems: [], overallConfidence: 1, reasoning: "Unreadable"))
@@ -91,6 +90,22 @@ import Testing
             !AIFoodTreatmentCoordinator
                 .isValidLabelResponse(.init(foodItems: [invalid], overallConfidence: 1, reasoning: ""))
         )
+    }
+
+    @Test("Label acceptance rejects oversized nutrients and unsafe serving counts") func unsafeLabelNumbers() {
+        let items = [
+            AIFoodItem(name: "Label", carbs: 1E100),
+            AIFoodItem(name: "Label", carbs: 22, fat: 1E100),
+            AIFoodItem(name: "Label", carbs: 22, protein: 1E100),
+            AIFoodItem(name: "Label", carbs: 22, servingCount: 1E100),
+            AIFoodItem(name: "Label", carbs: 22, servingCount: 1E-100)
+        ]
+        for item in items {
+            #expect(
+                !AIFoodTreatmentCoordinator
+                    .isValidLabelResponse(.init(foodItems: [item], overallConfidence: 0.99, reasoning: "Printed facts"))
+            )
+        }
     }
 
     @Test("Decision transport uses separate endpoint and propagates failures for fallback") func decisionTransport() async throws {

@@ -221,17 +221,38 @@ struct ImageDecisionResponse: Decodable {
     }
 }
 
+enum AIStageDeadline {
+    static func run<Value: Sendable>(
+        for duration: Duration,
+        operation: @escaping @Sendable() async throws -> Value
+    ) async throws -> Value {
+        try Task.checkCancellation()
+        return try await withThrowingTaskGroup(of: Value.self) { group in
+            group.addTask(operation: operation)
+            group.addTask {
+                try await Task.sleep(for: duration)
+                throw URLError(.timedOut)
+            }
+            defer { group.cancelAll() }
+            guard let result = try await group.next() else { throw CancellationError() }
+            return result
+        }
+    }
+}
+
 final class OpenRouterImageDecisionService {
     private let session: URLSession
     private let apiKey: () throws -> String
+    private let deadline: Duration
 
-    init(session: URLSession = .shared, apiKey: @escaping () throws -> String = {
+    init(session: URLSession = .shared, deadline: Duration = .seconds(8), apiKey: @escaping () throws -> String = {
         guard let key = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
               !key.isEmpty, key != "$(OPENROUTER_API_KEY)" else { throw OpenAIServiceError.missingAPIKey }
         return key
     }) {
         self.session = session
         self.apiKey = apiKey
+        self.deadline = deadline
     }
 
     static func requestBody(imageData: Data, modelID: String, sessionID: String) throws -> Data {
@@ -260,11 +281,14 @@ final class OpenRouterImageDecisionService {
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try Self.requestBody(imageData: imageData, modelID: modelID, sessionID: sessionID)
-        let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
-            throw OpenAIServiceError.invalidResponse(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        let transportRequest = request
+        return try await AIStageDeadline.run(for: deadline) {
+            let (data, response) = try await self.session.data(for: transportRequest)
+            guard let http = response as? HTTPURLResponse, (200 ... 299).contains(http.statusCode) else {
+                throw OpenAIServiceError.invalidResponse(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
+            }
+            return try JSONDecoder().decode(ImageDecisionResponse.self, from: data).route
         }
-        return try JSONDecoder().decode(ImageDecisionResponse.self, from: data).route
     }
 }
 
