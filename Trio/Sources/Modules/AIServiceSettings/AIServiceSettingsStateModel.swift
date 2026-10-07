@@ -3,6 +3,9 @@ import SwiftUI
 extension AIServiceSettings {
     final class StateModel: BaseStateModel<Provider> {
         @Published var modelConfiguration = OpenRouterModelConfiguration()
+        @Published var imageClassifierConfiguration = ImageClassifierConfiguration()
+        @Published private(set) var decisionModels: [OpenRouterModel] = []
+        @Published private(set) var decisionCatalogError: String?
         @Published private(set) var catalogModels: [OpenRouterModel] = []
         @Published private(set) var favoriteModelIDs: Set<String> = []
         @Published private(set) var catalogError: String?
@@ -12,15 +15,19 @@ extension AIServiceSettings {
 
         override func subscribe() {
             subscribeSetting(\.openRouterModelConfiguration, on: $modelConfiguration) { modelConfiguration = $0 }
+            subscribeSetting(\.imageClassifierConfiguration, on: $imageClassifierConfiguration) {
+                imageClassifierConfiguration = $0 }
+            decisionModels = catalogService.cachedDecisionModels
             catalogModels = catalogService.cachedModels
             favoriteModelIDs = catalogService.favoriteModelIDs
         }
 
-        @MainActor func refreshCatalog() async {
+        @MainActor func refreshCatalog(forceRefresh: Bool = false) async {
             isLoadingCatalog = true
             defer { isLoadingCatalog = false }
+            async let loadedDecisions = catalogService.loadDecisionModels(forceRefresh: forceRefresh)
             do {
-                let models = try await catalogService.loadModels()
+                let models = try await catalogService.loadModels(forceRefresh: forceRefresh)
                 if catalogModels != models {
                     catalogModels = models
                 }
@@ -28,6 +35,13 @@ extension AIServiceSettings {
             } catch {
                 catalogError =
                     String(localized: "Could not refresh the OpenRouter catalog. Showing cached models when available.")
+            }
+            do {
+                decisionModels = try await loadedDecisions
+                decisionCatalogError = nil
+            } catch {
+                decisionCatalogError =
+                    String(localized: "Could not refresh image decision models. Showing cached models when available.")
             }
         }
 
@@ -80,5 +94,6 @@ extension AIServiceSettings {
 extension AIServiceSettings.StateModel: SettingsObserver {
     func settingsDidChange(_ settings: TrioSettings) {
         modelConfiguration = settings.openRouterModelConfiguration
+        imageClassifierConfiguration = settings.imageClassifierConfiguration
     }
 }

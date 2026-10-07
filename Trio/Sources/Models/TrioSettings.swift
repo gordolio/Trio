@@ -96,6 +96,7 @@ struct TrioSettings: JSON, Equatable, Encodable {
 
     /// Ordered dynamic OpenRouter configuration. Legacy provider fields above remain for migration.
     var openRouterModelConfiguration = OpenRouterModelConfiguration()
+    var imageClassifierConfiguration = ImageClassifierConfiguration()
 
     /// Computed property that groups all Garmin settings into a single struct
     var garminSettings: GarminWatchSettings {
@@ -418,6 +419,10 @@ extension TrioSettings: Decodable {
             settings.openRouterModelConfiguration = configuration
         } else {
             settings.openRouterModelConfiguration = OpenRouterModelConfiguration()
+        }
+
+        if let configuration = try? container.decode(ImageClassifierConfiguration.self, forKey: .imageClassifierConfiguration) {
+            settings.imageClassifierConfiguration = configuration
         }
 
         self = settings

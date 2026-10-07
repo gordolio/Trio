@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import os.log
 
@@ -27,6 +28,11 @@ typealias OpenAIStreamingParser = StructuredJSONStreamParser
 final class StructuredJSONStreamParser {
     private let log = OSLog(subsystem: "com.loopkit.Loop", category: "StructuredJSONStreamParser")
     private let decoder = JSONDecoder()
+    private let requireCompleteNutrition: Bool
+
+    init(requireCompleteNutrition: Bool = false) {
+        self.requireCompleteNutrition = requireCompleteNutrition
+    }
 
     /// Known field types for food item objects — used to assign defaults to dangling keys
     private static let knownStringFields: Set<String> = ["name", "emoji", "reasoning", "servingUnit"]
@@ -71,6 +77,9 @@ final class StructuredJSONStreamParser {
     /// `isComplete = true`.
     func finish() -> PartialFoodAnalysisResult {
         var result = lastResult
+        if requireCompleteNutrition, !hasCompleteNutritionJSON {
+            result.foodItems = []
+        }
         result.isComplete = true
         lastResult = result
         os_log(
@@ -81,6 +90,21 @@ final class StructuredJSONStreamParser {
             result.overallConfidence
         )
         return result
+    }
+
+    private var hasCompleteNutritionJSON: Bool {
+        guard let data = accumulatedContent.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = object["foodItems"] as? [[String: Any]], !items.isEmpty,
+              let confidence = object["overallConfidence"] as? NSNumber,
+              CFGetTypeID(confidence) != CFBooleanGetTypeID(),
+              object["reasoning"] is String else { return false }
+        return items.allSatisfy { item in
+            ["carbs", "fat", "protein", "servingCount"].allSatisfy { key in
+                guard let value = item[key] as? NSNumber else { return false }
+                return CFGetTypeID(value) != CFBooleanGetTypeID()
+            } && item["name"] is String && item["servingUnit"] is String
+        }
     }
 
     // MARK: - OpenAI SSE Adapter

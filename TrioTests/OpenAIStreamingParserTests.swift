@@ -3,6 +3,205 @@ import Testing
 
 @testable import Trio
 
+@Suite("Image Decision Routing", .serialized) struct ImageDecisionRoutingTests {
+    @Test("Catalog excludes text-only decisions and separates calculation models") func catalogCompatibility() throws {
+        let imageDecision = try JSONDecoder().decode(
+            OpenRouterModel.self,
+            from: Data(
+                #"{"id":"vendor/vision","name":"Vision","architecture":{"input_modalities":["text","image"],"output_modalities":["decisions"]},"supported_parameters":["response_format"]}"#
+                    .utf8
+            )
+        )
+        let textDecision = try JSONDecoder().decode(
+            OpenRouterModel.self,
+            from: Data(
+                #"{"id":"vendor/text","name":"Text","architecture":{"input_modalities":["text"],"output_modalities":["decisions"]}}"#
+                    .utf8
+            )
+        )
+        #expect(imageDecision.isImageDecisionCompatible)
+        #expect(!imageDecision.isFoodAnalysisCompatible)
+        #expect(!textDecision.isImageDecisionCompatible)
+    }
+
+    @Test("Only confident valid distributions route to the label model") func distributionGate() throws {
+        func route(
+            _ probabilities: String,
+            choice: String = "nutrition_label",
+            type: String = "choice"
+        ) throws -> FoodImageRoute {
+            let json =
+                "{\"answers\":{\"route\":{\"type\":\"\(type)\",\"choice\":\"\(choice)\",\"probabilities\":\(probabilities)}}}"
+            return try JSONDecoder().decode(ImageDecisionResponse.self, from: Data(json.utf8)).route
+        }
+        #expect(try route(#"{"nutrition_label":0.96,"food":0.02,"uncertain":0.02}"#) == .nutritionLabel)
+        #expect(try route(#"{"nutrition_label":0.6,"food":0.3,"uncertain":0.1}"#) == .uncertain)
+        #expect(try route(#"{"nutrition_label":1.0}"#) == .uncertain)
+        #expect(try route(#"{"nutrition_label":0.95,"food":0.95,"uncertain":0.0}"#) == .uncertain)
+        #expect(try route(#"{"nutrition_label":0.96,"food":0.02,"uncertain":0.02}"#, choice: "unknown") == .uncertain)
+        #expect(try route(#"{"nutrition_label":0.96,"food":0.02,"uncertain":0.02}"#, type: "score") == .uncertain)
+    }
+
+    @Test("Decision settings round-trip independently from calculation settings") func settingsPersistence() throws {
+        var settings = TrioSettings()
+        settings.imageClassifierConfiguration.modelID = "cloudflare/clef-flash"
+        settings.imageClassifierConfiguration.nutritionLabelModelID = "vendor/fast-vision"
+        settings.imageClassifierConfiguration.enabled = false
+        let restored = try JSONDecoder().decode(TrioSettings.self, from: JSONEncoder().encode(settings))
+        #expect(restored.imageClassifierConfiguration == settings.imageClassifierConfiguration)
+        #expect(restored.openRouterModelConfiguration == settings.openRouterModelConfiguration)
+        let legacy = try JSONDecoder().decode(TrioSettings.self, from: Data("{}".utf8))
+        #expect(legacy.imageClassifierConfiguration.modelID == "openai/gpt-6-luna-decisions")
+    }
+
+    @Test("Decision payload carries inline image, selected model and bounded choices") func imagePayload() throws {
+        let data = try OpenRouterImageDecisionService.requestBody(
+            imageData: Data([1, 2, 3]),
+            modelID: "vendor/decision",
+            sessionID: "capture"
+        )
+        let json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(json["model"] as? String == "vendor/decision")
+        #expect(json["session_id"] as? String == "capture")
+        let state = try #require(json["state"] as? [[String: Any]])
+        let content = try #require(state.first?["content"] as? [[String: Any]])
+        #expect(content.first?["image_url"] as? String == "data:image/jpeg;base64,AQID")
+        #expect(json["messages"] == nil)
+    }
+
+    @Test("Label validation retains printed per-serving values and rejects incomplete results") func labelValidation() {
+        let item = AIFoodItem(name: "Crackers", carbs: 22, fat: 4, protein: 3, servingCount: 4, servingUnit: "Crackers")
+        let response = AIFoodItemsResponseWithReasoning(
+            foodItems: [item],
+            overallConfidence: 0.95,
+            reasoning: "4 crackers per serving"
+        )
+        #expect(AIFoodTreatmentCoordinator.isValidLabelResponse(response))
+        #expect(response.foodItems[0].carbs == 22)
+        #expect(
+            !AIFoodTreatmentCoordinator
+                .isValidLabelResponse(.init(foodItems: [], overallConfidence: 1, reasoning: "Unreadable"))
+        )
+        #expect(
+            !AIFoodTreatmentCoordinator
+                .isValidLabelResponse(.init(foodItems: [item], overallConfidence: 0.5, reasoning: "Uncertain"))
+        )
+        let invalid = AIFoodItem(name: "Crackers", carbs: -1, servingCount: 0)
+        #expect(
+            !AIFoodTreatmentCoordinator
+                .isValidLabelResponse(.init(foodItems: [invalid], overallConfidence: 1, reasoning: ""))
+        )
+    }
+
+    @Test("Decision transport uses separate endpoint and propagates failures for fallback") func decisionTransport() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ImageDecisionURLProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel()
+            ImageDecisionURLProtocol.handler = nil }
+        ImageDecisionURLProtocol.handler = { request in
+            #expect(request.url?.absoluteString == "https://openrouter.ai/api/alpha/decisions")
+            #expect(request.httpMethod == "POST")
+            #expect(request.timeoutInterval == 8)
+            return (
+                200,
+                Data(
+                    #"{"answers":{"route":{"type":"choice","choice":"food","probabilities":{"food":0.98,"nutrition_label":0.01,"uncertain":0.01}}}}"#
+                        .utf8
+                )
+            )
+        }
+        let service = OpenRouterImageDecisionService(session: session, apiKey: { "fixture-key" })
+        #expect(try await service.classify(imageData: Data([1]), modelID: "fixture/vision", sessionID: "test") == .food)
+        ImageDecisionURLProtocol.handler = { _ in (400, Data()) }
+        await #expect(throws: OpenAIServiceError.self) {
+            try await service.classify(imageData: Data([1]), modelID: "fixture/vision", sessionID: "test")
+        }
+    }
+
+    @Test("Strict label streams reject missing nutrients and truncated JSON") func strictLabelStream() {
+        for json in [
+            #"{"foodItems":[{"name":"Crackers","carbs":22,"fat":4,"servingCount":4,"servingUnit":"Crackers"}],"overallConfidence":0.99,"reasoning":"label"}"#,
+            #"{"foodItems":[{"name":"Crackers","carbs":22,"fat":4,"protein":true,"servingCount":4,"servingUnit":"Crackers"}],"overallConfidence":0.99,"reasoning":"label"}"#,
+            #"{"foodItems":[{"name":"Crackers","carbs":22,"fat":4,"protein":3,"servingCount":4,"servingUnit":"Crackers"}],"overallConfidence":0.99,"reasoning":"label""#
+        ] {
+            let parser = StructuredJSONStreamParser(requireCompleteNutrition: true)
+            _ = parser.feed(contentDelta: json)
+            #expect(parser.finish().foodItems.isEmpty)
+        }
+        let parser = StructuredJSONStreamParser(requireCompleteNutrition: true)
+        _ = parser
+            .feed(
+                contentDelta: #"{"foodItems":[{"name":"Crackers","carbs":22,"fat":4,"protein":3,"servingCount":4,"servingUnit":"Crackers"}],"overallConfidence":0.99,"reasoning":"label"}"#
+            )
+        #expect(parser.finish().foodItems.count == 1)
+    }
+
+    @Test("Decision catalog fetch is filtered and cached separately") func decisionCatalog() async throws {
+        let defaultsName = "ImageDecisionCatalogTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: defaultsName))
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ImageDecisionURLProtocol.self]
+        let session = URLSession(configuration: config)
+        defer {
+            session.invalidateAndCancel()
+            defaults.removePersistentDomain(forName: defaultsName)
+            ImageDecisionURLProtocol.handler = nil
+        }
+        var requestCount = 0
+        ImageDecisionURLProtocol.handler = { request in
+            requestCount += 1
+            #expect(request.url?.query == "output_modalities=decisions")
+            return (
+                200,
+                Data(
+                    #"{"data":[{"id":"vendor/vision","name":"Vision","architecture":{"input_modalities":["image"],"output_modalities":["decisions"]}},{"id":"vendor/text","name":"Text","architecture":{"input_modalities":["text"],"output_modalities":["decisions"]}}]}"#
+                        .utf8
+                )
+            )
+        }
+        let service = OpenRouterModelCatalogService(session: session, defaults: defaults)
+        #expect(try await service.loadDecisionModels().map(\.id) == ["vendor/vision"])
+        #expect(try await service.loadDecisionModels().map(\.id) == ["vendor/vision"])
+        #expect(requestCount == 1)
+        #expect(service.cachedModels.isEmpty)
+    }
+
+    @Test("Captured prompt remains the exact refinement prefix") func pinnedPrompt() throws {
+        let image = Data([1])
+        let response = AIFoodItemsResponseWithReasoning(foodItems: [], overallConfidence: 0, reasoning: "")
+        let initial = FoodAnalysisRequestBuilder.initialMessages(imageData: image, prompt: "captured prompt")
+        let refined = try FoodAnalysisRequestBuilder.refinementMessages(
+            imageData: image,
+            initialResponse: response,
+            userDescription: "context",
+            prompt: "captured prompt"
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        #expect(try encoder.encode(initial[0]) == encoder.encode(refined[0]))
+    }
+}
+
+private final class ImageDecisionURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) -> (Int, Data))?
+    override class func canInit(with _: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        guard let handler = Self.handler, let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        let (status, data) = handler(request)
+        let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 @Suite("Treatments AI Availability") struct TreatmentsAIAvailabilityTests {
     @Test("Availability is safe after coordinator initialization") func availabilityAfterInitialization() {
         let coordinator = AIFoodTreatmentCoordinator(resolver: TrioApp.resolver)

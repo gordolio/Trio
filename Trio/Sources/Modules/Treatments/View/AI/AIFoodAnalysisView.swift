@@ -42,6 +42,10 @@ struct AIFoodTreatmentResult {
     @ObservationIgnored private var immediateAnalysisProvider: String?
     @ObservationIgnored private var immediateAnalysisSessionID: String?
     @ObservationIgnored private var immediateAnalysisImageData: Data?
+    @ObservationIgnored private var immediateUsedLabelModel = false
+    @ObservationIgnored private var capturedAnalysisPrompt = AIPromptSettings.Prompt.streamingFoodAnalysis.value
+    @ObservationIgnored private var capturedLabelPrompt = AIPromptSettings.Prompt.nutritionLabelExtraction.value
+    var perProviderAnalysisModelIDs: [String: String] = [:]
     /// The captured photo data, kept visible for thumbnail display during and after analysis
     var capturedImageData: Data? {
         didSet {
@@ -144,6 +148,7 @@ struct AIFoodTreatmentResult {
         conversationManagers.removeAll()
         perProviderAnalyzing.removeAll()
         perProviderErrors.removeAll()
+        perProviderAnalysisModelIDs.removeAll()
         perProviderPremergeVisionItems.removeAll()
         perProviderPublishedRestaurantName.removeAll()
         activeProviders.removeAll()
@@ -153,6 +158,13 @@ struct AIFoodTreatmentResult {
         pendingAnalysisSessionIDs.removeAll()
 
         let sessionID = UUID().uuidString
+        immediateAnalysisSessionID = sessionID
+        immediateAnalysisProvider = nil
+        immediateUsedLabelModel = false
+        capturedAnalysisPrompt = AIPromptSettings.Prompt.streamingFoodAnalysis.value
+        capturedLabelPrompt = AIPromptSettings.Prompt.nutritionLabelExtraction.value
+        let classifierConfiguration = settingsManager.settings.imageClassifierConfiguration
+        let foodPrompt = AIPromptSettings.Prompt.foodImageAnalysis.value
         immediateAnalysisImageData = imageData
         isPreparingFoodAnalysis = true
 
@@ -161,13 +173,28 @@ struct AIFoodTreatmentResult {
             let provider = await OpenRouterFrontierModelResolver.resolveRefreshingCatalog(
                 self.settingsManager.settings.openRouterModelConfiguration
             ).defaultModelID
-            guard !Task.isCancelled, self.capturedImageData == imageData else { return }
+            guard !Task.isCancelled, self.capturedImageData == imageData,
+                  self.immediateAnalysisSessionID == sessionID else { return }
             self.immediateAnalysisProvider = provider
-            self.immediateAnalysisSessionID = sessionID
+            var route = FoodImageRoute.uncertain
+            if classifierConfiguration.enabled {
+                do {
+                    route = try await OpenRouterImageDecisionService().classify(
+                        imageData: imageData,
+                        modelID: classifierConfiguration.modelID,
+                        sessionID: sessionID
+                    )
+                } catch {
+                    guard !Task.isCancelled else { return }
+                }
+            }
+            guard !Task.isCancelled, self.immediateAnalysisSessionID == sessionID else { return }
+            if route == .food { self.capturedAnalysisPrompt = foodPrompt }
             await self.performImmediateFoodAnalysis(
                 imageData: imageData,
                 provider: provider,
-                sessionID: sessionID
+                sessionID: sessionID,
+                labelModelID: route == .nutritionLabel ? classifierConfiguration.nutritionLabelModelID : nil
             )
         }
     }
@@ -202,7 +229,8 @@ struct AIFoodTreatmentResult {
     @MainActor private func performImmediateFoodAnalysis(
         imageData: Data,
         provider: String,
-        sessionID: String
+        sessionID: String,
+        labelModelID: String? = nil
     ) async {
         guard !Task.isCancelled,
               capturedImageData == imageData,
@@ -212,9 +240,20 @@ struct AIFoodTreatmentResult {
             isPreparingFoodAnalysis = false
             return
         }
+        let analysisModelID = labelModelID ?? provider
+        if labelModelID != nil, !isProviderAvailable(analysisModelID) {
+            await performImmediateFoodAnalysis(imageData: imageData, provider: provider, sessionID: sessionID)
+            return
+        }
         let manager = AIConversationManager()
         manager.modelID = provider
-        let stream = AIServiceRegistry.chat(for: provider).analyzeFoodStreaming(
+        let stream = OpenRouterService(
+            modelID: analysisModelID,
+            analysisPrompt: labelModelID == nil ? capturedAnalysisPrompt : capturedLabelPrompt,
+            analysisTimeout: labelModelID == nil ? 60 : 20,
+            analysisMaxTokens: labelModelID == nil ? 1500 : 700,
+            requireCompleteNutrition: labelModelID != nil
+        ).analyzeFoodStreaming(
             imageData: imageData,
             userDescription: nil,
             sessionID: sessionID
@@ -230,7 +269,7 @@ struct AIFoodTreatmentResult {
                           self.capturedImageData == imageData,
                           self.immediateAnalysisSessionID == sessionID
                     else { return }
-                    self.provisionalFoodItems = items
+                    if labelModelID == nil { self.provisionalFoodItems = items }
                 }
             )
 
@@ -239,6 +278,11 @@ struct AIFoodTreatmentResult {
                   immediateAnalysisSessionID == sessionID
             else { return }
 
+            if labelModelID != nil, !Self.isValidLabelResponse(response) {
+                throw OpenAIServiceError.noContentInResponse
+            }
+            immediateUsedLabelModel = labelModelID != nil
+            perProviderAnalysisModelIDs[provider] = analysisModelID
             provisionalFoodItems = response.foodItems
             provisionalFoodAnalysis = response
             immediateConversationManager = manager
@@ -246,9 +290,14 @@ struct AIFoodTreatmentResult {
         } catch is CancellationError {
             return
         } catch {
-            guard capturedImageData == imageData,
+            guard !Task.isCancelled, capturedImageData == imageData,
                   immediateAnalysisSessionID == sessionID
             else { return }
+            if labelModelID != nil {
+                provisionalFoodItems = []
+                await performImmediateFoodAnalysis(imageData: imageData, provider: provider, sessionID: sessionID)
+                return
+            }
             provisionalFoodAnalysisError = String(
                 localized: "Initial analysis could not be completed. Continue will retry."
             )
@@ -259,6 +308,16 @@ struct AIFoodTreatmentResult {
               immediateAnalysisSessionID == sessionID
         else { return }
         isPreparingFoodAnalysis = false
+    }
+
+    static func isValidLabelResponse(_ response: AIFoodItemsResponseWithReasoning) -> Bool {
+        response.foodItems.count == 1 && response.overallConfidence.isFinite && response.overallConfidence >= 0.9 &&
+            response.overallConfidence <= 1 && response.foodItems.allSatisfy {
+                !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    !$0.servingUnit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                    $0.servingCount.isFinite && $0.servingCount > 0 &&
+                    [$0.carbs, $0.fat, $0.protein].allSatisfy { $0.isFinite && $0 >= 0 }
+            }
     }
 
     /// Analyzes a food image using AI. In comparison mode, the selected provider
@@ -273,6 +332,7 @@ struct AIFoodTreatmentResult {
     func analyzeFood(imageData: Data, description: String? = nil) async {
         let immediateTask = await MainActor.run { immediateFoodAnalysisTask }
         await immediateTask?.value
+        guard !Task.isCancelled else { return }
 
         let normalizedDescription = description?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -281,6 +341,7 @@ struct AIFoodTreatmentResult {
         let configuration = await OpenRouterFrontierModelResolver.resolveRefreshingCatalog(
             settingsManager.settings.openRouterModelConfiguration
         )
+        guard !Task.isCancelled else { return }
         let configuredProvider = configuration.defaultModelID
         let tabs = configuration.selectedModelIDs
         let initialModels = Set(configuration.initialModelIDs)
@@ -349,8 +410,8 @@ struct AIFoodTreatmentResult {
                 imageData: imageData,
                 description: finalDescription,
                 sessionID: initialSessionID,
-                initialResponse: immediateDraft.response,
-                initialManager: immediateDraft.manager
+                initialResponse: finalDescription != nil && immediateUsedLabelModel ? nil : immediateDraft.response,
+                initialManager: finalDescription != nil && immediateUsedLabelModel ? nil : immediateDraft.manager
             )
             await group.waitForAll()
         }
@@ -372,12 +433,14 @@ struct AIFoodTreatmentResult {
         initialManager: AIConversationManager? = nil
     ) async {
         let isCurrentAnalysis = await MainActor.run {
-            pendingImageData == imageData && activeProviders.contains(provider)
+            pendingImageData == imageData && activeProviders
+                .contains(provider) && pendingAnalysisSessionIDs[provider] == sessionID
         }
         guard isCurrentAnalysis else { return }
         guard isProviderAvailable(provider) else {
             await MainActor.run {
-                guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
+                guard pendingImageData == imageData, activeProviders.contains(provider),
+                      pendingAnalysisSessionIDs[provider] == sessionID else { return }
                 perProviderAnalyzing[provider] = false
                 perProviderErrors[provider] = OpenAIServiceError.incompatibleModel(provider).localizedDescription
                 if displayedProvider == provider {
@@ -386,7 +449,7 @@ struct AIFoodTreatmentResult {
             }
             return
         }
-        let chatService = AIServiceRegistry.chat(for: provider)
+        let chatService = OpenRouterService(modelID: provider, analysisPrompt: capturedAnalysisPrompt)
         let responsesService = AIServiceRegistry.responses(for: provider)
 
         do {
@@ -416,6 +479,10 @@ struct AIFoodTreatmentResult {
             } else {
                 manager = AIConversationManager()
                 manager.modelID = provider
+                await MainActor.run {
+                    guard pendingAnalysisSessionIDs[provider] == sessionID else { return }
+                    perProviderAnalysisModelIDs[provider] = provider
+                }
                 let stream: AsyncThrowingStream<PartialFoodAnalysisResult, Error>
                 if let description, let initialResponse {
                     stream = chatService.refineFoodAnalysisStreaming(
@@ -433,7 +500,8 @@ struct AIFoodTreatmentResult {
                 }
 
                 await MainActor.run {
-                    guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
+                    guard pendingImageData == imageData, activeProviders.contains(provider),
+                          pendingAnalysisSessionIDs[provider] == sessionID else { return }
                     conversationManagers[provider] = manager
                     if displayedProvider == provider {
                         conversationManager = manager
@@ -447,6 +515,7 @@ struct AIFoodTreatmentResult {
                     onItemsUpdated: { [weak self] items in
                         guard let self,
                               self.pendingImageData == imageData,
+                              self.pendingAnalysisSessionIDs[provider] == sessionID,
                               self.activeProviders.contains(provider) else { return }
                         let response = AIFoodItemsResponse(
                             foodItems: items,
@@ -463,7 +532,8 @@ struct AIFoodTreatmentResult {
 
             manager.modelID = provider
             await MainActor.run {
-                guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
+                guard pendingImageData == imageData, activeProviders.contains(provider),
+                      pendingAnalysisSessionIDs[provider] == sessionID else { return }
                 conversationManagers[provider] = manager
                 if displayedProvider == provider {
                     conversationManager = manager
@@ -473,7 +543,8 @@ struct AIFoodTreatmentResult {
             let publishedResult = await publishedNutritionResult
 
             await MainActor.run {
-                guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
+                guard pendingImageData == imageData, activeProviders.contains(provider),
+                      pendingAnalysisSessionIDs[provider] == sessionID else { return }
                 perProviderPremergeVisionItems[provider] = visionResponse.foodItems
                 perProviderPublishedRestaurantName[provider] = publishedResult?.restaurantName
                 if displayedProvider == provider {
@@ -488,7 +559,8 @@ struct AIFoodTreatmentResult {
             )
 
             await MainActor.run {
-                guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
+                guard pendingImageData == imageData, activeProviders.contains(provider),
+                      pendingAnalysisSessionIDs[provider] == sessionID else { return }
                 let mergedResponse = AIFoodItemsResponse(
                     foodItems: mergedItems,
                     overallConfidence: visionResponse.overallConfidence
@@ -517,7 +589,8 @@ struct AIFoodTreatmentResult {
             }
         } catch {
             await MainActor.run {
-                guard pendingImageData == imageData, activeProviders.contains(provider) else { return }
+                guard pendingImageData == imageData, activeProviders.contains(provider),
+                      pendingAnalysisSessionIDs[provider] == sessionID else { return }
                 perProviderAnalyzing[provider] = false
                 foodItemSelections[provider] = nil
                 conversationManagers[provider] = nil
@@ -861,6 +934,7 @@ struct AIFoodTreatmentResult {
         perProviderErrors.removeAll()
         perProviderPremergeVisionItems.removeAll()
         perProviderPublishedRestaurantName.removeAll()
+        perProviderAnalysisModelIDs.removeAll()
         activeProviders.removeAll()
         displayedProvider = nil
     }
@@ -1037,6 +1111,14 @@ struct AIFoodAnalysisView: View {
             } else if state.foodItemSelection != nil || !state.foodItemSelections.isEmpty || !state.activeProviders.isEmpty {
                 // Food items selection tree (shown during streaming and after completion)
                 VStack(spacing: 0) {
+                    if let provider = state.displayedProvider,
+                       let modelID = state.perProviderAnalysisModelIDs[provider], modelID != provider
+                    {
+                        Text("Nutrition label extracted by \(modelID.openRouterShortDisplayName)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 8)
+                    }
                     FoodItemsSelectionView(
                         selection: $state.foodItemSelection,
                         isExpanded: $isFoodItemsExpanded,

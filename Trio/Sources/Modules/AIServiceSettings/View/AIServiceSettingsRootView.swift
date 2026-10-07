@@ -10,9 +10,89 @@ extension AIServiceSettings {
         @Environment(\.colorScheme) var colorScheme
         @Environment(AppState.self) var appState
         @State private var showingModelPicker = false
+        @State private var labelModelSearch = ""
 
         var body: some View {
             Form {
+                Section(
+                    header: Text("Image Classifier"),
+                    footer: Text(
+                        "Classifies each photo once. Clear nutrition labels use the fast label model; food uses your default food analysis model. Uncertain results or classifier errors use the default model."
+                    )
+                ) {
+                    Toggle("Experimental image routing", isOn: $state.imageClassifierConfiguration.enabled)
+                    NavigationLink {
+                        Form {
+                            if let error = state.decisionCatalogError {
+                                Text(error).foregroundStyle(.secondary)
+                            }
+                            if state.isLoadingCatalog { ProgressView("Loading Models…") }
+                            Button("Refresh Models") {
+                                Task { await state.refreshCatalog(forceRefresh: true) }
+                            }
+                            .disabled(state.isLoadingCatalog)
+                            if !state.decisionModels.contains(where: { $0.id == state.imageClassifierConfiguration.modelID }) {
+                                Text("Selected: \(state.imageClassifierConfiguration.modelID)")
+                                Text("Selected model is unavailable in the image decision catalog.").foregroundStyle(.secondary)
+                            }
+                            ForEach(state.decisionModels) { model in
+                                Button {
+                                    state.imageClassifierConfiguration.modelID = model.id
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading) {
+                                            Text(model.name)
+                                            Text(model.id).font(.caption).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        if model.id == state.imageClassifierConfiguration.modelID {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .navigationTitle("Image Decision Model")
+                    } label: {
+                        LabeledContent(
+                            "Decision Model",
+                            value: state.decisionModels.first(where: { $0.id == state.imageClassifierConfiguration.modelID })?
+                                .name ?? state.imageClassifierConfiguration.modelID
+                        )
+                    }
+                    NavigationLink {
+                        Form {
+                            ForEach(state.catalogModels.filter {
+                                $0.isFoodAnalysisCompatible && (
+                                    labelModelSearch.isEmpty ||
+                                        $0.name.localizedCaseInsensitiveContains(labelModelSearch) ||
+                                        $0.id.localizedCaseInsensitiveContains(labelModelSearch)
+                                )
+                            }) { model in
+                                Button {
+                                    state.imageClassifierConfiguration.nutritionLabelModelID = model.id
+                                } label: {
+                                    HStack {
+                                        Text(model.name)
+                                        Spacer()
+                                        if model.id == state.imageClassifierConfiguration.nutritionLabelModelID {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .navigationTitle("Nutrition Label Model")
+                        .searchable(text: $labelModelSearch, prompt: "Search Models")
+                    } label: {
+                        LabeledContent(
+                            "Nutrition Label Model",
+                            value: state.imageClassifierConfiguration.nutritionLabelModelID.openRouterShortDisplayName
+                        )
+                    }
+                }
+                .listRowBackground(Color.chart)
+
                 Section(
                     header: Text("Food Analysis Models"),
                     footer: Text(
@@ -88,6 +168,7 @@ extension AIServiceSettings {
             .toolbar { EditButton() }
             .onAppear(perform: configureView)
             .task { await state.refreshCatalog() }
+            .refreshable { await state.refreshCatalog(forceRefresh: true) }
             .sheet(isPresented: $showingModelPicker) {
                 ModelPickerView(state: state)
             }
@@ -379,6 +460,8 @@ private struct ModelCatalogRow: View {
 
 private struct AIPromptSettingsView: View {
     private let supportingPrompts: [AIPromptSettings.Prompt] = [
+        .foodImageAnalysis,
+        .nutritionLabelExtraction,
         .singleItemCorrection,
         .nutritionLookupIntent,
         .conversationRefinement,
