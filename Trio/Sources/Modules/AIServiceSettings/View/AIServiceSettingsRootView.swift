@@ -23,36 +23,47 @@ extension AIServiceSettings {
                     Toggle("Experimental image routing", isOn: $state.imageClassifierConfiguration.enabled)
                     NavigationLink {
                         Form {
-                            if let error = state.decisionCatalogError {
-                                Text(error).foregroundStyle(.secondary)
-                            }
-                            if state.isLoadingCatalog { ProgressView("Loading Models…") }
-                            Button("Refresh Models") {
-                                Task { await state.refreshCatalog(forceRefresh: true) }
-                            }
-                            .disabled(state.isLoadingCatalog)
-                            if !state.decisionModels.contains(where: { $0.id == state.imageClassifierConfiguration.modelID }) {
-                                Text("Selected: \(state.imageClassifierConfiguration.modelID)")
-                                Text("Selected model is unavailable in the image decision catalog.").foregroundStyle(.secondary)
-                            }
-                            ForEach(state.decisionModels) { model in
-                                Button {
-                                    state.imageClassifierConfiguration.modelID = model.id
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading) {
-                                            Text(model.name)
-                                            Text(model.id).font(.caption).foregroundStyle(.secondary)
+                            Section {
+                                if let error = state.decisionCatalogError {
+                                    Text(error).foregroundStyle(.secondary)
+                                }
+                                if state.isLoadingCatalog { ProgressView("Loading Models…") }
+                                Button("Refresh Models") {
+                                    Task { await state.refreshCatalog(forceRefresh: true) }
+                                }
+                                .disabled(state.isLoadingCatalog)
+                                if !state.decisionModels
+                                    .contains(where: { $0.id == state.imageClassifierConfiguration.modelID })
+                                {
+                                    Text("Selected: \(state.imageClassifierConfiguration.modelID)")
+                                    Text("Selected model is unavailable in the image decision catalog.")
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(state.decisionModels) { model in
+                                    Button {
+                                        state.imageClassifierConfiguration.modelID = model.id
+                                    } label: {
+                                        HStack {
+                                            VStack(alignment: .leading) {
+                                                Text(model.name).foregroundStyle(.primary)
+                                                Text(model.id).font(.caption).foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            if model.id == state.imageClassifierConfiguration.modelID {
+                                                Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+                                            }
                                         }
-                                        Spacer()
-                                        if model.id == state.imageClassifierConfiguration.modelID {
-                                            Image(systemName: "checkmark")
-                                        }
+                                        .contentShape(Rectangle())
                                     }
+                                    .buttonStyle(.plain)
                                 }
                             }
+                            .listRowBackground(Color.chart)
                         }
+                        .scrollContentBackground(.hidden)
+                        .background(appState.trioBackgroundColor(for: colorScheme))
                         .navigationTitle("Image Decision Model")
+                        .navigationBarTitleDisplayMode(.inline)
                     } label: {
                         LabeledContent(
                             "Decision Model",
@@ -73,16 +84,22 @@ extension AIServiceSettings {
                                     state.imageClassifierConfiguration.nutritionLabelModelID = model.id
                                 } label: {
                                     HStack {
-                                        Text(model.name)
+                                        Text(model.name).foregroundStyle(.primary)
                                         Spacer()
                                         if model.id == state.imageClassifierConfiguration.nutritionLabelModelID {
-                                            Image(systemName: "checkmark")
+                                            Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
                                         }
                                     }
+                                    .contentShape(Rectangle())
                                 }
+                                .buttonStyle(.plain)
                             }
+                            .listRowBackground(Color.chart)
                         }
+                        .scrollContentBackground(.hidden)
+                        .background(appState.trioBackgroundColor(for: colorScheme))
                         .navigationTitle("Nutrition Label Model")
+                        .navigationBarTitleDisplayMode(.inline)
                         .searchable(text: $labelModelSearch, prompt: "Search Models")
                     } label: {
                         LabeledContent(
