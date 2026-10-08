@@ -11,6 +11,7 @@ struct AIFoodTreatmentResult {
     let metadata: AIAssistedCarbEntryMetadata
 }
 
+/// Injectable settings, model resolution, classification, and service factories for food analysis.
 struct AIFoodAnalysisDependencies {
     let settings: () -> TrioSettings
     var resolveModels: (OpenRouterModelConfiguration) async -> ResolvedOpenRouterModelConfiguration = {
@@ -52,11 +53,13 @@ struct AIFoodAnalysisDependencies {
     var appliedNutrition: AIFoodTreatmentResult?
     var appliedNutritionRevision = 0
 
+    /// Creates the coordinator with live settings and the default OpenRouter dependencies.
     init(resolver: Resolver) {
         let settingsManager = resolver.resolve(SettingsManager.self)!
         dependencies = AIFoodAnalysisDependencies(settings: { settingsManager.settings })
     }
 
+    /// Creates the coordinator with supplied dependencies, allowing routing to run without live services in tests.
     init(dependencies: AIFoodAnalysisDependencies) {
         self.dependencies = dependencies
     }
@@ -143,6 +146,7 @@ struct AIFoodAnalysisDependencies {
         return true
     }
 
+    /// Checks whether the injected availability policy permits food analysis with this model.
     func isProviderAvailable(_ modelID: String) -> Bool {
         dependencies.isModelAvailable(modelID)
     }
@@ -336,6 +340,8 @@ struct AIFoodAnalysisDependencies {
         isPreparingFoodAnalysis = false
     }
 
+    /// Accepts one named label item with confidence in 0.9...1, a nonempty serving unit, and finite values.
+    /// Nutrients must be in 0...1000 grams and serving counts in 0.01...10000 before display or scaling.
     static func isValidLabelResponse(_ response: AIFoodItemsResponseWithReasoning) -> Bool {
         response.foodItems.count == 1 && response.overallConfidence.isFinite && response.overallConfidence >= 0.9 &&
             response.overallConfidence <= 1 && response.foodItems.allSatisfy {
@@ -355,6 +361,8 @@ struct AIFoodAnalysisDependencies {
         }
     }
 
+    /// Promotes a matching provisional result or starts analysis with the configured models.
+    /// A description refines a food result but starts fresh analysis when the provisional result came from a label.
     func analyzeFood(imageData: Data, description: String? = nil) async {
         let immediateTask = await MainActor.run { immediateFoodAnalysisTask }
         await immediateTask?.value

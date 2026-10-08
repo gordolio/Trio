@@ -4,6 +4,7 @@ import Testing
 @testable import Trio
 
 @MainActor @Suite("Image routing coordinator", .serialized) struct ImageRoutingCoordinatorTests {
+    /// Checks label reuse and scales the printed nutrition only after the serving count changes.
     @Test("A label is reused on Analyze and printed servings scale only when changed") func labelReuseAndServings() async throws {
         let harness = FoodRoutingHarness()
         let coordinator = harness.coordinator()
@@ -31,6 +32,7 @@ import Testing
         #expect(harness.requests.count == 1)
     }
 
+    /// Checks that extreme nutrient or serving values cause exactly one general-analysis fallback.
     @Test("Unsafe numeric label responses invoke one frontier fallback", arguments: [
         1E100,
         1E-100
@@ -48,6 +50,7 @@ import Testing
         #expect(coordinator.provisionalFoodItems.first?.name == "Meal")
     }
 
+    /// Checks that classification failure falls back once and Analyze reuses the resulting meal.
     @Test("Classifier failure uses the general prompt without reclassifying on Analyze") func classifierFailure() async {
         let harness = FoodRoutingHarness(classify: { _ in throw RoutingFixtureError.classifierFailure })
         let coordinator = harness.coordinator()
@@ -60,6 +63,7 @@ import Testing
         #expect(coordinator.carbs == 40)
     }
 
+    /// Checks that a label timeout produces one general-analysis request and applies its nutrition.
     @Test("Label transport timeout falls back once") func labelTimeout() async {
         let harness = FoodRoutingHarness(labelError: URLError(.timedOut))
         let coordinator = harness.coordinator()
@@ -69,6 +73,7 @@ import Testing
         #expect(coordinator.carbs == 40)
     }
 
+    /// Checks that a user description replaces label reuse with fresh food and restaurant classification.
     @Test("A label with description starts fresh frontier analysis and supporting classification") func labelDescription() async {
         let harness = FoodRoutingHarness()
         let coordinator = harness.coordinator()
@@ -83,6 +88,7 @@ import Testing
         #expect(coordinator.carbs == 40)
     }
 
+    /// Checks that food refinement preserves the original model, prompt, and session.
     @Test("Food refinement retains model, prompt and capture session") func foodRefinement() async {
         let harness = FoodRoutingHarness(route: .food)
         let coordinator = harness.coordinator()
@@ -96,6 +102,7 @@ import Testing
         #expect(harness.classificationCount == 1)
     }
 
+    /// Covers general analysis both when classification is uncertain and when routing is disabled.
     @Test(
         "Uncertain or disabled routing uses general food analysis",
         arguments: [true, false]
@@ -109,6 +116,7 @@ import Testing
         #expect(harness.classificationCount == (enabled ? 1 : 0))
     }
 
+    /// Checks that incomplete label values stay provisional and cancellation prevents fallback.
     @Test("Label partials remain unpublished and cancellation does not start fallback") func cancelledLabelStream() async throws {
         let harness = FoodRoutingHarness(manualLabelStream: true)
         let coordinator = harness.coordinator()
@@ -133,6 +141,7 @@ import Testing
         #expect(harness.requests.map(\.modelID) == ["fixture/label"])
     }
 
+    /// Releases a classifier after cancellation and checks that no analysis request starts.
     @Test("Late classification cannot revive a cancelled capture") func cancelledClassification() async throws {
         let gate = ClassificationGate()
         let harness = FoodRoutingHarness(classify: { try await gate.classify(sessionID: $0) })
@@ -151,6 +160,7 @@ import Testing
         #expect(!coordinator.isPreparingFoodAnalysis)
     }
 
+    /// Completes identical-image captures out of order to verify that session identity protects the latest result.
     @Test("An older identical-image capture cannot overwrite the current capture") func repeatedImageCapture() async throws {
         let gate = ClassificationGate()
         let harness = FoodRoutingHarness(classify: { try await gate.classify(sessionID: $0) })
@@ -174,6 +184,7 @@ import Testing
         #expect(coordinator.perProviderAnalysisModelIDs["fixture/frontier"] == "fixture/label")
     }
 
+    /// Checks lazy comparison and retry model selection, including a fresh retry session.
     @Test("Comparison and retry use their configured model without repeating the classifier") func comparisonAndRetry() async throws {
         let harness = FoodRoutingHarness()
         let coordinator = harness.coordinator(comparison: true)
@@ -191,6 +202,7 @@ import Testing
         #expect(coordinator.carbs == 40)
     }
 
+    /// Waits for an asynchronous fixture condition, throwing if it remains false for two seconds.
     private func waitUntil(_ predicate: () -> Bool) async throws {
         let limit = ContinuousClock.now.advanced(by: .seconds(2))
         while !predicate() {
@@ -225,6 +237,7 @@ private final class FoodRoutingHarness {
     private let manualLabelStream: Bool
     private let classify: ((String) async throws -> FoodImageRoute)?
 
+    /// Configures the route, label result or error, and optional manually controlled stream or classifier.
     init(
         route: FoodImageRoute = .nutritionLabel,
         labelResponse: AIFoodItemsResponseWithReasoning = .init(
@@ -248,6 +261,7 @@ private final class FoodRoutingHarness {
     var hasLabelStream: Bool { lock.withLock { labelContinuation != nil } }
     var labelTerminated: Bool { lock.withLock { terminated } }
 
+    /// Builds a coordinator using fixture models and recorded services, without live OpenRouter requests.
     func coordinator(routingEnabled: Bool = true, comparison: Bool = false) -> AIFoodTreatmentCoordinator {
         var settings = TrioSettings()
         settings.imageClassifierConfiguration.enabled = routingEnabled
@@ -280,8 +294,10 @@ private final class FoodRoutingHarness {
         ))
     }
 
+    /// Records descriptions submitted to the restaurant classifier under the fixture lock.
     func recordDescription(_ description: String) { lock.withLock { descriptions.append(description) } }
 
+    /// Records a request and returns its configured label stream or a completed general-food response.
     func stream(for request: RoutingRequest) -> AsyncThrowingStream<PartialFoodAnalysisResult, Error> {
         lock.withLock { recordedRequests.append(request) }
         return AsyncThrowingStream { continuation in
@@ -307,7 +323,10 @@ private final class FoodRoutingHarness {
         }
     }
 
+    /// Emits a partial result into the manually controlled label stream, if one has started.
     func yieldLabel(_ partial: PartialFoodAnalysisResult) { lock.withLock { labelContinuation }?.yield(partial) }
+
+    /// Finishes the manually controlled label stream so test cleanup can release its consumer.
     func finishLabel() { lock.withLock { labelContinuation }?.finish() }
 }
 
@@ -316,6 +335,8 @@ private final class RoutingChatService: AIProviderService {
     let modelID: String
     let prompt: String
     let isLabel: Bool
+
+    /// Captures the service configuration that will be recorded for initial and refinement requests.
     init(harness: FoodRoutingHarness, modelID: String, prompt: String, isLabel: Bool) {
         self.harness = harness
         self.modelID = modelID
@@ -323,6 +344,7 @@ private final class RoutingChatService: AIProviderService {
         self.isLabel = isLabel
     }
 
+    /// Records an initial analysis request and returns the harness response stream.
     func analyzeFoodStreaming(
         imageData _: Data,
         userDescription: String?,
@@ -338,6 +360,7 @@ private final class RoutingChatService: AIProviderService {
         ))
     }
 
+    /// Records a refinement request with the supplied description and capture session.
     func refineFoodAnalysisStreaming(
         imageData _: Data,
         initialResponse _: AIFoodItemsResponseWithReasoning,
@@ -354,18 +377,23 @@ private final class RoutingChatService: AIProviderService {
         ))
     }
 
+    /// Rejects item editing because the routing fixture does not support that operation.
     func updateSingleItem(
         imageData _: Data,
         currentItems _: [AIFoodItem],
         editedItemId _: UUID,
         newDescription _: String
     ) async throws -> AISingleItemUpdateResponse { throw RoutingFixtureError.unexpectedOperation }
+
+    /// Rejects conversation requests so an unexpected routing path fails the test.
     func conversationTurn(
         imageData _: Data,
         currentItems _: [AIFoodItem],
         conversationHistory _: [AIConversationMessage],
         userMessage _: String
     ) async throws -> AIConversationResponse { throw RoutingFixtureError.unexpectedOperation }
+
+    /// Rejects nutrition-intent lookup because these scenarios only exercise image routing.
     func classifyNutritionLookupIntent(
         userMessage _: String,
         currentItems _: [AIFoodItem],
@@ -375,12 +403,17 @@ private final class RoutingChatService: AIProviderService {
 
 private final class RoutingResponsesService: AIResponsesProviderService {
     let harness: FoodRoutingHarness
+
+    /// Connects restaurant-classification recording to the shared routing harness.
     init(harness: FoodRoutingHarness) { self.harness = harness }
+
+    /// Records the description and returns a non-restaurant result to avoid published-nutrition lookup.
     func classifyRestaurantItem(description: String) async throws -> RestaurantClassifierResponse {
         harness.recordDescription(description)
         return .init(isRestaurantItem: false, restaurantName: "", menuItemName: "", confidence: 1)
     }
 
+    /// Rejects published-nutrition searches because the fixture always classifies descriptions as non-restaurant.
     func searchPublishedNutrition(
         restaurantName _: String,
         menuItemName _: String
@@ -393,6 +426,8 @@ private final class ClassificationGate {
     private var completions = 0
     var pendingSessions: [String] { lock.withLock { Array(pending.keys) } }
     var completed: Int { lock.withLock { completions } }
+
+    /// Suspends classification for this session until the test explicitly releases its continuation.
     func classify(sessionID: String) async throws -> FoodImageRoute {
         let result = try await withCheckedThrowingContinuation { continuation in
             lock.withLock { pending[sessionID] = continuation }
@@ -401,9 +436,11 @@ private final class ClassificationGate {
         return result
     }
 
+    /// Resumes a pending classification once with the chosen route; unknown sessions are ignored.
     func resume(sessionID: String, route: FoodImageRoute) {
         lock.withLock { pending.removeValue(forKey: sessionID) }?.resume(returning: route)
     }
 
+    /// Releases all pending classifications with an uncertain route during test cleanup.
     func resumeAll() { for session in pendingSessions { resume(sessionID: session, route: .uncertain) } }
 }
