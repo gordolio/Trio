@@ -79,6 +79,8 @@ struct OpenAIChatRequest: Encodable {
     let stream: Bool?
     let streamOptions: OpenAIStreamOptions?
     let sessionID: String?
+    let serviceTier: String
+    let reasoning: OpenRouterRequestOptions.Reasoning?
 
     init(
         model: String,
@@ -87,15 +89,18 @@ struct OpenAIChatRequest: Encodable {
         responseFormat: OpenAIResponseFormat?,
         stream: Bool? = nil,
         streamOptions: OpenAIStreamOptions? = nil,
-        sessionID: String? = nil
+        sessionID: String? = nil,
+        options: OpenRouterRequestOptions = OpenRouterRequestOptions()
     ) {
         self.model = model
         self.messages = messages
-        self.maxTokens = maxTokens
+        self.maxTokens = options.maxTokens(reserving: maxTokens)
         self.responseFormat = responseFormat
         self.stream = stream
         self.streamOptions = streamOptions
         self.sessionID = sessionID
+        serviceTier = options.serviceTier
+        reasoning = options.reasoning
     }
 
     enum CodingKeys: String, CodingKey {
@@ -106,6 +111,8 @@ struct OpenAIChatRequest: Encodable {
         case stream
         case streamOptions = "stream_options"
         case sessionID = "session_id"
+        case serviceTier = "service_tier"
+        case reasoning
     }
 }
 
@@ -461,6 +468,7 @@ final class OpenRouterService: AIProviderService {
     private let analysisTimeout: TimeInterval
     private let analysisMaxTokens: Int
     private let requireCompleteNutrition: Bool
+    private let requestOptions: OpenRouterRequestOptions
 
     init(
         modelID: String,
@@ -468,7 +476,8 @@ final class OpenRouterService: AIProviderService {
         analysisPrompt: String = AIPromptSettings.Prompt.streamingFoodAnalysis.value,
         analysisTimeout: TimeInterval = 60,
         analysisMaxTokens: Int = 1500,
-        requireCompleteNutrition: Bool = false
+        requireCompleteNutrition: Bool = false,
+        requestOptions: OpenRouterRequestOptions? = nil
     ) {
         self.modelID = modelID
         self.session = session
@@ -476,6 +485,7 @@ final class OpenRouterService: AIProviderService {
         self.analysisTimeout = analysisTimeout
         self.analysisMaxTokens = analysisMaxTokens
         self.requireCompleteNutrition = requireCompleteNutrition
+        self.requestOptions = requestOptions ?? .current(for: modelID)
     }
 
     /// Retrieves the OpenRouter API key from the app's Info.plist.
@@ -614,7 +624,8 @@ final class OpenRouterService: AIProviderService {
                         ),
                         stream: true,
                         streamOptions: OpenAIStreamOptions(includeUsage: true),
-                        sessionID: sessionID
+                        sessionID: sessionID,
+                        options: self.requestOptions
                     )
 
                     request.httpBody = try self.encoder.encode(chatRequest)
@@ -752,7 +763,8 @@ final class OpenRouterService: AIProviderService {
                     strict: true,
                     schema: buildSingleItemUpdateSchema()
                 )
-            )
+            ),
+            options: requestOptions
         )
 
         request.httpBody = try encoder.encode(chatRequest)
@@ -879,7 +891,8 @@ final class OpenRouterService: AIProviderService {
                     strict: true,
                     schema: intentSchema
                 )
-            )
+            ),
+            options: OpenRouterRequestOptions(fastModeEnabled: requestOptions.fastModeEnabled)
         )
 
         request.httpBody = try encoder.encode(chatRequest)
@@ -984,7 +997,8 @@ final class OpenRouterService: AIProviderService {
                     strict: true,
                     schema: buildConversationResponseSchema()
                 )
-            )
+            ),
+            options: requestOptions
         )
 
         request.httpBody = try encoder.encode(chatRequest)

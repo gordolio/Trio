@@ -31,6 +31,8 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
     private(set) var selectedModelIDs: [String]
     private(set) var defaultModelID: String
     var runAllModelsSimultaneously: Bool
+    var fastModeEnabled: Bool
+    private(set) var reasoningEfforts: [String: String]
     private let migrationVersion: Int
 
     var initialModelIDs: [String] {
@@ -42,13 +44,17 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         case defaultModelID
         case runAllModelsSimultaneously
         case migrationVersion
+        case fastModeEnabled
+        case reasoningEfforts
     }
 
     init(
         selectedModelIDs: [String] = OpenRouterModels.defaultModelIDs,
         defaultModelID: String = OpenRouterModels.defaultModelID,
         runAllModelsSimultaneously: Bool = false,
-        migrationVersion: Int = Self.currentMigrationVersion
+        migrationVersion: Int = Self.currentMigrationVersion,
+        fastModeEnabled: Bool = true,
+        reasoningEfforts: [String: String] = [:]
     ) {
         var seen = Set<String>()
         let normalized = selectedModelIDs
@@ -61,6 +67,9 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         self.defaultModelID = self.selectedModelIDs.contains(defaultModelID) ? defaultModelID : self.selectedModelIDs[0]
         self.runAllModelsSimultaneously = runAllModelsSimultaneously
         self.migrationVersion = migrationVersion
+        self.fastModeEnabled = fastModeEnabled
+        let configuredIDs = self.selectedModelIDs
+        self.reasoningEfforts = reasoningEfforts.filter { configuredIDs.contains($0.key) }
     }
 
     init(from decoder: Decoder) throws {
@@ -77,7 +86,9 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
                 Bool.self,
                 forKey: .runAllModelsSimultaneously
             ) ?? false,
-            migrationVersion: migrationVersion
+            migrationVersion: migrationVersion,
+            fastModeEnabled: try container.decodeIfPresent(Bool.self, forKey: .fastModeEnabled) ?? true,
+            reasoningEfforts: try container.decodeIfPresent([String: String].self, forKey: .reasoningEfforts) ?? [:]
         )
     }
 
@@ -87,6 +98,8 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         try container.encode(defaultModelID, forKey: .defaultModelID)
         try container.encode(runAllModelsSimultaneously, forKey: .runAllModelsSimultaneously)
         try container.encode(migrationVersion, forKey: .migrationVersion)
+        try container.encode(fastModeEnabled, forKey: .fastModeEnabled)
+        try container.encode(reasoningEfforts, forKey: .reasoningEfforts)
     }
 
     @discardableResult mutating func add(_ modelID: String) -> Bool {
@@ -100,6 +113,7 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         guard selectedModelIDs.count > 1,
               let index = selectedModelIDs.firstIndex(of: modelID) else { return false }
         selectedModelIDs.remove(at: index)
+        reasoningEfforts.removeValue(forKey: modelID)
         if defaultModelID == modelID {
             defaultModelID = selectedModelIDs[min(index, selectedModelIDs.count - 1)]
         }
@@ -118,9 +132,126 @@ struct OpenRouterModelConfiguration: JSON, Equatable {
         defaultModelID = modelID
         return true
     }
+
+    mutating func setReasoningEffort(_ effort: OpenRouterReasoningEffort?, for modelID: String) {
+        guard selectedModelIDs.contains(modelID) else { return }
+        reasoningEfforts[modelID] = effort?.rawValue
+    }
+
+    func reasoningEffort(for selectionID: String, model: OpenRouterModel?) -> OpenRouterReasoningEffort? {
+        guard let value = reasoningEfforts[selectionID],
+              let effort = OpenRouterReasoningEffort(rawValue: value),
+              model?.availableReasoningEfforts.contains(effort) == true else { return nil }
+        return effort
+    }
+}
+
+enum OpenRouterReasoningEffort: String, Codable, CaseIterable {
+    case none
+    case minimal
+    case low
+    case medium
+    case high
+    case xhigh
+    case max
+
+    var title: String {
+        switch self {
+        case .none: String(localized: "Off")
+        case .minimal: String(localized: "Minimal")
+        case .low: String(localized: "Low")
+        case .medium: String(localized: "Medium")
+        case .high: String(localized: "High")
+        case .xhigh: String(localized: "Extra high")
+        case .max: String(localized: "Maximum")
+        }
+    }
+}
+
+struct OpenRouterRequestOptions: Equatable {
+    struct Reasoning: Encodable, Equatable {
+        let effort: OpenRouterReasoningEffort
+    }
+
+    var fastModeEnabled = true
+    var effort: OpenRouterReasoningEffort?
+
+    var serviceTier: String { fastModeEnabled ? "fast" : "default" }
+    var reasoning: Reasoning? { effort.map { Reasoning(effort: $0) } }
+
+    func maxTokens(reserving visibleTokens: Int) -> Int {
+        // Reasoning shares the completion budget. Reserve room for structured output at gateway effort allocations.
+        let multiplier: Int
+        switch effort {
+        case .some(.none), nil: multiplier = 1
+        case .minimal, .low, .medium: multiplier = 2
+        case .high: multiplier = 5
+        case .xhigh, .max: multiplier = 20
+        }
+        return visibleTokens * multiplier
+    }
+
+    static func resolve(
+        modelID: String,
+        configuration: OpenRouterModelConfiguration,
+        models: [OpenRouterModel]
+    ) -> Self {
+        // A tab holds a resolved model ID; preferences belong to its saved selection (including frontier aliases).
+        let selectionID = configuration.selectedModelIDs.first {
+            OpenRouterFrontierModelResolver.modelID(for: $0, in: models) == modelID
+        }
+        let model = models.first { $0.id == modelID }
+        return Self(
+            fastModeEnabled: configuration.fastModeEnabled,
+            effort: selectionID.flatMap { configuration.reasoningEffort(for: $0, model: model) }
+        )
+    }
+
+    static func current(for modelID: String) -> Self {
+        let settings = BaseFileStorage().retrieve(OpenAPS.Trio.settings, as: TrioSettings.self)
+        return resolve(
+            modelID: modelID,
+            configuration: settings?.openRouterModelConfiguration ?? OpenRouterModelConfiguration(),
+            models: OpenRouterModelCatalogService.shared.cachedModels
+        )
+    }
 }
 
 struct OpenRouterModel: JSON, Identifiable, Equatable {
+    struct Reasoning: JSON, Equatable {
+        let supportedEfforts: [String]?
+        let hasEffortSelection: Bool
+        let defaultEffort: String?
+        let mandatory: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case supportedEfforts = "supported_efforts"
+            case defaultEffort = "default_effort"
+            case mandatory
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            hasEffortSelection = container.contains(.supportedEfforts)
+            supportedEfforts = try container.decodeIfPresent([String].self, forKey: .supportedEfforts)
+            defaultEffort = try container.decodeIfPresent(String.self, forKey: .defaultEffort)
+            mandatory = try container.decodeIfPresent(Bool.self, forKey: .mandatory)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            if hasEffortSelection {
+                if let supportedEfforts {
+                    try container.encode(supportedEfforts, forKey: .supportedEfforts)
+                } else {
+                    try container.encodeNil(forKey: .supportedEfforts)
+                }
+            }
+            try container.encodeIfPresent(defaultEffort, forKey: .defaultEffort)
+            try container.encodeIfPresent(mandatory, forKey: .mandatory)
+        }
+    }
+
     struct Architecture: JSON, Equatable {
         let inputModalities: [String]?
         let outputModalities: [String]?
@@ -144,6 +275,7 @@ struct OpenRouterModel: JSON, Identifiable, Equatable {
     let pricing: Pricing?
     let supportedParameters: [String]?
     let created: Int?
+    var reasoning: Reasoning? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -154,6 +286,7 @@ struct OpenRouterModel: JSON, Identifiable, Equatable {
         case contextLength = "context_length"
         case supportedParameters = "supported_parameters"
         case created
+        case reasoning
     }
 
     var providerName: String { id.openRouterProviderName }
@@ -178,6 +311,14 @@ struct OpenRouterModel: JSON, Identifiable, Equatable {
 
     var isImageDecisionCompatible: Bool { supportsImages && supportsDecisions }
     var isFoodAnalysisCompatible: Bool { supportsImages && supportsStructuredResponses && !supportsDecisions }
+
+    var availableReasoningEfforts: [OpenRouterReasoningEffort] {
+        guard let reasoning, reasoning.hasEffortSelection else { return [] }
+        return OpenRouterReasoningEffort.allCases.filter { effort in
+            (reasoning.supportedEfforts?.contains(effort.rawValue) ?? true) &&
+                !(reasoning.mandatory == true && effort == .none)
+        }
+    }
 
     func pricePerMillionTokens(_ value: String?) -> String? {
         guard let value, let decimal = Decimal(string: value), decimal >= 0 else { return nil }
@@ -276,6 +417,7 @@ final class OpenRouterModelCatalogService {
     private struct Cache: Codable {
         let models: [OpenRouterModel]
         let savedAt: Date
+        var reasoningMetadataVersion: Int? = nil
     }
 
     static let shared = OpenRouterModelCatalogService()
@@ -319,13 +461,17 @@ final class OpenRouterModelCatalogService {
         }
         let models = Self.normalizedModels(try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data).data)
             .filter(\.isImageDecisionCompatible)
-        defaults.set(try JSONEncoder().encode(Cache(models: models, savedAt: now)), forKey: decisionCacheKey)
+        defaults.set(
+            try JSONEncoder().encode(Cache(models: models, savedAt: now, reasoningMetadataVersion: 1)),
+            forKey: decisionCacheKey
+        )
         return models
     }
 
     func cacheIsFresh(at now: Date = Date()) -> Bool {
         guard let data = defaults.data(forKey: cacheKey),
-              let cache = try? JSONDecoder().decode(Cache.self, from: data) else { return false }
+              let cache = try? JSONDecoder().decode(Cache.self, from: data),
+              cache.reasoningMetadataVersion == 1 else { return false }
         return now.timeIntervalSince(cache.savedAt) < Self.refreshInterval
     }
 
@@ -348,7 +494,7 @@ final class OpenRouterModelCatalogService {
         let decodedModels = try JSONDecoder().decode(OpenRouterModelCatalogResponse.self, from: data).data
         let models = Self.normalizedModels(decodedModels)
         guard !models.isEmpty else { throw OpenAIServiceError.invalidResponse(statusCode: httpResponse.statusCode) }
-        if let cache = try? JSONEncoder().encode(Cache(models: models, savedAt: now)) {
+        if let cache = try? JSONEncoder().encode(Cache(models: models, savedAt: now, reasoningMetadataVersion: 1)) {
             defaults.set(cache, forKey: cacheKey)
         }
         return models

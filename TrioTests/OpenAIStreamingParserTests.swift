@@ -98,7 +98,8 @@ import Testing
         config.protocolClasses = [ImageDecisionURLProtocol.self]
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel()
-            ImageDecisionURLProtocol.handler = nil }
+            ImageDecisionURLProtocol.handler = nil
+        }
         ImageDecisionURLProtocol.handler = { request in
             #expect(request.url?.absoluteString == "https://openrouter.ai/api/alpha/decisions")
             #expect(request.httpMethod == "POST")
@@ -206,6 +207,160 @@ private final class ImageDecisionURLProtocol: URLProtocol {
     @Test("Availability is safe after coordinator initialization") func availabilityAfterInitialization() {
         let coordinator = AIFoodTreatmentCoordinator(resolver: TrioApp.resolver)
         _ = coordinator.isAIAvailable
+    }
+}
+
+@Suite("OpenRouter Speed and Effort", .serialized) struct OpenRouterSpeedAndEffortTests {
+    private final class CatalogURLProtocol: URLProtocol {
+        static var handler: ((URLRequest) -> (Int, Data))?
+        override class func canInit(with _: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            guard let handler = Self.handler, let url = request.url else {
+                client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+                return
+            }
+            let (status, data) = handler(request)
+            let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+
+        override func stopLoading() {}
+    }
+
+    private func model(_ reasoning: String) throws -> OpenRouterModel {
+        try JSONDecoder().decode(OpenRouterModel.self, from: Data(
+            "{\"id\":\"openai/frontier\",\"name\":\"Frontier\",\"description\":\"OpenAI's flagship model\",\"architecture\":{\"input_modalities\":[\"image\"]},\"supported_parameters\":[\"response_format\"]\(reasoning)}"
+                .utf8
+        ))
+    }
+
+    @Test("Catalog efforts distinguish missing, null, mandatory and unknown values") func capabilities() throws {
+        #expect(try model("").availableReasoningEfforts.isEmpty)
+        #expect(try model(#", "reasoning": {"mandatory":true}"#).availableReasoningEfforts.isEmpty)
+        #expect(
+            try model(#", "reasoning": {"supported_efforts":null}"#).availableReasoningEfforts == OpenRouterReasoningEffort
+                .allCases
+        )
+        let mandatory = try model(#", "reasoning": {"supported_efforts":["none","low","high","future"],"mandatory":true}"#)
+        #expect(mandatory.availableReasoningEfforts == [.low, .high])
+        let roundTrip = try JSONDecoder().decode(OpenRouterModel.self, from: JSONEncoder().encode(mandatory))
+        #expect(roundTrip == mandatory)
+        let unrestricted = try model(#", "reasoning": {"supported_efforts":null,"mandatory":true}"#)
+        #expect(!unrestricted.availableReasoningEfforts.contains(.none))
+        #expect(
+            try JSONDecoder().decode(OpenRouterModel.self, from: JSONEncoder().encode(unrestricted))
+                .availableReasoningEfforts == unrestricted.availableReasoningEfforts
+        )
+    }
+
+    @Test("Existing selections migrate to Fast mode without losing order or execution settings") func migration() throws {
+        let legacy =
+            Data(
+                #"{"selectedModelIDs":["a/one","b/two"],"defaultModelID":"b/two","runAllModelsSimultaneously":true,"migrationVersion":1}"#
+                    .utf8
+            )
+        let configuration = try JSONDecoder().decode(OpenRouterModelConfiguration.self, from: legacy)
+        #expect(configuration.fastModeEnabled)
+        #expect(configuration.reasoningEfforts.isEmpty)
+        #expect(configuration.selectedModelIDs == ["a/one", "b/two"])
+        #expect(configuration.defaultModelID == "b/two")
+        #expect(configuration.runAllModelsSimultaneously)
+    }
+
+    @Test("Speed and per-model efforts survive persistence and model reordering") func persistence() throws {
+        var configuration = OpenRouterModelConfiguration(selectedModelIDs: ["a/one", "b/two"], defaultModelID: "a/one")
+        configuration.fastModeEnabled = false
+        configuration.setReasoningEffort(.low, for: "a/one")
+        configuration.setReasoningEffort(.high, for: "b/two")
+        configuration.move(fromOffsets: IndexSet(integer: 0), toOffset: 2)
+        let restored = try JSONDecoder().decode(OpenRouterModelConfiguration.self, from: JSONEncoder().encode(configuration))
+        #expect(restored == configuration)
+        #expect(restored.reasoningEfforts == ["a/one": "low", "b/two": "high"])
+        configuration.setReasoningEffort(nil, for: "a/one")
+        #expect(configuration.reasoningEfforts["a/one"] == nil)
+        configuration.remove("b/two")
+        #expect(configuration.reasoningEfforts.isEmpty)
+        configuration.setReasoningEffort(.max, for: "missing/model")
+        #expect(configuration.reasoningEfforts.isEmpty)
+    }
+
+    @Test("Frontier aliases follow the resolved model and suppress newly unsupported efforts") func frontierEffort() throws {
+        let selection = OpenRouterFrontierOption.openAI.rawValue
+        var configuration = OpenRouterModelConfiguration(selectedModelIDs: [selection], defaultModelID: selection)
+        configuration.setReasoningEffort(.low, for: selection)
+        let current = try model(#", "reasoning":{"supported_efforts":["low","high"]}"#)
+        #expect(
+            OpenRouterRequestOptions.resolve(modelID: current.id, configuration: configuration, models: [current])
+                .effort == .low
+        )
+        let changed = try model(#", "reasoning":{"supported_efforts":["high"]}"#)
+        #expect(
+            OpenRouterRequestOptions.resolve(modelID: changed.id, configuration: configuration, models: [changed])
+                .effort == nil
+        )
+        #expect(OpenRouterRequestOptions.resolve(modelID: current.id, configuration: configuration, models: []).effort == nil)
+        #expect(
+            OpenRouterRequestOptions
+                .resolve(modelID: OpenRouterModels.utilityModelID, configuration: configuration, models: [current]).effort == nil
+        )
+    }
+
+    @Test("Chat payloads send Fast mode and nested effort; standard mode omits default effort") func payload() throws {
+        func body(_ options: OpenRouterRequestOptions) throws -> [String: Any] {
+            let request = OpenAIChatRequest(
+                model: "openai/test",
+                messages: [],
+                maxTokens: 1500,
+                responseFormat: nil,
+                options: options
+            )
+            return try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        }
+        let fast = try body(OpenRouterRequestOptions(effort: .low))
+        #expect(fast["service_tier"] as? String == "fast")
+        #expect((fast["reasoning"] as? [String: String])?["effort"] == "low")
+        #expect(fast["max_tokens"] as? Int == 3000)
+        let standard = try body(OpenRouterRequestOptions(fastModeEnabled: false))
+        #expect(standard["service_tier"] as? String == "default")
+        #expect(standard["reasoning"] == nil)
+        #expect(standard["max_tokens"] as? Int == 1500)
+        #expect(try body(OpenRouterRequestOptions())["service_tier"] as? String == "fast")
+        #expect(try body(OpenRouterRequestOptions(effort: .high))["max_tokens"] as? Int == 7500)
+        #expect(try body(OpenRouterRequestOptions(effort: .max))["max_tokens"] as? Int == 30000)
+    }
+
+    @Test("Pre-effort caches remain readable offline but refresh before being treated as fresh") func cacheMigration() async throws {
+        let suite = "OpenRouterSpeedAndEffortTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite)
+            CatalogURLProtocol.handler = nil
+        }
+        let oldModels = [try model("")]
+        let cache: [String: Any] = [
+            "models": try JSONSerialization.jsonObject(with: JSONEncoder().encode(oldModels)),
+            "savedAt": Date().timeIntervalSinceReferenceDate
+        ]
+        defaults.set(try JSONSerialization.data(withJSONObject: cache), forKey: "OpenRouterModelCatalog.v1")
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.protocolClasses = [CatalogURLProtocol.self]
+        let session = URLSession(configuration: sessionConfiguration)
+        defer { session.invalidateAndCancel() }
+        let service = OpenRouterModelCatalogService(session: session, defaults: defaults)
+        #expect(service.cachedModels == oldModels)
+        #expect(!service.cacheIsFresh())
+        let updated = try model(#", "reasoning":{"supported_efforts":["low","medium"]}"#)
+        let response = try JSONEncoder().encode(OpenRouterModelCatalogResponse(data: [updated]))
+        var requestCount = 0
+        CatalogURLProtocol.handler = { _ in requestCount += 1
+            return (200, response)
+        }
+        #expect(try await service.loadModels() == [updated])
+        #expect(service.cacheIsFresh())
+        #expect(try await service.loadModels() == [updated])
+        #expect(requestCount == 1)
     }
 }
 

@@ -16,7 +16,8 @@ extension AIServiceSettings {
         override func subscribe() {
             subscribeSetting(\.openRouterModelConfiguration, on: $modelConfiguration) { modelConfiguration = $0 }
             subscribeSetting(\.imageClassifierConfiguration, on: $imageClassifierConfiguration) {
-                imageClassifierConfiguration = $0 }
+                imageClassifierConfiguration = $0
+            }
             decisionModels = catalogService.cachedDecisionModels
             catalogModels = catalogService.cachedModels
             favoriteModelIDs = catalogService.favoriteModelIDs
@@ -75,6 +76,13 @@ extension AIServiceSettings {
         func setDefault(_ modelID: String) {
             var configuration = modelConfiguration
             guard configuration.setDefault(modelID) else { return }
+            modelConfiguration = configuration
+        }
+
+        func setReasoningEffort(_ effort: OpenRouterReasoningEffort?, for modelID: String) {
+            if let effort, model(for: modelID)?.availableReasoningEfforts.contains(effort) != true { return }
+            var configuration = modelConfiguration
+            configuration.setReasoningEffort(effort, for: modelID)
             modelConfiguration = configuration
         }
 
