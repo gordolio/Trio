@@ -23,36 +23,47 @@ extension AIServiceSettings {
                     Toggle("Experimental image routing", isOn: $state.imageClassifierConfiguration.enabled)
                     NavigationLink {
                         Form {
-                            if let error = state.decisionCatalogError {
-                                Text(error).foregroundStyle(.secondary)
-                            }
-                            if state.isLoadingCatalog { ProgressView("Loading Models…") }
-                            Button("Refresh Models") {
-                                Task { await state.refreshCatalog(forceRefresh: true) }
-                            }
-                            .disabled(state.isLoadingCatalog)
-                            if !state.decisionModels.contains(where: { $0.id == state.imageClassifierConfiguration.modelID }) {
-                                Text("Selected: \(state.imageClassifierConfiguration.modelID)")
-                                Text("Selected model is unavailable in the image decision catalog.").foregroundStyle(.secondary)
-                            }
-                            ForEach(state.decisionModels) { model in
-                                Button {
-                                    state.imageClassifierConfiguration.modelID = model.id
-                                } label: {
-                                    HStack {
-                                        VStack(alignment: .leading) {
-                                            Text(model.name)
-                                            Text(model.id).font(.caption).foregroundStyle(.secondary)
+                            Section {
+                                if let error = state.decisionCatalogError {
+                                    Text(error).foregroundStyle(.secondary)
+                                }
+                                if state.isLoadingCatalog { ProgressView("Loading Models…") }
+                                Button("Refresh Models") {
+                                    Task { await state.refreshCatalog(forceRefresh: true) }
+                                }
+                                .disabled(state.isLoadingCatalog)
+                                if !state.decisionModels
+                                    .contains(where: { $0.id == state.imageClassifierConfiguration.modelID })
+                                {
+                                    Text("Selected: \(state.imageClassifierConfiguration.modelID)")
+                                    Text("Selected model is unavailable in the image decision catalog.")
+                                        .foregroundStyle(.secondary)
+                                }
+                                ForEach(state.decisionModels) { model in
+                                    Button {
+                                        state.imageClassifierConfiguration.modelID = model.id
+                                    } label: {
+                                        HStack {
+                                            VStack(alignment: .leading) {
+                                                Text(model.name).foregroundStyle(.primary)
+                                                Text(model.id).font(.caption).foregroundStyle(.secondary)
+                                            }
+                                            Spacer()
+                                            if model.id == state.imageClassifierConfiguration.modelID {
+                                                Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+                                            }
                                         }
-                                        Spacer()
-                                        if model.id == state.imageClassifierConfiguration.modelID {
-                                            Image(systemName: "checkmark")
-                                        }
+                                        .contentShape(Rectangle())
                                     }
+                                    .buttonStyle(.plain)
                                 }
                             }
+                            .listRowBackground(Color.chart)
                         }
+                        .scrollContentBackground(.hidden)
+                        .background(appState.trioBackgroundColor(for: colorScheme))
                         .navigationTitle("Image Decision Model")
+                        .navigationBarTitleDisplayMode(.inline)
                     } label: {
                         LabeledContent(
                             "Decision Model",
@@ -73,16 +84,22 @@ extension AIServiceSettings {
                                     state.imageClassifierConfiguration.nutritionLabelModelID = model.id
                                 } label: {
                                     HStack {
-                                        Text(model.name)
+                                        Text(model.name).foregroundStyle(.primary)
                                         Spacer()
                                         if model.id == state.imageClassifierConfiguration.nutritionLabelModelID {
-                                            Image(systemName: "checkmark")
+                                            Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
                                         }
                                     }
+                                    .contentShape(Rectangle())
                                 }
+                                .buttonStyle(.plain)
                             }
+                            .listRowBackground(Color.chart)
                         }
+                        .scrollContentBackground(.hidden)
+                        .background(appState.trioBackgroundColor(for: colorScheme))
                         .navigationTitle("Nutrition Label Model")
+                        .navigationBarTitleDisplayMode(.inline)
                         .searchable(text: $labelModelSearch, prompt: "Search Models")
                     } label: {
                         LabeledContent(
@@ -96,7 +113,7 @@ extension AIServiceSettings {
                 Section(
                     header: Text("Food Analysis Models"),
                     footer: Text(
-                        "Choose 1 to 4 OpenRouter models. Frontier choices resolve to the current model from the weekly catalog refresh. Drag to set tab order and tap the checkmark to choose the default model."
+                        "Choose 1 to 4 OpenRouter models and set each model's reasoning effort. Higher effort can take longer and use more tokens. Options update from the model catalog. Pull to refresh. Drag to set tab order and tap the checkmark to choose the default model."
                     )
                 ) {
                     ForEach(state.modelConfiguration.selectedModelIDs, id: \.self) { modelID in
@@ -121,6 +138,16 @@ extension AIServiceSettings {
                         state.isLoadingCatalog ||
                             state.modelConfiguration.selectedModelIDs.count >= OpenRouterModelConfiguration.maximumModelCount
                     )
+                }
+                .listRowBackground(Color.chart)
+
+                Section(
+                    header: Text("Response Speed"),
+                    footer: Text(
+                        "Requests faster processing when available. Fast mode may cost more. OpenRouter falls back to standard processing if fast capacity is unavailable."
+                    )
+                ) {
+                    Toggle("Use Fast mode", isOn: $state.modelConfiguration.fastModeEnabled)
                 }
                 .listRowBackground(Color.chart)
 
@@ -177,26 +204,55 @@ extension AIServiceSettings {
         @ViewBuilder private func configuredModelRow(_ modelID: String) -> some View {
             let model = state.model(for: modelID)
             let frontierOption = OpenRouterFrontierOption(rawValue: modelID)
-            HStack(spacing: 12) {
-                Button { state.setDefault(modelID) } label: {
-                    Image(systemName: state.modelConfiguration.defaultModelID == modelID ? "checkmark.circle.fill" : "circle")
-                        .foregroundStyle(state.modelConfiguration.defaultModelID == modelID ? Color.accentColor : Color.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(state.modelConfiguration.defaultModelID == modelID ? "Default model" : "Make default model")
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(
-                        model?.name ??
-                            frontierOption?.fallbackModelID.openRouterShortDisplayName ??
-                            modelID.openRouterShortDisplayName
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    Button { state.setDefault(modelID) } label: {
+                        Image(systemName: state.modelConfiguration.defaultModelID == modelID ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(
+                                state.modelConfiguration.defaultModelID == modelID ? Color.accentColor : Color
+                                    .secondary
+                            )
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        state.modelConfiguration
+                            .defaultModelID == modelID ? "Default model" : "Make default model"
                     )
-                    Text(modelSubtitle(modelID: modelID, model: model, frontierOption: frontierOption))
-                        .font(.caption)
-                        .foregroundStyle(model == nil ? Color.orange : Color.secondary)
-                        .lineLimit(2)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(
+                            model?.name ??
+                                frontierOption?.fallbackModelID.openRouterShortDisplayName ??
+                                modelID.openRouterShortDisplayName
+                        )
+                        Text(modelSubtitle(modelID: modelID, model: model, frontierOption: frontierOption))
+                            .font(.caption)
+                            .foregroundStyle(model == nil ? Color.orange : Color.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
                 }
-                Spacer()
+                if let model, !model.availableReasoningEfforts.isEmpty {
+                    Picker("Reasoning effort", selection: Binding<OpenRouterReasoningEffort?>(
+                        get: { state.modelConfiguration.reasoningEffort(for: modelID, model: state.model(for: modelID)) },
+                        set: { state.setReasoningEffort($0, for: modelID) }
+                    )) {
+                        Text("Model default").tag(OpenRouterReasoningEffort?.none)
+                        ForEach(model.availableReasoningEfforts, id: \.self) { effort in
+                            Text(effort.title).tag(Optional(effort))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityLabel("Reasoning effort for \(model.name)")
+                } else {
+                    Text(
+                        model == nil ? "Refresh the catalog to load effort options." :
+                            "This model does not offer effort selection."
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
             }
         }
 

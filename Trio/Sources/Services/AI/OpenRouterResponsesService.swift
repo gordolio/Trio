@@ -49,6 +49,8 @@ private struct OpenRouterWebSearchRequest: Encodable {
     let maxTokens: Int
     let responseFormat: OpenAIResponseFormat
     let tools: [OpenRouterServerTool]
+    let serviceTier: String
+    let reasoning: OpenRouterRequestOptions.Reasoning?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -56,6 +58,8 @@ private struct OpenRouterWebSearchRequest: Encodable {
         case maxTokens = "max_tokens"
         case responseFormat = "response_format"
         case tools
+        case serviceTier = "service_tier"
+        case reasoning
     }
 }
 
@@ -125,10 +129,12 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let modelID: String
+    private let requestOptions: OpenRouterRequestOptions
 
-    init(modelID: String, session: URLSession = .shared) {
+    init(modelID: String, session: URLSession = .shared, requestOptions: OpenRouterRequestOptions? = nil) {
         self.modelID = modelID
         self.session = session
+        self.requestOptions = requestOptions ?? .current(for: modelID)
     }
 
     private func getAPIKey() throws -> String {
@@ -172,7 +178,8 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
                     strict: true,
                     schema: buildClassifierSchema()
                 )
-            )
+            ),
+            options: OpenRouterRequestOptions(fastModeEnabled: requestOptions.fastModeEnabled)
         )
 
         request.httpBody = try encoder.encode(chatRequest)
@@ -245,7 +252,7 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
         let searchRequest = OpenRouterWebSearchRequest(
             model: modelID,
             messages: [OpenAIMessage(role: "user", content: [.text(inputPrompt)])],
-            maxTokens: 2000,
+            maxTokens: requestOptions.maxTokens(reserving: 2000),
             responseFormat: OpenAIResponseFormat(
                 type: "json_schema",
                 jsonSchema: OpenAIJSONSchema(
@@ -259,7 +266,9 @@ final class OpenRouterResponsesService: AIResponsesProviderService {
                     type: "openrouter:web_search",
                     parameters: OpenRouterWebSearchParameters(engine: "auto", maxResults: 5)
                 )
-            ]
+            ],
+            serviceTier: requestOptions.serviceTier,
+            reasoning: requestOptions.reasoning
         )
 
         request.httpBody = try encoder.encode(searchRequest)
