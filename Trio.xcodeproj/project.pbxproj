@@ -37,6 +37,8 @@
 		A1B2C3D4E5F60718293A4B5C /* OpenAIStreamingParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E7F8091A2B3C4D5E6F7081 /* OpenAIStreamingParser.swift */; };
 		AACDDD9C7BE6A3DE961F3DB5 /* CarbRatioCalibrationProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BD64AD8EFB63AA31811755D /* CarbRatioCalibrationProvider.swift */; };
 		B2C3D4E5F607182930415263 /* OpenAIStreamingParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D4E5F6071829304152637A /* OpenAIStreamingParserTests.swift */; };
+		E90100000000000000000001 /* ImageRoutingCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90100000000000000000002 /* ImageRoutingCoordinatorTests.swift */; };
+		E90100000000000000000003 /* ImageRoutingDeadlineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E90100000000000000000004 /* ImageRoutingDeadlineTests.swift */; };
 		B5EF10978C29C8DEBA0BC034 /* ShimmerModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABEC84024A99CA16B92E1FF /* ShimmerModifier.swift */; };
 		BB796A88ABE78BE901C3422A /* ResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34E59764334CACBEE54E55FD /* ResultsView.swift */; };
 		BF1D90D02D82623C34E88872 /* ChatMessageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F929A88F581348966326C99 /* ChatMessageView.swift */; };
@@ -1195,6 +1197,8 @@
 		BC80617EBB3738D990D60BE1 /* PrepPhaseView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PrepPhaseView.swift; sourceTree = "<group>"; };
 		BF5EE7363428AB62482A2917 /* CarbRatioCalibrationStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CarbRatioCalibrationStateModel.swift; sourceTree = "<group>"; };
 		C3D4E5F6071829304152637A /* OpenAIStreamingParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIStreamingParserTests.swift; sourceTree = "<group>"; };
+		E90100000000000000000002 /* ImageRoutingCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageRoutingCoordinatorTests.swift; sourceTree = "<group>"; };
+		E90100000000000000000004 /* ImageRoutingDeadlineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageRoutingDeadlineTests.swift; sourceTree = "<group>"; };
 		CA4F586CF37541FDD7D0DA0F /* GlucoseTabletBrand.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GlucoseTabletBrand.swift; sourceTree = "<group>"; };
 		D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhotoPickerWrapper.swift; sourceTree = "<group>"; };
 		D6B14D1F451E2514B16C24C2 /* AIChatView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIChatView.swift; sourceTree = "<group>"; };
@@ -3395,6 +3399,8 @@
 			isa = PBXGroup;
 			children = (
 				C3D4E5F6071829304152637A /* OpenAIStreamingParserTests.swift */,
+				E90100000000000000000002 /* ImageRoutingCoordinatorTests.swift */,
+				E90100000000000000000004 /* ImageRoutingDeadlineTests.swift */,
 				F56670A226F4BFDF5B14AD5B /* CarbRatioCalibrationTests.swift */,
 				DDDD0FFD2F4E231600F9C645 /* Mocks */,
 				DDDD0FFA2F4E22C000F9C645 /* GlucoseSmoothingTests.swift */,
@@ -6214,6 +6220,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				B2C3D4E5F607182930415263 /* OpenAIStreamingParserTests.swift in Sources */,
+				E90100000000000000000001 /* ImageRoutingCoordinatorTests.swift in Sources */,
+				E90100000000000000000003 /* ImageRoutingDeadlineTests.swift in Sources */,
 				9BA9FE46D3563D65E0C88D8A /* CarbRatioCalibrationTests.swift in Sources */,
 				3B5CD2C92D4AECD500CE213C /* ProfileCarbsTests.swift in Sources */,
 				3BEDC9932EEB27B600AC6492 /* IobConsecutiveEventsTests.swift in Sources */,
