@@ -4,6 +4,7 @@ import Testing
 @testable import Trio
 
 @Suite("Image routing total deadlines", .serialized) struct ImageRoutingDeadlineTests {
+    /// Checks that repeated response bytes cannot keep classification alive beyond its total deadline.
     @Test("Trickling decision bytes cannot extend the total deadline") func tricklingDecision() async throws {
         TricklingAIURLProtocol.reset(streaming: false)
         let session = makeSession()
@@ -18,6 +19,7 @@ import Testing
         try await waitForCancellation()
     }
 
+    /// Checks that partial nutrition and keepalives still lead to a deadline error and transport cancellation.
     @Test("Label progress and SSE keepalives cannot extend the total deadline") func tricklingLabelStream() async throws {
         TricklingAIURLProtocol.reset(streaming: true)
         let session = makeSession()
@@ -43,6 +45,7 @@ import Testing
         try await waitForCancellation()
     }
 
+    /// Checks that the completion marker ends consumption and cancels a connection left open by the server.
     @Test("DONE completes the label stream even when the connection stays open") func completedLabelStream() async throws {
         TricklingAIURLProtocol.reset(streaming: true, doneDelay: 0.1, closeAtDone: false)
         let session = makeSession()
@@ -59,6 +62,7 @@ import Testing
         try await waitForCancellation()
     }
 
+    /// Cancels an active stream consumer and verifies that cancellation reaches the URLSession transport.
     @Test("User cancellation closes the label transport") func cancelledLabelTransport() async throws {
         TricklingAIURLProtocol.reset(streaming: true)
         let session = makeSession()
@@ -80,12 +84,14 @@ import Testing
         try await waitForCancellation()
     }
 
+    /// Creates an ephemeral session whose requests are handled by the trickling transport fixture.
     private func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [TricklingAIURLProtocol.self]
         return URLSession(configuration: configuration)
     }
 
+    /// Waits up to one second for transport cancellation and records a test failure if it never arrives.
     private func waitForCancellation() async throws {
         let limit = ContinuousClock.now.advanced(by: .seconds(1))
         while !TricklingAIURLProtocol.wasCancelled, ContinuousClock.now < limit {
@@ -109,6 +115,8 @@ private final class TricklingAIURLProtocol: URLProtocol {
 
     static var sentChunks: Int { fixtureLock.withLock { chunks } }
     static var wasCancelled: Bool { fixtureLock.withLock { cancelled } }
+
+    /// Resets counters and selects JSON or SSE responses, completion timing, and whether completion closes the connection.
     static func reset(streaming: Bool, doneDelay: TimeInterval = 1.2, closeAtDone: Bool = true) {
         fixtureLock.withLock { self.streaming = streaming
             self.doneDelay = doneDelay
@@ -117,9 +125,13 @@ private final class TricklingAIURLProtocol: URLProtocol {
             cancelled = false }
     }
 
+    /// Intercepts every request in a session explicitly configured with this test protocol.
     override class func canInit(with _: URLRequest) -> Bool { true }
+
+    /// Preserves the request unchanged for URL loading.
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
+    /// Sends a successful response followed by trickling bytes and an optionally connection-closing completion.
     override func startLoading() {
         guard let url = request.url else { return }
         let isStream = Self.fixtureLock.withLock { Self.streaming }
@@ -149,18 +161,21 @@ private final class TricklingAIURLProtocol: URLProtocol {
         }
     }
 
+    /// Schedules a transport event and retains its work item so cancellation can stop pending events.
     private func schedule(after delay: TimeInterval, action: @escaping () -> Void) {
         let item = DispatchWorkItem(block: action)
         lock.withLock { work.append(item) }
         queue.asyncAfter(deadline: .now() + delay, execute: item)
     }
 
+    /// Counts and delivers a response chunk unless the transport has already stopped.
     private func send(_ data: Data) {
         guard !lock.withLock({ stopped }) else { return }
         Self.fixtureLock.withLock { Self.chunks += 1 }
         client?.urlProtocol(self, didLoad: data)
     }
 
+    /// Cancels scheduled transport events and records URLSession cancellation for test assertions.
     override func stopLoading() {
         let items = lock.withLock { stopped = true
             return work }

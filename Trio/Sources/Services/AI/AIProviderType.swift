@@ -363,6 +363,9 @@ struct ImageDecisionResponse: Decodable {
 }
 
 enum AIStageDeadline {
+    /// Races a cancellation-cooperative operation against a total elapsed-time limit.
+    /// Throws `URLError.timedOut` if the timer wins and cancels the remaining task.
+    /// The task group still waits for the operation to respond to cancellation before returning.
     static func run<Value: Sendable>(
         for duration: Duration,
         operation: @escaping @Sendable() async throws -> Value
@@ -386,6 +389,7 @@ final class OpenRouterImageDecisionService {
     private let apiKey: () throws -> String
     private let deadline: Duration
 
+    /// Creates a classifier with an injectable transport, total deadline, and API-key provider.
     init(session: URLSession = .shared, deadline: Duration = .seconds(8), apiKey: @escaping () throws -> String = {
         guard let key = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
               !key.isEmpty, key != "$(OPENROUTER_API_KEY)" else { throw OpenAIServiceError.missingAPIKey }
@@ -415,6 +419,8 @@ final class OpenRouterImageDecisionService {
         ])
     }
 
+    /// Classifies an image within the total deadline, cancelling the request on timeout or caller cancellation.
+    /// Returns `.uncertain` for ambiguous decisions; credential, transport, and decoding failures are thrown.
     func classify(imageData: Data, modelID: String, sessionID: String) async throws -> FoodImageRoute {
         let key = try apiKey()
         var request = URLRequest(url: URL(string: "https://openrouter.ai/api/alpha/decisions")!, timeoutInterval: 8)

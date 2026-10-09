@@ -472,6 +472,8 @@ final class OpenRouterService: AIProviderService {
     private let apiKeyProvider: (() throws -> String)?
     private let requestOptions: OpenRouterRequestOptions
 
+    /// Configures food analysis with an inactivity timeout and an optional total streaming deadline.
+    /// Label extraction can require complete nutrition; an injected key provider overrides Info.plist lookup.
     init(
         modelID: String,
         session: URLSession = .shared,
@@ -494,7 +496,7 @@ final class OpenRouterService: AIProviderService {
         self.requestOptions = requestOptions ?? .current(for: modelID)
     }
 
-    /// Retrieves the OpenRouter API key from the app's Info.plist.
+    /// Retrieves the API key from the injected provider, or validates the app's Info.plist value.
     private func getAPIKey() throws -> String {
         if let apiKeyProvider { return try apiKeyProvider() }
         guard let apiKey = Bundle.main.object(forInfoDictionaryKey: "OpenRouterAPIKey") as? String,
@@ -596,6 +598,8 @@ final class OpenRouterService: AIProviderService {
         }
     }
 
+    /// Streams structured nutrition until completion, failure, consumer cancellation, or the total deadline.
+    /// A completed parser result closes the transport even if the server keeps the connection open.
     private func streamFoodAnalysis(
         messages: [OpenAIMessage],
         sessionID: String?

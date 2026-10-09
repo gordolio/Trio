@@ -69,6 +69,7 @@ import Testing
         #expect(json["messages"] == nil)
     }
 
+    /// Checks acceptance of printed servings and rejection of missing, low-confidence, or invalid nutrition.
     @Test("Label validation retains printed per-serving values and rejects incomplete results") func labelValidation() {
         let item = AIFoodItem(name: "Crackers", carbs: 22, fat: 4, protein: 3, servingCount: 4, servingUnit: "Crackers")
         let response = AIFoodItemsResponseWithReasoning(
@@ -92,6 +93,7 @@ import Testing
         )
     }
 
+    /// Covers finite extremes that could overflow display conversion or distort serving calculations.
     @Test("Label acceptance rejects oversized nutrients and unsafe serving counts") func unsafeLabelNumbers() {
         let items = [
             AIFoodItem(name: "Label", carbs: 1E100),
