@@ -17,7 +17,7 @@ extension Home.RootView {
     /// animatable value, so both directions animate.
     @ViewBuilder func mealPanel() -> some View {
         ZStack {
-            liveMealPanel
+            backfillMealPanel
                 .opacity(isChartReadoutVisible ? 0 : 1)
 
             // Renders from the last resolved selection, which is deliberately not cleared on

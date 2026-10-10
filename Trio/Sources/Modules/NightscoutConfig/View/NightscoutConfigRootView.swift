@@ -66,26 +66,7 @@ extension NightscoutConfig {
                         content:
                         {
                             VStack {
-                                Button {
-                                    Task {
-                                        await state.backfillGlucose()
-                                        if !state.message.isEmpty && state.message.hasPrefix("Error:") {
-                                            DispatchQueue.main.async {
-                                                backfillAlert = Alert(
-                                                    title: Text("Backfill Failed"),
-                                                    message: Text(state.message),
-                                                    dismissButton: .default(Text("OK"))
-                                                )
-                                                isBackfillAlertPresented = true
-                                            }
-                                        }
-                                    }
-                                } label: {
-                                    Text("Backfill Glucose")
-                                        .font(.title3) }
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                    .buttonStyle(.bordered)
-                                    .disabled(state.url.isEmpty || state.connecting || state.backfilling)
+                                backfillSettingsButton
 
                                 HStack(alignment: .center) {
                                     Text(
@@ -135,6 +116,7 @@ extension NightscoutConfig {
                 )
             }
             .navigationBarTitle("Nightscout")
+            .nightscoutBackfillFeedback(resolver: resolver)
             .navigationBarTitleDisplayMode(.automatic)
             .scrollContentBackground(.hidden).background(appState.trioBackgroundColor(for: colorScheme))
             .onAppear(perform: configureView)
