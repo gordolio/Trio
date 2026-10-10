@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BACC11000000000000000001 /* NightscoutBackfill.swift in Sources */ = {isa = PBXBuildFile; fileRef = BACC11000000000000000002; };
+		BACC11000000000000000003 /* GlucoseBackfillViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BACC11000000000000000004; };
+		BACC11000000000000000005 /* NightscoutBackfillTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BACC11000000000000000006; };
 		041D1E995A6AE92E9289DC49 /* TreatmentsDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8D1A7CA8C10C4403D4BBFA7 /* TreatmentsDataFlow.swift */; };
 		0D9A5E34A899219C5C4CDFAF /* HistoryStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9455FA2D92E77A6C4AFED8A3 /* HistoryStateModel.swift */; };
 		110AEDE32C5193D200615CC9 /* BolusIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 110AEDE02C5193D100615CC9 /* BolusIntent.swift */; };
@@ -1106,6 +1109,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BACC11000000000000000002 /* NightscoutBackfill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightscoutBackfill.swift; sourceTree = "<group>"; };
+		BACC11000000000000000004 /* GlucoseBackfillViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlucoseBackfillViews.swift; sourceTree = "<group>"; };
+		BACC11000000000000000006 /* NightscoutBackfillTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightscoutBackfillTests.swift; sourceTree = "<group>"; };
 		10E61A0885164081B57C357C /* NightscoutUploadSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NightscoutUploadSerializer.swift; sourceTree = "<group>"; };
 		110AEDE02C5193D100615CC9 /* BolusIntent.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BolusIntent.swift; sourceTree = "<group>"; };
 		110AEDE12C5193D100615CC9 /* BolusIntentRequest.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BolusIntentRequest.swift; sourceTree = "<group>"; };
@@ -3191,6 +3197,7 @@
 		38FCF3EE25E9028E0078B0D1 /* TrioTests */ = {
 			isa = PBXGroup;
 			children = (
+				BACC11000000000000000006 /* NightscoutBackfillTests.swift */,
 				DDDD0FFD2F4E231600F9C645 /* Mocks */,
 				DDDD0FFA2F4E22C000F9C645 /* GlucoseSmoothingTests.swift */,
 				DDDD0FFC2F4E22C000F9C645 /* GlucoseNativeConversionTests.swift */,
@@ -3441,6 +3448,7 @@
 		4F4AE4D901E8BA872B207D7F /* View */ = {
 			isa = PBXGroup;
 			children = (
+				BACC11000000000000000004 /* GlucoseBackfillViews.swift */,
 				8782B44544F38F2B2D82C38E /* NightscoutConfigRootView.swift */,
 				5A2325512BFCBF55003518CA /* NightscoutUploadView.swift */,
 				5A2325532BFCBF65003518CA /* NightscoutFetchView.swift */,
@@ -4529,6 +4537,7 @@
 		DDC9B9962CFD2332003E7721 /* Nightscout */ = {
 			isa = PBXGroup;
 			children = (
+				BACC11000000000000000002 /* NightscoutBackfill.swift */,
 				DD906BF32EA6AA0100262772 /* NightscoutUploadPipeline.swift */,
 				10E61A0885164081B57C357C /* NightscoutUploadSerializer.swift */,
 				3811DE9725C9D88300A708ED /* NightscoutManager.swift */,
@@ -5486,6 +5495,8 @@
 				38EA05DA261F6E7C0064E39B /* SimpleLogReporter.swift in Sources */,
 				3811DE6125C9D4D500A708ED /* ViewModifiers.swift in Sources */,
 				3811DEAC25C9D88300A708ED /* NightscoutManager.swift in Sources */,
+				BACC11000000000000000001 /* NightscoutBackfill.swift in Sources */,
+				BACC11000000000000000003 /* GlucoseBackfillViews.swift in Sources */,
 				BD793CB22CE8033500D669AC /* TempTargetRunStored.swift in Sources */,
 				BD7DA9A92AE06E9200601B20 /* BolusCalculatorStateModel.swift in Sources */,
 				CEB434E528B8FF5D00B70274 /* UIColor.swift in Sources */,
@@ -5997,6 +6008,7 @@
 				3B997DCF2DC00A3A006B6BB2 /* JSONImporterTests.swift in Sources */,
 				3B2A3BC32E2B19F700658FB9 /* DynamicISFTests.swift in Sources */,
 				BD8FC0662D661A0000B95AED /* GlucoseStorageTests.swift in Sources */,
+				BACC11000000000000000005 /* NightscoutBackfillTests.swift in Sources */,
 				DDDD0FFF2F4E231B00F9C645 /* MockTDDStorage.swift in Sources */,
 				BD8FC05B2D6618AF00B95AED /* DeterminationStorageTests.swift in Sources */,
 				3BAAE60C2DE7766C0049589B /* DynamicISFEnableTests.swift in Sources */,

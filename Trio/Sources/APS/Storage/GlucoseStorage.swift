@@ -11,6 +11,7 @@ protocol GlucoseStorage {
     var updatePublisher: AnyPublisher<Void, Never> { get }
     func storeGlucose(_ glucose: [BloodGlucose]) async throws
     func backfillGlucose(_ glucose: [BloodGlucose]) async throws
+    func backfillGlucoseReportingCount(_ glucose: [BloodGlucose]) async throws -> Int
     func addManualGlucose(glucose: Int)
     func isGlucoseDataFresh(_ glucoseDate: Date?) -> Bool
     func syncDate() -> Date
@@ -110,6 +111,13 @@ final class BaseGlucoseStorage: GlucoseStorage, Injectable {
                     file: #fileID
                 )
             }
+        }
+    }
+
+    func backfillGlucoseReportingCount(_ glucose: [BloodGlucose]) async throws -> Int {
+        let context = makeContext()
+        return try await NightscoutBackfillStore.store(clampToMinimum(glucose), in: context) {
+            try self.storeGlucoseInCoreData($0, context: context)
         }
     }
 
