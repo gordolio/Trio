@@ -169,19 +169,26 @@ struct GlucoseBackfillIcon: View {
 
 /// Hosts the backfill result card and owns its enter/exit transitions; stays in the
 /// hierarchy while empty so the card's removal can animate.
+///
+/// Home and Settings each host one, and Home stays alive in its tab while Settings is
+/// showing. Only an on-screen host shows the card: offscreen, the countdown animation
+/// completes instantly and would dismiss the shared result out from under Settings.
 struct GlucoseBackfillToast: View {
     @ObservedObject var backfill: NightscoutBackfill
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isOnScreen = false
 
     var body: some View {
         ZStack {
-            if let feedback = backfill.feedback {
+            if isOnScreen, let feedback = backfill.feedback {
                 GlucoseBackfillToastCard(feedback: feedback, onDismiss: backfill.dismissFeedback)
                     .id(feedback.id)
                     .transition(transition)
             }
         }
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: backfill.feedback?.id)
+        .onAppear { isOnScreen = true }
+        .onDisappear { isOnScreen = false }
     }
 
     /// rises in from just below, then fades up and away
