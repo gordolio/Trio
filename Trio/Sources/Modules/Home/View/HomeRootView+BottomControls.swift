@@ -825,5 +825,6 @@ extension Home.RootView {
                 .frame(height: HomeLayout.statsBannerHeight)
         }
         .padding(.vertical, HomeLayout.bottomZonePadding)
+        .nightscoutBackfillFeedbackAbove(resolver: resolver)
     }
 }

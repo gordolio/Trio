@@ -69,6 +69,16 @@ extension View {
     func nightscoutBackfillFeedback(resolver: Resolver) -> some View {
         overlay(alignment: .bottom) {
             GlucoseBackfillToast(backfill: resolver.resolve(NightscoutBackfill.self)!)
+                .padding(.bottom, 8)
+        }
+    }
+
+    /// Floats the result card just above this view's top edge (the Home bottom
+    /// panels), over the chart's foot, so it never reflows the fixed zones.
+    func nightscoutBackfillFeedbackAbove(resolver: Resolver) -> some View {
+        overlay(alignment: .top) {
+            GlucoseBackfillToast(backfill: resolver.resolve(NightscoutBackfill.self)!)
+                .alignmentGuide(.top) { $0[.bottom] }
         }
     }
 }
@@ -134,8 +144,12 @@ struct GlucoseBackfillIcon: View {
             .stroke(style: StrokeStyle(lineWidth: width * 0.075, lineCap: .round, lineJoin: .round))
 
             Path { path in
-                for point in [CGPoint(x: 0.08, y: 0.72), CGPoint(x: 0.27, y: 0.62),
-                              CGPoint(x: 0.73, y: 0.62), CGPoint(x: 0.92, y: 0.72)]
+                for point in [
+                    CGPoint(x: 0.08, y: 0.72),
+                    CGPoint(x: 0.27, y: 0.62),
+                    CGPoint(x: 0.73, y: 0.62),
+                    CGPoint(x: 0.92, y: 0.72)
+                ]
                 {
                     path.addEllipse(in: CGRect(
                         x: width * (point.x - 0.065), y: height * (point.y - 0.065),
@@ -153,39 +167,160 @@ struct GlucoseBackfillIcon: View {
     }
 }
 
+/// Hosts the backfill result card and owns its enter/exit transitions; stays in the
+/// hierarchy while empty so the card's removal can animate.
 struct GlucoseBackfillToast: View {
     @ObservedObject var backfill: NightscoutBackfill
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if let feedback = backfill.feedback {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: feedback.isError ? "exclamationmark.circle" : "checkmark.circle")
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(feedback.title).font(.footnote.weight(.semibold))
-                    Text(feedback.detail).font(.footnote).foregroundStyle(.secondary)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityElement(children: .combine)
-                Spacer(minLength: 0)
-                Button(action: backfill.dismissFeedback) {
-                    Image(systemName: "xmark")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("Dismiss backfill result"))
+        ZStack {
+            if let feedback = backfill.feedback {
+                GlucoseBackfillToastCard(feedback: feedback, onDismiss: backfill.dismissFeedback)
+                    .id(feedback.id)
+                    .transition(transition)
             }
-            .foregroundStyle(.primary)
-            .padding(.leading, 16)
-            .padding(.trailing, 4)
-            .padding(.vertical, 10)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.secondary.opacity(0.3)))
-            .padding(.horizontal, 16)
-            .padding(.bottom, 8)
-            .accessibilityIdentifier("glucoseBackfillToast")
+        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85), value: backfill.feedback?.id)
+    }
+
+    /// rises in from just below, then fades up and away
+    private var transition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: 16)),
+            removal: .opacity.combined(with: .offset(y: -24)).combined(with: .scale(scale: 0.96, anchor: .bottom))
+        )
+    }
+}
+
+/// Result card styled like the Home panel banners. Successful results count down
+/// and dismiss themselves; touching the card refills the countdown.
+struct GlucoseBackfillToastCard: View {
+    static let countdownDuration: TimeInterval = 3
+
+    let feedback: NightscoutBackfill.Feedback
+    let onDismiss: () -> Void
+
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @State private var countdownRun = 0
+    @State private var isHeld = false
+
+    private var tint: Color { feedback.isError ? .orange : .tabBar }
+
+    /// errors stay until dismissed; VoiceOver users dismiss on their own time
+    private var autoDismisses: Bool { !feedback.isError && !voiceOverEnabled }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            icon
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(feedback.title)
+                    .font(.subheadline).fontWeight(.semibold)
+                    .foregroundStyle(.primary)
+                Text(feedback.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
+
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(Color.primary.opacity(0.08)))
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Dismiss backfill result"))
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 4)
+        .padding(.vertical, 8)
+        .frame(minHeight: HomeLayout.statsBannerHeight)
+        .glassPanel(tint: tint, tintOpacity: 0.18, strokeOpacity: 0.6, strokeWidth: 1)
+        .overlay(alignment: .bottom) {
+            if autoDismisses {
+                GlucoseBackfillCountdownBar(
+                    duration: Self.countdownDuration,
+                    isRunning: !isHeld,
+                    tint: tint,
+                    onFinish: { [countdownRun] in
+                        guard countdownRun == self.countdownRun, !isHeld else { return }
+                        onDismiss()
+                    }
+                )
+                // a fresh bar per run: no in-flight animation to fight when refilling
+                .id(countdownRun)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 1)
+            }
+        }
+        .scaleEffect(isHeld ? 0.98 : 1)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHeld)
+        .contentShape(GlassChrome.panelShape)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    guard autoDismisses, !isHeld else { return }
+                    isHeld = true
+                    countdownRun += 1
+                }
+                .onEnded { _ in isHeld = false }
+        )
+        .padding(.horizontal, 10)
+        .accessibilityAction(named: Text("Dismiss"), onDismiss)
+        .accessibilityIdentifier("glucoseBackfillToast")
+    }
+
+    private var icon: some View {
+        Group {
+            if feedback.isError {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+            } else {
+                // same glyph as the Home button that started the backfill
+                GlucoseBackfillIcon().frame(width: 18, height: 18)
+            }
+        }
+        .foregroundStyle(tint)
+        .frame(width: 30, height: 30)
+        .background(Circle().fill(tint.opacity(0.18)))
+        .accessibilityHidden(true)
+    }
+}
+
+/// Drains from full to empty over `duration`, holding full while not running.
+struct GlucoseBackfillCountdownBar: View {
+    let duration: TimeInterval
+    let isRunning: Bool
+    let tint: Color
+    let onFinish: () -> Void
+
+    @State private var fraction: CGFloat = 1
+
+    var body: some View {
+        GeometryReader { geometry in
+            Capsule()
+                .fill(tint.opacity(0.85))
+                .frame(width: geometry.size.width * fraction, height: 4)
+        }
+        .frame(height: 4)
+        .accessibilityHidden(true)
+        .onAppear { if isRunning { drain() } }
+        .onChange(of: isRunning) { if isRunning { drain() } }
+    }
+
+    private func drain() {
+        withAnimation(.linear(duration: duration)) {
+            fraction = 0
+        } completion: {
+            onFinish()
         }
     }
 }

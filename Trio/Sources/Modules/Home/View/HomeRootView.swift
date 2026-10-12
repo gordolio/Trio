@@ -267,7 +267,6 @@ extension Home {
             }
             // no inline text input here; a stale keyboard inset must never shrink the zone budget
             .ignoresSafeArea(.keyboard, edges: .bottom)
-            .nightscoutBackfillFeedback(resolver: resolver)
             .onAppear {
                 configureView()
                 refreshAlarmsSnooze()

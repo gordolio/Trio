@@ -91,14 +91,8 @@ final class NightscoutBackfill: ObservableObject {
         }
 
         if let feedback {
+            // the result card owns its auto-dismiss countdown
             UIAccessibility.post(notification: .announcement, argument: feedback.title + ". " + feedback.detail)
-            if !feedback.isError, !UIAccessibility.isVoiceOverRunning {
-                Task { @MainActor [weak self] in
-                    try? await Task.sleep(for: .seconds(6))
-                    guard self?.feedback?.id == feedback.id else { return }
-                    self?.dismissFeedback()
-                }
-            }
         }
     }
 
@@ -109,11 +103,14 @@ final class NightscoutBackfill: ObservableObject {
     static func errorMessage(_ error: Error) -> String {
         if let error = error as? URLError {
             switch error.code {
-            case .notConnectedToInternet, .networkConnectionLost:
+            case .networkConnectionLost,
+                 .notConnectedToInternet:
                 return String(localized: "No internet connection. Check your connection and try again.")
             case .timedOut:
                 return String(localized: "Nightscout took too long to respond. Try again.")
-            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+            case .cannotConnectToHost,
+                 .cannotFindHost,
+                 .dnsLookupFailed:
                 return String(localized: "Unable to reach Nightscout. Check your Nightscout URL and try again.")
             default: return error.localizedDescription
             }
@@ -152,7 +149,8 @@ enum NightscoutBackfillError: LocalizedError {
             return String(localized: "Configure a Nightscout connection first.")
         case .invalidResponse:
             return String(localized: "Nightscout returned an unexpected response.")
-        case .httpStatus(401), .httpStatus(403):
+        case .httpStatus(401),
+             .httpStatus(403):
             return String(localized: "Nightscout denied access. Check your connection credentials.")
         case let .httpStatus(status):
             return String(localized: "Nightscout returned HTTP \(status). Try again later.")
@@ -170,7 +168,7 @@ struct NightscoutBackfillClient {
         components?.fragment = nil
         components?.queryItems = [
             URLQueryItem(name: "count", value: "1600"),
-            URLQueryItem(name: "find[dateString][$gte]", value: Formatter.iso8601withFractionalSeconds.string(from: since)),
+            URLQueryItem(name: "find[dateString][$gte]", value: Formatter.iso8601withFractionalSeconds.string(from: since))
         ]
         guard let requestURL = components?.url else { throw URLError(.badURL) }
         var request = URLRequest(url: requestURL)
