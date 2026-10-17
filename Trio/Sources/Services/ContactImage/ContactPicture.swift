@@ -29,8 +29,11 @@ struct ContactPicture: View {
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
         let renderer = UIGraphicsImageRenderer(size: rect.size, format: format)
+        // Glucose Bobble draws white text and hides the Background picker, so it must always be
+        // opaque; watchOS shows transparent contact photos over white.
+        let backgroundMode: ContactImageEntry.BackgroundMode = contact.layout == .bobble ? .black : contact.backgroundMode
         let image = renderer.image { ctx in
-            switch contact.backgroundMode {
+            switch backgroundMode {
             case .transparent:
                 ctx.cgContext.clear(rect)
             case .black:
