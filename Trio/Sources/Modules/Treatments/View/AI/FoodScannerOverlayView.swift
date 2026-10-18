@@ -3,6 +3,7 @@ import SwiftUI
 /// Shared geometry for the visible scanner frame and the captured-image crop.
 enum FoodScannerLayout {
     static let controlsHeight: CGFloat = 150
+    static let cornerRadius: CGFloat = 20
 
     static func scanRegion(
         in size: CGSize,
@@ -49,7 +50,7 @@ struct FoodScannerOverlayView: View {
 
             let cornerLength: CGFloat = 40
             let cornerLineWidth: CGFloat = 3
-            let cornerRadius: CGFloat = 20
+            let cornerRadius = FoodScannerLayout.cornerRadius
 
             // Text above the scan region, below the safe area
             let topTextY = safeTop + 24
