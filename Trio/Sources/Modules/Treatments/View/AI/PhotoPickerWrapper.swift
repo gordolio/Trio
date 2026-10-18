@@ -9,36 +9,6 @@ enum PhotoSourceType {
     case photoLibrary
 }
 
-/// Temporary options for previewing the food camera's capture feedback. Every effect is on
-/// until its setting turns it off.
-enum FoodCameraFeedbackSettings {
-    static let flashEnabledKey = "foodCameraFeedback.flashEnabled"
-    static let flashIntensityKey = "foodCameraFeedback.flashIntensity"
-    static let freezeEnabledKey = "foodCameraFeedback.freezeEnabled"
-    static let hapticEnabledKey = "foodCameraFeedback.hapticEnabled"
-    static let hapticStyleKey = "foodCameraFeedback.hapticStyle"
-
-    static let defaultFlashIntensity = 0.85
-    static let defaultHapticStyle = UIImpactFeedbackGenerator.FeedbackStyle.medium
-
-    static var flashEnabled: Bool { bool(forKey: flashEnabledKey) }
-    static var freezeEnabled: Bool { bool(forKey: freezeEnabledKey) }
-    static var hapticEnabled: Bool { bool(forKey: hapticEnabledKey) }
-
-    static var flashIntensity: Double {
-        UserDefaults.standard.object(forKey: flashIntensityKey) as? Double ?? defaultFlashIntensity
-    }
-
-    static var hapticStyle: UIImpactFeedbackGenerator.FeedbackStyle {
-        (UserDefaults.standard.object(forKey: hapticStyleKey) as? Int)
-            .flatMap(UIImpactFeedbackGenerator.FeedbackStyle.init(rawValue:)) ?? defaultHapticStyle
-    }
-
-    private static func bool(forKey key: String) -> Bool {
-        UserDefaults.standard.object(forKey: key) as? Bool ?? true
-    }
-}
-
 /// SwiftUI wrapper for presenting photo picker (camera or photo library)
 struct PhotoPickerWrapper: UIViewControllerRepresentable {
     @Binding var selectedImage: UIImage?
@@ -134,7 +104,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
     private let sessionQueue = DispatchQueue(label: "org.nightscout.trio.food-camera")
     private let previewLayer = AVCaptureVideoPreviewLayer()
     private let overlayHost = UIHostingController(rootView: FoodScannerOverlayView())
-    private var captureFeedback: UIImpactFeedbackGenerator?
+    private let captureFeedback = UIImpactFeedbackGenerator(style: .medium)
 
     private let captureFlashView: UIView = {
         let flashView = UIView()
@@ -383,11 +353,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
         guard !isCapturing, session.isRunning else { return }
         isCapturing = true
         shutterButton.isEnabled = false
-
-        captureFeedback = FoodCameraFeedbackSettings.hapticEnabled
-            ? UIImpactFeedbackGenerator(style: FoodCameraFeedbackSettings.hapticStyle)
-            : nil
-        captureFeedback?.prepare()
+        captureFeedback.prepare()
 
         // Convert the scan frame while the preview is live; it freezes once the photo is taken.
         captureCropRect = previewLayer.metadataOutputRectConverted(
@@ -452,17 +418,12 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
     /// Flashes the scan frame, freezes the preview on the captured frame, and taps a haptic,
     /// so capture is confirmed even with the ringer off.
     private func showCaptureFeedback() {
-        captureFeedback?.impactOccurred()
+        captureFeedback.impactOccurred()
+        previewLayer.connection?.isEnabled = false
 
-        if FoodCameraFeedbackSettings.freezeEnabled {
-            previewLayer.connection?.isEnabled = false
-        }
-
-        if FoodCameraFeedbackSettings.flashEnabled {
-            captureFlashView.alpha = FoodCameraFeedbackSettings.flashIntensity
-            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut) {
-                self.captureFlashView.alpha = 0
-            }
+        captureFlashView.alpha = 0.85
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut) {
+            self.captureFlashView.alpha = 0
         }
     }
 

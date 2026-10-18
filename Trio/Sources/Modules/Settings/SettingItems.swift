@@ -433,18 +433,6 @@ enum SettingItems {
             ),
             path: ["Services", "AI"]
         ),
-        SettingItem(
-            title: "Camera Feedback",
-            view: .aiServiceSettings,
-            searchContents: [
-                "Flash",
-                "Flash Intensity",
-                "Freeze Preview",
-                "Haptic Tap",
-                "Haptic Strength"
-            ],
-            path: ["Services", "AI"]
-        ),
         SettingItem(title: "Tidepool", view: .serviceSettings, path: ["Services"]),
         SettingItem(title: "Apple Health", view: .healthkit, path: ["Services"])
     ]
