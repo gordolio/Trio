@@ -528,27 +528,33 @@ private struct FoodCameraFeedbackSettingsView: View {
 
     var body: some View {
         Section(
-            header: Text("Camera Feedback (Preview)"),
+            header: Text("Camera Feedback (Preview)")
+                .settingsSearchTarget(label: String(localized: "Camera Feedback")),
             footer: Text("Temporary options for tuning what happens when a food photo is taken.")
         ) {
             Toggle("Flash", isOn: $flashEnabled)
+                .settingsSearchTarget(label: String(localized: "Flash"))
             if flashEnabled {
                 LabeledContent(
                     "Flash Intensity",
                     value: flashIntensity.formatted(.percent.precision(.fractionLength(0)))
                 )
+                .settingsSearchTarget(label: String(localized: "Flash Intensity"))
                 Slider(value: $flashIntensity, in: 0.1 ... 1, step: 0.05)
             }
 
             Toggle("Freeze Preview", isOn: $freezeEnabled)
+                .settingsSearchTarget(label: String(localized: "Freeze Preview"))
 
             Toggle("Haptic Tap", isOn: $hapticEnabled)
+                .settingsSearchTarget(label: String(localized: "Haptic Tap"))
             if hapticEnabled {
                 Picker("Haptic Strength", selection: $hapticStyle) {
                     Text("Light").tag(UIImpactFeedbackGenerator.FeedbackStyle.light.rawValue)
                     Text("Medium").tag(UIImpactFeedbackGenerator.FeedbackStyle.medium.rawValue)
                     Text("Heavy").tag(UIImpactFeedbackGenerator.FeedbackStyle.heavy.rawValue)
                 }
+                .settingsSearchTarget(label: String(localized: "Haptic Strength"))
             }
         }
         .listRowBackground(Color.chart)
