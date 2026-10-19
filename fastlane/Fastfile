@@ -175,7 +175,8 @@ platform :ios do
       )
       existing = bundle_id.get_capabilities.map(&:capability_type)
       capabilities.reject { |c| existing.include?(c) }.each do |cap|
-        bundle_id.create_capability(cap)
+        settings = cap == Spaceship::ConnectAPI::BundleIdCapability::Type::APPLE_ID_AUTH ? [{ key: Spaceship::ConnectAPI::BundleIdCapability::Settings::APPLE_ID_AUTH_APP_CONSENT, options: [{ key: Spaceship::ConnectAPI::BundleIdCapability::Options::PRIMARY_APP_CONSENT }] }] : []
+        bundle_id.create_capability(cap, settings: settings)
       end
     end
 
