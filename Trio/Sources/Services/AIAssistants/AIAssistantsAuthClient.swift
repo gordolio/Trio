@@ -16,6 +16,18 @@ struct AIAssistantsTokens: Codable, Equatable {
     let expiresAt: Date
 }
 
+/// Who Trio signed in as, from the sign-in response. Kept in the Keychain to show in Settings.
+struct AIAssistantsAccount: Codable, Equatable {
+    let email: String?
+    let name: String?
+}
+
+/// What `signIn` returns: the tokens, and the account if the service named it.
+struct AIAssistantsSignIn: Equatable {
+    let tokens: AIAssistantsTokens
+    let account: AIAssistantsAccount?
+}
+
 enum AIAssistantsAuthError: Error, Equatable {
     case cancelled
     case appleFailed
@@ -77,23 +89,27 @@ final class AIAssistantsAuthClient {
 
     // MARK: - Sign in
 
-    func signIn(with credential: AppleCredential, baseURL: URL) async throws -> AIAssistantsTokens {
-        let sessionToken = try await createSession(credential, baseURL: baseURL)
+    func signIn(with credential: AppleCredential, baseURL: URL) async throws -> AIAssistantsSignIn {
+        let (sessionToken, account) = try await createSession(credential, baseURL: baseURL)
         let pkce = PKCE.generate()
         let state = SecureRandom.base64URL(byteCount: 16)
         do {
             let code = try await authorize(sessionToken: sessionToken, pkce: pkce, state: state, baseURL: baseURL)
             let tokens = try await exchange(code: code, pkce: pkce, baseURL: baseURL)
             await signOut(sessionToken: sessionToken, baseURL: baseURL)
-            return tokens
+            return AIAssistantsSignIn(tokens: tokens, account: account)
         } catch {
             await signOut(sessionToken: sessionToken, baseURL: baseURL)
             throw error
         }
     }
 
-    /// Contract step 2. Returns the Better Auth session token.
-    func createSession(_ credential: AppleCredential, baseURL: URL) async throws -> String {
+    /// Contract step 2. Returns the Better Auth session token, and the account if the response
+    /// names one.
+    func createSession(
+        _ credential: AppleCredential,
+        baseURL: URL
+    ) async throws -> (token: String, account: AIAssistantsAccount?) {
         var request = URLRequest(url: baseURL.appendingPathComponent("api/auth/sign-in/social"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -103,7 +119,7 @@ final class AIAssistantsAuthClient {
         guard let body = try? JSONDecoder().decode(SessionResponse.self, from: data) else {
             throw AIAssistantsAuthError.http(response.statusCode)
         }
-        return body.token
+        return (body.token, body.user?.account)
     }
 
     /// Contract step 3's URL.
@@ -299,7 +315,35 @@ private struct SocialSignInBody: Encodable {
 }
 
 private struct SessionResponse: Decodable {
+    struct User: Decodable {
+        let email: String?
+        let name: String?
+
+        /// Trimmed, with empty values left out; `nil` if neither is left.
+        var account: AIAssistantsAccount? {
+            func clean(_ value: String?) -> String? {
+                let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            let email = clean(email), name = clean(name)
+            return email == nil && name == nil ? nil : AIAssistantsAccount(email: email, name: name)
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case token
+        case user
+    }
+
     let token: String
+    let user: User?
+
+    /// A `user` that doesn't decode is left out: the account is only shown, never needed.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        token = try container.decode(String.self, forKey: .token)
+        user = try? container.decodeIfPresent(User.self, forKey: .user)
+    }
 }
 
 private struct AuthorizeResponse: Decodable {

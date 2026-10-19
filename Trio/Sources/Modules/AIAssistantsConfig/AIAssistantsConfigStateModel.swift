@@ -11,8 +11,17 @@ extension AIAssistantsConfig {
             fromBuildSetting: Bundle.main.object(forInfoDictionaryKey: "AIAssistantsServiceHost") as? String
         )
         @Published var linkState: AIAssistantsLinkState = .notLinked
+        @Published var account: AIAssistantsAccount?
         @Published var errorMessage: String?
         @Published var isSigningIn = false
+        @Published private(set) var isSigningOut = false
+        /// Goes up by one for each copy, to show the "Copied" confirmation again.
+        @Published private(set) var copyCount = 0
+        @Published private(set) var copiedMessage = ""
+
+        var pasteboard: (String) -> Void = { UIPasteboard.general.string = $0 }
+        /// Tells VoiceOver what was copied; the confirmation on screen is hidden from it.
+        var announce: (String) -> Void = { AccessibilityNotification.Announcement($0).post() }
 
         var authClient = AIAssistantsAuthClient()
         /// Generated for each Apple request; Apple gets its hash, the service gets the raw value.
@@ -22,6 +31,10 @@ extension AIAssistantsConfig {
             service.state
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] in self?.linkState = $0 }
+                .store(in: &lifetime)
+            service.account
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] in self?.account = $0 }
                 .store(in: &lifetime)
         }
 
@@ -71,8 +84,8 @@ extension AIAssistantsConfig {
             isSigningIn = true
             defer { isSigningIn = false }
             do {
-                let tokens = try await authClient.signIn(with: credential, baseURL: baseURL)
-                await service.completeLink(baseURL: baseURL, tokens: tokens)
+                let signIn = try await authClient.signIn(with: credential, baseURL: baseURL)
+                await service.completeLink(baseURL: baseURL, tokens: signIn.tokens, account: signIn.account)
             } catch AIAssistantsAuthError.notInvited {
                 errorMessage = String(localized: "This Apple ID isn't on the invite list.")
             } catch AIAssistantsAuthError.unreachable {
@@ -91,9 +104,35 @@ extension AIAssistantsConfig {
             errorMessage = String(localized: "Sign in with Apple didn't finish. Try again.")
         }
 
-        @MainActor func unlink() async {
+        /// Sign out deletes the device on the service, the same as Unlink did. Offline, Trio still
+        /// signs out, and says the service may keep the last status.
+        @MainActor func signOut() async {
             errorMessage = nil
-            await service.unlink()
+            isSigningOut = true
+            defer { isSigningOut = false }
+            if await !service.unlink() {
+                errorMessage = String(
+                    localized: "Signed out, but Trio couldn't reach the service, so assistants may still see your last status. Sign in and sign out again when you're online."
+                )
+            }
+        }
+
+        // MARK: - Copying
+
+        @MainActor func copyConnectorURL() {
+            guard let connectorURL else { return }
+            copy(connectorURL.absoluteString, confirmation: String(localized: "Connector URL copied"))
+        }
+
+        @MainActor func copyQuestion(_ question: String) {
+            copy(question, confirmation: String(localized: "Question copied"))
+        }
+
+        @MainActor private func copy(_ text: String, confirmation: String) {
+            pasteboard(text)
+            copiedMessage = confirmation
+            copyCount += 1
+            announce(confirmation)
         }
 
         // MARK: - Helpers

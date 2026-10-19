@@ -42,8 +42,8 @@ import Testing
             captured = (request, body)
             return (200, Data(#"{"redirect":false,"token":"sess","user":{"id":"u1"}}"#.utf8))
         }
-        let token = try await makeClient().createSession(credential, baseURL: baseURL)
-        #expect(token == "sess")
+        let session = try await makeClient().createSession(credential, baseURL: baseURL)
+        #expect(session.token == "sess")
         let (request, body) = try #require(captured)
         #expect(request.httpMethod == "POST")
         #expect(request.url?.path == "/api/auth/sign-in/social")
@@ -67,6 +67,40 @@ import Testing
         _ = try await makeClient().createSession(anonymous, baseURL: baseURL)
         let idToken = try #require(body?.jsonObject?["idToken"] as? [String: Any])
         #expect(idToken["user"] == nil)
+    }
+
+    @Test("Sign-in reads the account's email and name") func createSessionReadsAccount() async throws {
+        stub { _, _ in
+            (
+                200,
+                Data(
+                    #"{"redirect":false,"token":"sess","user":{"id":"u1","email":"ann@example.com","name":"Ann Lee","emailVerified":true}}"#
+                        .utf8
+                )
+            )
+        }
+        let session = try await makeClient().createSession(credential, baseURL: baseURL)
+        #expect(session.token == "sess")
+        #expect(session.account == AIAssistantsAccount(email: "ann@example.com", name: "Ann Lee"))
+    }
+
+    @Test("A missing, empty or malformed user still signs in") func createSessionToleratesOddUsers() async throws {
+        let cases: [(String, AIAssistantsAccount?)] = [
+            (#"{"redirect":false,"token":"sess"}"#, nil),
+            (#"{"redirect":false,"token":"sess","user":null}"#, nil),
+            (#"{"redirect":false,"token":"sess","user":{"id":"u1","email":"","name":"  "}}"#, nil),
+            (#"{"redirect":false,"token":"sess","user":{"id":"u1","email":42,"name":"Ann"}}"#, nil),
+            (
+                #"{"redirect":false,"token":"sess","user":{"id":"u1","email":" ann@example.com ","name":""}}"#,
+                AIAssistantsAccount(email: "ann@example.com", name: nil)
+            )
+        ]
+        for (body, expected) in cases {
+            stub { _, _ in (200, Data(body.utf8)) }
+            let session = try await makeClient().createSession(credential, baseURL: baseURL)
+            #expect(session.token == "sess")
+            #expect(session.account == expected, "\(body)")
+        }
     }
 
     @Test("A 403 not_invited maps to notInvited") func createSessionNotInvitedMapsToNotInvited() async {
@@ -213,7 +247,10 @@ import Testing
             paths.append(path)
             switch path {
             case "/api/auth/sign-in/social":
-                return (200, Data(#"{"redirect":false,"token":"sess"}"#.utf8))
+                return (
+                    200,
+                    Data(#"{"redirect":false,"token":"sess","user":{"id":"u1","email":"ann@example.com","name":"Ann Lee"}}"#.utf8)
+                )
             case "/api/auth/oauth2/authorize":
                 let state = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.dict["state"] ?? ""
                 return (200, Data(#"{"redirect":true,"url":"triomcp://oauth-callback?code=c1&state=\#(state)"}"#.utf8))
@@ -224,13 +261,14 @@ import Testing
                 return (200, Data(#"{"success":true}"#.utf8))
             }
         }
-        let tokens = try await makeClient().signIn(with: credential, baseURL: baseURL)
+        let result = try await makeClient().signIn(with: credential, baseURL: baseURL)
         #expect(
             paths ==
                 ["/api/auth/sign-in/social", "/api/auth/oauth2/authorize", "/api/auth/oauth2/token", "/api/auth/sign-out"]
         )
         #expect(signOutAuthorization == "Bearer sess")
-        #expect(tokens == AIAssistantsTokens(accessToken: "a", refreshToken: "r", expiresAt: now.addingTimeInterval(3540)))
+        #expect(result.tokens == AIAssistantsTokens(accessToken: "a", refreshToken: "r", expiresAt: now.addingTimeInterval(3540)))
+        #expect(result.account == AIAssistantsAccount(email: "ann@example.com", name: "Ann Lee"))
     }
 
     @Test("Sign-in still succeeds when sign-out fails") func signInStillSucceedsWhenSignOutFails() async throws {
@@ -247,8 +285,8 @@ import Testing
                 return (500, Data())
             }
         }
-        let tokens = try await makeClient().signIn(with: credential, baseURL: baseURL)
-        #expect(tokens.accessToken == "a")
+        let result = try await makeClient().signIn(with: credential, baseURL: baseURL)
+        #expect(result.tokens.accessToken == "a")
     }
 
     @Test("Cancelling the Apple sheet maps to cancelled") func canceledAppleMapsToCancelled() {

@@ -7,15 +7,22 @@ import Testing
 
 final class FakeAIAssistantsService: AIAssistantsService {
     let state = CurrentValueSubject<AIAssistantsLinkState, Never>(.notLinked)
-    private(set) var completedLinks: [(URL, AIAssistantsTokens)] = []
+    let account = CurrentValueSubject<AIAssistantsAccount?, Never>(nil)
+    private(set) var completedLinks: [(URL, AIAssistantsTokens, AIAssistantsAccount?)] = []
     private(set) var unlinkCount = 0
+    /// What `unlink()` returns: whether the service deleted the device.
+    var unlinkResult = true
+    /// When set, `unlink()` waits for it to open.
+    var unlinkGate: UploadGate?
 
-    func completeLink(baseURL: URL, tokens: AIAssistantsTokens) async {
-        completedLinks.append((baseURL, tokens))
+    func completeLink(baseURL: URL, tokens: AIAssistantsTokens, account: AIAssistantsAccount?) async {
+        completedLinks.append((baseURL, tokens, account))
     }
 
-    func unlink() async {
+    func unlink() async -> Bool {
         unlinkCount += 1
+        if let unlinkGate { await unlinkGate.wait() }
+        return unlinkResult
     }
 
     func uploadNow() async {}
@@ -118,11 +125,15 @@ final class FakeAIAssistantsService: AIAssistantsService {
         #expect(state.errorMessage == "Couldn't sign in (error 502). Try again.")
     }
 
-    @Test("A successful sign-in completes the link with the tokens") func successfulSignInCallsCompleteLinkWithTokens() async throws {
+    @Test("A successful sign-in completes the link with the tokens and account") func successfulSignInCallsCompleteLinkWithTokens(
+    ) async throws {
         stub { request, _ in
             switch request.url?.path {
             case "/api/auth/sign-in/social":
-                return (200, Data(#"{"redirect":false,"token":"sess"}"#.utf8))
+                return (
+                    200,
+                    Data(#"{"redirect":false,"token":"sess","user":{"id":"u1","email":"ann@example.com","name":"Ann Lee"}}"#.utf8)
+                )
             case "/api/auth/oauth2/authorize":
                 let state = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.dict["state"] ?? ""
                 return (200, Data(#"{"redirect":true,"url":"triomcp://oauth-callback?code=c1&state=\#(state)"}"#.utf8))
@@ -141,9 +152,10 @@ final class FakeAIAssistantsService: AIAssistantsService {
         let state = makeState()
         state.errorMessage = "old"
         await state.signIn(credential: credential)
-        let (baseURL, tokens) = try #require(service.completedLinks.first)
+        let (baseURL, tokens, account) = try #require(service.completedLinks.first)
         #expect(baseURL == URL(string: "https://sm.example.com"))
         #expect(tokens == AIAssistantsTokens(accessToken: "a", refreshToken: "r", expiresAt: now.addingTimeInterval(3540)))
+        #expect(account == AIAssistantsAccount(email: "ann@example.com", name: "Ann Lee"))
         #expect(state.isSigningIn == false)
         #expect(state.errorMessage == nil)
     }
@@ -161,9 +173,33 @@ final class FakeAIAssistantsService: AIAssistantsService {
         #expect(request.nonce == AppleNonce.sha256Hex(credential.rawNonce))
     }
 
-    @Test("Unlinking goes through the service") func unlinkCallsService() async {
+    @Test("Signing out unlinks through the service") func signOutUnlinksThroughService() async {
         let state = makeState()
-        await state.unlink()
+        state.errorMessage = "old"
+        await state.signOut()
         #expect(service.unlinkCount == 1)
+        #expect(state.errorMessage == nil)
+    }
+
+    @Test("Signing out while the service can't be reached says the status may still be visible") func signOutOfflineSaysSo() async {
+        service.unlinkResult = false
+        let state = makeState()
+        await state.signOut()
+        #expect(service.unlinkCount == 1)
+        #expect(
+            state.errorMessage ==
+                "Signed out, but Trio couldn't reach the service, so assistants may still see your last status. Sign in and sign out again when you're online."
+        )
+    }
+
+    @Test("Signing out shows progress until the service is done") func signOutShowsProgressUntilDone() async {
+        let gate = UploadGate()
+        service.unlinkGate = gate
+        let state = makeState()
+        let signOut = Task { await state.signOut() }
+        #expect(await eventuallyTrue { state.isSigningOut })
+        gate.open()
+        await signOut.value
+        #expect(state.isSigningOut == false)
     }
 }

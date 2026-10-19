@@ -8,52 +8,74 @@ extension AIAssistantsConfig {
 
         @StateObject var state = StateModel()
 
+        var body: some View {
+            ContentView(state: state)
+                .onAppear(perform: configureView)
+        }
+    }
+
+    /// The screen, apart from `RootView` so previews and tests can show it with a state model they
+    /// seed themselves, without a resolver.
+    struct ContentView: View {
+        @ObservedObject var state: StateModel
+
         @Environment(\.colorScheme) var colorScheme
         @Environment(AppState.self) var appState
-        @State private var showingUnlinkConfirmation = false
+        @State private var showingSignOutConfirmation = false
 
         var body: some View {
             Form {
-                switch state.linkState {
-                case .notLinked:
-                    signInSection(header: nil)
-                case let .linked(host, lastUpload, lastError):
-                    linkedSection(host: host, lastUpload: lastUpload, lastError: lastError)
-                case let .signedOut(host):
-                    signInSection(header: Text("Signed out of \(host). Sign in again to resume updates."))
+                HeaderView()
+                if state.serviceURL == nil {
+                    unconfiguredSection
+                } else {
+                    if state.isLinked {
+                        AccountSection(state: state)
+                    } else {
+                        signInSection
+                    }
+                    ConnectSection(state: state)
+                }
+                QuestionsSection(state: state)
+                if state.isLinked {
+                    signOutSection
                 }
             }
+            .listSectionSpacing(sectionSpacing)
             .scrollContentBackground(.hidden)
             .background(appState.trioBackgroundColor(for: colorScheme))
             .navigationTitle("AI Assistants")
-            .navigationBarTitleDisplayMode(.automatic)
-            .onAppear(perform: configureView)
+            .navigationBarTitleDisplayMode(.inline)
+            .copiedToast(message: state.copiedMessage, trigger: state.copyCount)
         }
 
-        private var footer: some View {
-            Text(
-                "Lets assistants like ChatGPT and Grok read your glucose and loop status. Nothing here can change your treatments."
-            )
+        private var unconfiguredSection: some View {
+            Section {
+                Text("This build isn't set up for AI Assistants.")
+                Text(
+                    "To turn it on, set AI_ASSISTANTS_SERVICE_HOST (a GitHub secret, or ConfigOverride.xcconfig) and build Trio again."
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+            .listRowBackground(Color.chart)
         }
 
-        private func signInSection(header: Text?) -> some View {
-            Section(header: header, footer: footer) {
-                if state.serviceURL == nil {
-                    Text("This build isn't set up for AI Assistants.")
-                    Text(
-                        "To turn it on, set AI_ASSISTANTS_SERVICE_HOST (a GitHub secret, or ConfigOverride.xcconfig) and build Trio again."
-                    )
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                } else {
-                    SignInWithAppleButton(.signIn, onRequest: state.prepare) { result in
-                        Task { await state.complete(result) }
-                    }
-                    .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-                    .frame(height: 44)
-                    .disabled(state.isSigningIn)
-                    .opacity(state.isSigningIn ? 0.5 : 1)
+        private var signInSection: some View {
+            Section(
+                header: Text("Account"),
+                footer: Text("Use the same Apple ID when an assistant asks you to sign in.")
+            ) {
+                if case .signedOut = state.linkState {
+                    Text("You've been signed out. Sign in again to keep sharing.")
                 }
+                SignInWithAppleButton(.signIn, onRequest: state.prepare) { result in
+                    Task { await state.complete(result) }
+                }
+                .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+                .frame(height: 44)
+                .disabled(state.isSigningIn)
+                .opacity(state.isSigningIn ? 0.5 : 1)
 
                 if state.isSigningIn {
                     ProgressView("Signing in…")
@@ -65,32 +87,29 @@ extension AIAssistantsConfig {
             .listRowBackground(Color.chart)
         }
 
-        private func linkedSection(host: String, lastUpload: Date?, lastError: String?) -> some View {
-            Section(footer: footer) {
-                LabeledContent("Linked to", value: host)
-                if let lastUpload {
-                    LabeledContent("Last update") {
-                        Text(lastUpload, style: .relative)
-                    }
-                } else {
-                    Text("Waiting for first update").foregroundStyle(.secondary)
+        private var signOutSection: some View {
+            Section {
+                if state.isSigningOut {
+                    ProgressView("Signing out…")
+                        .frame(maxWidth: .infinity)
                 }
-                if let lastError {
-                    Text(lastError).foregroundStyle(.red)
+                Button("Sign Out", role: .destructive) {
+                    showingSignOutConfirmation = true
                 }
-                Button("Unlink", role: .destructive) {
-                    showingUnlinkConfirmation = true
-                }
+                .frame(maxWidth: .infinity)
+                .disabled(state.isSigningOut)
                 .confirmationDialog(
-                    "Unlink from \(host)?",
-                    isPresented: $showingUnlinkConfirmation,
+                    "Sign out of AI Assistants?",
+                    isPresented: $showingSignOutConfirmation,
                     titleVisibility: .visible
                 ) {
-                    Button("Unlink", role: .destructive) {
-                        Task { await state.unlink() }
+                    Button("Sign Out", role: .destructive) {
+                        Task { await state.signOut() }
                     }
                 } message: {
-                    Text("Assistants will stop getting updates from Trio.")
+                    Text(
+                        "Trio stops sharing, and the status your assistants can see is deleted. You can sign in again anytime."
+                    )
                 }
             }
             .listRowBackground(Color.chart)

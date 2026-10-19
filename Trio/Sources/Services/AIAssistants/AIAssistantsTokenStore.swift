@@ -1,11 +1,13 @@
 import Foundation
 
-/// The service address, `trio-ios` tokens and last registered device, kept in the Keychain.
+/// The service address, `trio-ios` tokens, signed-in account and last registered device, kept in
+/// the Keychain.
 final class AIAssistantsTokenStore {
     enum Key {
         static let baseURL = "AIAssistants.baseURL"
         static let tokens = "AIAssistants.tokens"
         static let lastDevice = "AIAssistants.lastDevice"
+        static let account = "AIAssistants.account"
     }
 
     private let keychain: Keychain
@@ -55,8 +57,17 @@ final class AIAssistantsTokenStore {
         set { _ = keychain.setValue(newValue, forKey: Key.lastDevice) as Result<Void, KeychainError> }
     }
 
+    /// Who Trio signed in as. Links made before Trio kept it have none. Setting `nil` removes the key.
+    var account: AIAssistantsAccount? {
+        get {
+            try? (keychain.getValue(AIAssistantsAccount.self, forKey: Key.account) as Result<AIAssistantsAccount?, KeychainError>)
+                .get()
+        }
+        set { _ = keychain.setValue(newValue, forKey: Key.account) as Result<Void, KeychainError> }
+    }
+
     func clear() {
-        for key in [Key.baseURL, Key.tokens, Key.lastDevice] {
+        for key in [Key.baseURL, Key.tokens, Key.lastDevice, Key.account] {
             keychain.removeObject(forKey: key)
         }
     }

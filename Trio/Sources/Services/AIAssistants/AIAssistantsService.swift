@@ -14,8 +14,12 @@ enum AIAssistantsLinkState: Equatable {
 /// work, and the status uploads.
 protocol AIAssistantsService: AnyObject {
     var state: CurrentValueSubject<AIAssistantsLinkState, Never> { get }
-    func completeLink(baseURL: URL, tokens: AIAssistantsTokens) async
-    func unlink() async
+    /// Who Trio signed in as; sent before the state that goes with it.
+    var account: CurrentValueSubject<AIAssistantsAccount?, Never> { get }
+    func completeLink(baseURL: URL, tokens: AIAssistantsTokens, account: AIAssistantsAccount?) async
+    /// Forgets the link. Returns `false` if the service couldn't be told, so it may still hold
+    /// the last status.
+    @discardableResult func unlink() async -> Bool
     /// Registers this phone if its push token changed, then uploads the status if it changed.
     /// While an upload is in flight, this only asks for one more upload after it.
     func uploadNow() async
@@ -23,6 +27,7 @@ protocol AIAssistantsService: AnyObject {
 
 final class BaseAIAssistantsService: AIAssistantsService {
     let state: CurrentValueSubject<AIAssistantsLinkState, Never>
+    let account: CurrentValueSubject<AIAssistantsAccount?, Never>
 
     private let api: AIAssistantsAPIClient
     private let store: AIAssistantsTokenStore
@@ -86,6 +91,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
         self.deviceRegistration = deviceRegistration
         self.beginBackgroundActivity = beginBackgroundActivity
         self.now = now
+        account = CurrentValueSubject(store.account)
         if let baseURL = store.baseURL, store.tokens != nil {
             state = CurrentValueSubject(.linked(host: Self.host(of: baseURL), lastUpload: nil, lastError: nil))
         } else {
@@ -98,9 +104,11 @@ final class BaseAIAssistantsService: AIAssistantsService {
             .store(in: &subscriptions)
     }
 
-    func completeLink(baseURL: URL, tokens: AIAssistantsTokens) async {
+    func completeLink(baseURL: URL, tokens: AIAssistantsTokens, account: AIAssistantsAccount?) async {
         store.baseURL = baseURL
         store.tokens = tokens
+        store.account = account
+        self.account.send(account)
         // The service has no device or status for a new link, for example after Unlink on the website.
         store.lastDevice = nil
         uploadLock.withLock { lastSentStatus = nil }
@@ -109,18 +117,22 @@ final class BaseAIAssistantsService: AIAssistantsService {
         await uploadNow()
     }
 
-    /// Deleting the device also revokes Trio's tokens on the service. Trio forgets the link
-    /// even if that request fails, for example when offline.
-    func unlink() async {
+    /// Deleting the device also deletes its status and revokes Trio's tokens on the service.
+    /// Trio forgets the link even if that request fails, for example when offline.
+    @discardableResult func unlink() async -> Bool {
         await stopUploads()
+        var deleted = true
         do {
             try await api.deleteDevice()
         } catch {
             debug(.service, "AI Assistants: unlink request failed: \(error)")
+            deleted = false
         }
         store.clear()
+        account.send(nil)
         state.send(.notLinked)
         uploadLock.withLock { isUnlinking = false }
+        return deleted
     }
 
     /// Keeps new uploads from starting and waits for the one in flight. Its token refresh could

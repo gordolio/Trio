@@ -114,6 +114,7 @@ func letDebouncePass() async {
         appVersion: "1.0.2.12"
     )
     let store = AIAssistantsTokenStore(keychain: InMemoryKeychain())
+    let ann = AIAssistantsAccount(email: "ann@example.com", name: "Ann Lee")
     let api = FakeAIAssistantsAPI()
     let triggers = PassthroughSubject<Void, Never>()
     /// What `deviceRegistration()` returns: nil until the phone has a push token.
@@ -181,7 +182,7 @@ func letDebouncePass() async {
 
     @Test("Completing the link saves the address and tokens, then uploads") func completeLinkSavesTokensAndUploads() async {
         let service = makeService()
-        await service.completeLink(baseURL: baseURL, tokens: tokens)
+        await service.completeLink(baseURL: baseURL, tokens: tokens, account: nil)
         #expect(store.baseURL == baseURL)
         #expect(store.tokens == tokens)
         #expect(api.calls == ["putStatus"])
@@ -193,7 +194,7 @@ func letDebouncePass() async {
         store.lastDevice = device
         pushDevice.value = device
         let service = makeService()
-        await service.completeLink(baseURL: baseURL, tokens: tokens)
+        await service.completeLink(baseURL: baseURL, tokens: tokens, account: nil)
         #expect(api.calls == ["putDevice", "putStatus"])
         #expect(store.lastDevice == device)
     }
@@ -202,7 +203,7 @@ func letDebouncePass() async {
         // The service has no status for a new link, for example after Unlink on the website.
         let service = makeLinkedService()
         await service.uploadNow()
-        await service.completeLink(baseURL: baseURL, tokens: tokens)
+        await service.completeLink(baseURL: baseURL, tokens: tokens, account: nil)
         #expect(api.calls == ["putStatus", "putStatus"])
     }
 
@@ -210,14 +211,60 @@ func letDebouncePass() async {
         "Unlinking deletes the device and clears the store, even if the delete fails"
     ) func unlinkDeletesDeviceAndClearsStoreEvenIfDeleteFails() async {
         store.lastDevice = device
+        store.account = ann
         api.errors["deleteDevice"] = .network
         let service = makeLinkedService()
-        await service.unlink()
+        let deleted = await service.unlink()
+        #expect(deleted == false)
         #expect(api.calls == ["deleteDevice"])
         #expect(store.baseURL == nil)
         #expect(store.tokens == nil)
         #expect(store.lastDevice == nil)
+        #expect(store.account == nil)
+        #expect(service.account.value == nil)
         #expect(service.state.value == .notLinked)
+    }
+
+    @Test("Unlinking says the service deleted the device") func unlinkReportsDeletedDevice() async {
+        let service = makeLinkedService()
+        let deleted = await service.unlink()
+        #expect(deleted == true)
+        #expect(api.calls == ["deleteDevice"])
+    }
+
+    // MARK: - Account
+
+    @Test("Completing the link saves and publishes the account") func completeLinkSavesAccount() async {
+        let service = makeService()
+        await service.completeLink(baseURL: baseURL, tokens: tokens, account: ann)
+        #expect(store.account == ann)
+        #expect(service.account.value == ann)
+    }
+
+    @Test("The account is published before the linked state") func accountPublishedBeforeLinkedState() async {
+        let service = makeService()
+        let accountWhenLinked = TestBox<AIAssistantsAccount??>(nil)
+        let subscription = service.state.sink { state in
+            if case .linked = state, accountWhenLinked.value == nil {
+                accountWhenLinked.value = .some(service.account.value)
+            }
+        }
+        await service.completeLink(baseURL: baseURL, tokens: tokens, account: ann)
+        subscription.cancel()
+        #expect(accountWhenLinked.value == .some(ann))
+    }
+
+    @Test("A stored account is published at launch") func storedAccountPublishedAtLaunch() {
+        store.account = ann
+        #expect(makeLinkedService().account.value == ann)
+    }
+
+    @Test("Linking again without an account forgets the old one") func relinkWithoutAccountForgetsOldOne() async {
+        store.account = ann
+        let service = makeService()
+        await service.completeLink(baseURL: baseURL, tokens: tokens, account: nil)
+        #expect(store.account == nil)
+        #expect(service.account.value == nil)
     }
 
     // MARK: - Uploads
