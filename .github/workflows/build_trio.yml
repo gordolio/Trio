@@ -244,6 +244,13 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: printf '%s\n' "OPENROUTER_API_KEY = $OPENROUTER_API_KEY" >> ConfigOverride.xcconfig
 
+      # Inject the AI Assistants service host (trio-rc), e.g. trio-rc.gordol.io. Only the host:
+      # xcconfig reads "//" as a comment, so a leading https:// is stripped.
+      - name: Configure AI Assistants Service
+        env:
+          AI_ASSISTANTS_SERVICE_HOST: ${{ secrets.AI_ASSISTANTS_SERVICE_HOST }}
+        run: printf '%s\n' "AI_ASSISTANTS_SERVICE_HOST = ${AI_ASSISTANTS_SERVICE_HOST#https://}" >> ConfigOverride.xcconfig
+
       # Optional: silence the startup warning shown on builds made from a branch other
       # than main. Off unless you deliberately set the repository variable
       # DEV_BRANCH_WARNING_DISABLED to true (Settings > Secrets and variables > Actions

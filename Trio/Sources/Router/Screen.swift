@@ -54,6 +54,7 @@ enum Screen: Identifiable, Hashable {
     case settingsExport
     case treatmentsSettings
     case carbRatioCalibration
+    case aiAssistantsConfig
 
     var id: Int { String(reflecting: self).hashValue }
 }
@@ -177,6 +178,8 @@ extension Screen {
             TreatmentsSettingsView(resolver: resolver, state: Settings.StateModel())
         case .carbRatioCalibration:
             CarbRatioCalibration.RootView(resolver: resolver)
+        case .aiAssistantsConfig:
+            AIAssistantsConfig.RootView(resolver: resolver)
         }
     }
 

@@ -433,6 +433,12 @@ enum SettingItems {
             ),
             path: ["Services", "AI"]
         ),
+        SettingItem(
+            title: "AI Assistants",
+            view: .aiAssistantsConfig,
+            searchContents: ["ChatGPT", "Grok", "MCP", "Sign in with Apple"],
+            path: ["Services", "AI Assistants"]
+        ),
         SettingItem(title: "Tidepool", view: .serviceSettings, path: ["Services"]),
         SettingItem(title: "Apple Health", view: .healthkit, path: ["Services"])
     ]

@@ -181,6 +181,7 @@ platform :ios do
 
     configure_bundle_id("Trio", "#{BUNDLE_ID}", [
       Spaceship::ConnectAPI::BundleIdCapability::Type::APP_GROUPS,
+      Spaceship::ConnectAPI::BundleIdCapability::Type::APPLE_ID_AUTH,
       Spaceship::ConnectAPI::BundleIdCapability::Type::HEALTHKIT,
       Spaceship::ConnectAPI::BundleIdCapability::Type::NFC_TAG_READING,
       Spaceship::ConnectAPI::BundleIdCapability::Type::PUSH_NOTIFICATIONS

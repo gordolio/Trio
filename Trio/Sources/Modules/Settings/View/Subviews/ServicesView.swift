@@ -35,6 +35,7 @@ struct ServicesView: BaseView {
                 header: Text("AI"),
                 content: {
                     Text("AI Provider").navigationLink(to: .aiServiceSettings, from: self)
+                    Text("AI Assistants").navigationLink(to: .aiAssistantsConfig, from: self)
                 }
             )
             .listRowBackground(Color.chart)

@@ -1,0 +1,138 @@
+import AuthenticationServices
+import Combine
+import SwiftUI
+
+extension AIAssistantsConfig {
+    final class StateModel: BaseStateModel<Provider> {
+        @Injected() var service: AIAssistantsService!
+
+        /// The service this build signs in to; `nil` if the build doesn't name one.
+        var serviceURL = StateModel.serviceURL(
+            fromBuildSetting: Bundle.main.object(forInfoDictionaryKey: "AIAssistantsServiceHost") as? String
+        )
+        @Published var linkState: AIAssistantsLinkState = .notLinked
+        @Published var errorMessage: String?
+        @Published var isSigningIn = false
+
+        var authClient = AIAssistantsAuthClient()
+        /// Generated for each Apple request; Apple gets its hash, the service gets the raw value.
+        private var nonce: AppleNonce?
+
+        override func subscribe() {
+            service.state
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] in self?.linkState = $0 }
+                .store(in: &lifetime)
+        }
+
+        // MARK: - Sign in with Apple
+
+        func prepare(_ request: ASAuthorizationAppleIDRequest) {
+            let nonce = AppleNonce.generate()
+            self.nonce = nonce
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = nonce.hashed
+        }
+
+        @MainActor func complete(_ result: Result<ASAuthorization, Error>) async {
+            switch result {
+            case let .failure(error):
+                fail(with: error)
+            case let .success(authorization):
+                let appleID = authorization.credential as? ASAuthorizationAppleIDCredential
+                guard let appleID,
+                      let credential = appleCredential(
+                          identityToken: appleID.identityToken,
+                          givenName: appleID.fullName?.givenName,
+                          familyName: appleID.fullName?.familyName
+                      )
+                else {
+                    fail(with: ASAuthorizationError(.failed))
+                    return
+                }
+                await signIn(credential: credential)
+            }
+        }
+
+        /// Pairs Apple's identity token with the raw nonce from `prepare`.
+        func appleCredential(identityToken: Data?, givenName: String?, familyName: String?) -> AppleCredential? {
+            guard let identityToken, let token = String(data: identityToken, encoding: .utf8), let nonce else {
+                return nil
+            }
+            return AppleCredential(identityToken: token, rawNonce: nonce.raw, givenName: givenName, familyName: familyName)
+        }
+
+        @MainActor func signIn(credential: AppleCredential) async {
+            guard let baseURL = serviceURL else {
+                errorMessage = String(localized: "This build isn't set up for AI Assistants.")
+                return
+            }
+            errorMessage = nil
+            isSigningIn = true
+            defer { isSigningIn = false }
+            do {
+                let tokens = try await authClient.signIn(with: credential, baseURL: baseURL)
+                await service.completeLink(baseURL: baseURL, tokens: tokens)
+            } catch AIAssistantsAuthError.notInvited {
+                errorMessage = String(localized: "This Apple ID isn't on the invite list.")
+            } catch AIAssistantsAuthError.unreachable {
+                let host = baseURL.host ?? baseURL.absoluteString
+                errorMessage = String(localized: "Couldn't reach \(host). Try again.")
+            } catch {
+                debug(.service, "AI Assistants: sign-in failed: \(error)")
+                let reason = Self.shortReason(error)
+                errorMessage = String(localized: "Couldn't sign in (\(reason)). Try again.")
+            }
+        }
+
+        @MainActor func fail(with error: Error) {
+            guard AIAssistantsAuthClient.mapAppleError(error) != .cancelled else { return }
+            debug(.service, "AI Assistants: Sign in with Apple failed: \(error)")
+            errorMessage = String(localized: "Sign in with Apple didn't finish. Try again.")
+        }
+
+        @MainActor func unlink() async {
+            errorMessage = nil
+            await service.unlink()
+        }
+
+        // MARK: - Helpers
+
+        /// `https://` plus the `AI_ASSISTANTS_SERVICE_HOST` build setting, for example `trio-rc.gordol.io`.
+        /// It's set in ConfigOverride.xcconfig, or from the GitHub secret of that name. The setting
+        /// holds only the host because xcconfig reads `//` as the start of a comment.
+        static func serviceURL(fromBuildSetting value: String?) -> URL? {
+            var address = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !address.isEmpty, !address.hasPrefix("$(") else { return nil }
+            if !address.contains("://") {
+                address = "https://" + address
+            }
+            while address.hasSuffix("/"), !address.hasSuffix("://") {
+                address.removeLast()
+            }
+            guard let url = URL(string: address), url.scheme == "https", url.host?.isEmpty == false else { return nil }
+            return url
+        }
+
+        private static func shortReason(_ error: Error) -> String {
+            switch error as? AIAssistantsAuthError {
+            case .network:
+                return String(localized: "offline")
+            case let .http(status):
+                return String(localized: "error \(status)")
+            case let .missingCode(code):
+                return code ?? String(localized: "no code")
+            case .stateMismatch:
+                return String(localized: "state mismatch")
+            case .invalidGrant:
+                return String(localized: "invalid grant")
+            case .appleFailed,
+                 .cancelled,
+                 .none,
+                 .notInvited,
+                 .unreachable:
+                return String(localized: "unexpected error")
+            }
+        }
+    }
+}
