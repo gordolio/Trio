@@ -30,6 +30,7 @@
 		DB4CFD6984D94957A2BC5FC3 /* AIRequestDeliverableDoseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3694296B1F5B4E6CAD6B91F9 /* AIRequestDeliverableDoseTests.swift */; };
 		F89F3D3F0C0D4A80BA085E33 /* AIRequestDisplayTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A787F6C5D614FD5B41ECB42 /* AIRequestDisplayTextTests.swift */; };
 		0759F6B2C3044AC4BA67F4AF /* AIRequestCoordinatorAnswerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31365FD4B9CD49378AB8318C /* AIRequestCoordinatorAnswerTests.swift */; };
+		1CB0FA4D54434397AA453C41 /* AIRequestSafetyChecksTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F26684F8E38436A9591EF3C /* AIRequestSafetyChecksTests.swift */; };
 		0960AC84A6B94BE0A7FBE348 /* AIRequestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1173CB4287744CD0BDAEC467 /* AIRequestCoordinator.swift */; };
 		D44C9F48586E4F3E88E8EFE0 /* AIRequestPorts.swift in Sources */ = {isa = PBXBuildFile; fileRef = E64A8211A26747689E38A214 /* AIRequestPorts.swift */; };
 		93E1BF66A33241F4837A736E /* AIRequestCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669A3BD17346474D98448187 /* AIRequestCoordinatorTests.swift */; };
@@ -1338,6 +1339,7 @@
 		3694296B1F5B4E6CAD6B91F9 /* AIRequestDeliverableDoseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestDeliverableDoseTests.swift; sourceTree = "<group>"; };
 		3A787F6C5D614FD5B41ECB42 /* AIRequestDisplayTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestDisplayTextTests.swift; sourceTree = "<group>"; };
 		31365FD4B9CD49378AB8318C /* AIRequestCoordinatorAnswerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCoordinatorAnswerTests.swift; sourceTree = "<group>"; };
+		4F26684F8E38436A9591EF3C /* AIRequestSafetyChecksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestSafetyChecksTests.swift; sourceTree = "<group>"; };
 		1173CB4287744CD0BDAEC467 /* AIRequestCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCoordinator.swift; sourceTree = "<group>"; };
 		E64A8211A26747689E38A214 /* AIRequestPorts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPorts.swift; sourceTree = "<group>"; };
 		669A3BD17346474D98448187 /* AIRequestCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -2639,6 +2641,7 @@
 				3694296B1F5B4E6CAD6B91F9 /* AIRequestDeliverableDoseTests.swift */,
 				3A787F6C5D614FD5B41ECB42 /* AIRequestDisplayTextTests.swift */,
 				31365FD4B9CD49378AB8318C /* AIRequestCoordinatorAnswerTests.swift */,
+				4F26684F8E38436A9591EF3C /* AIRequestSafetyChecksTests.swift */,
 				669A3BD17346474D98448187 /* AIRequestCoordinatorTests.swift */,
 				39123B18938B4F7589379806 /* AIRequestFakes.swift */,
 				81E7BAF10CDC4B80B436BE9B /* AIAssistantsPreferencesTests.swift */,
@@ -6861,6 +6864,7 @@
 				DB4CFD6984D94957A2BC5FC3 /* AIRequestDeliverableDoseTests.swift in Sources */,
 				F89F3D3F0C0D4A80BA085E33 /* AIRequestDisplayTextTests.swift in Sources */,
 				0759F6B2C3044AC4BA67F4AF /* AIRequestCoordinatorAnswerTests.swift in Sources */,
+				1CB0FA4D54434397AA453C41 /* AIRequestSafetyChecksTests.swift in Sources */,
 				93E1BF66A33241F4837A736E /* AIRequestCoordinatorTests.swift in Sources */,
 				93970FF8484743128DC966EF /* AIRequestFakes.swift in Sources */,
 				3942BBF8C40B43A582F738C2 /* AIAssistantsPreferencesTests.swift in Sources */,

@@ -24,6 +24,7 @@ func meal(id: String, carbs: Decimal = 20, fat: Decimal = 10, protein: Decimal =
 final class FakeTreatments: AIRequestTreatments {
     private let lock = NSLock()
     private var checkedUnits: [Decimal] = []
+    private var checkedSinceDates: [Date] = []
     private var storedRequests: [AIMealRequest] = []
     private var enactedUnits: [Decimal] = []
     private var recordedEvents: [String] = []
@@ -31,7 +32,8 @@ final class FakeTreatments: AIRequestTreatments {
     private var enactHook: (() async -> Void)?
 
     var limits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250)
-    var dose: Decimal = 1.2
+    /// What `dose(forCarbs:)` returns: 1.2 U, worked out on a loop run a minute before the tests start.
+    var doseResult = AIRequestDose(units: 1.2, iobAsOf: coordinatorTestStart - 60)
     /// What `checkBolus` returns: `nil` allows the bolus.
     var checkResult: String?
     /// What `enactBolus` returns: `nil` means the pump accepted it.
@@ -51,22 +53,25 @@ final class FakeTreatments: AIRequestTreatments {
     }
 
     var checked: [Decimal] { lock.withLock { checkedUnits } }
+    /// The `since` of each `checkBolus` call.
+    var checkedSince: [Date] { lock.withLock { checkedSinceDates } }
     var stored: [AIMealRequest] { lock.withLock { storedRequests } }
     var enacted: [Decimal] { lock.withLock { enactedUnits } }
     /// Every call in order: `check <units>`, `store <id>`, `enact <units>` and, when it returns, `enacted <units>`.
     var events: [String] { lock.withLock { recordedEvents } }
 
-    func dose(forCarbs _: Decimal) async -> Decimal {
-        dose
+    func dose(forCarbs _: Decimal) async -> AIRequestDose {
+        doseResult
     }
 
     func display(for request: AIMealRequest, units: Decimal) async -> AIRequestDisplay {
         AIRequestDisplay(title: "\(request.source): \(request.description)", body: "\(request.carbs) g carbs · \(units) U")
     }
 
-    func checkBolus(_ units: Decimal) async -> String? {
+    func checkBolus(_ units: Decimal, since: Date) async -> String? {
         let hook = lock.withLock {
             checkedUnits.append(units)
+            checkedSinceDates.append(since)
             recordedEvents.append("check \(units)")
             defer { checkHook = nil }
             return checkHook
@@ -140,6 +145,11 @@ final class RecordingReporter: AIRequestReporter {
     /// Each report as `"<id>:<state>"`.
     var states: [String] { reports.map { "\($0.id):\($0.report.state.rawValue)" } }
 
+    /// The reports for one request, in order.
+    func reports(for id: String) -> [AIRequestReport] {
+        reports.filter { $0.id == id }.map(\.report)
+    }
+
     func report(_ report: AIRequestReport, for id: String) async {
         lock.withLock { recorded.append((id, report)) }
     }
@@ -202,7 +212,7 @@ final class CoordinatorHarness {
         let watch = FakeWatch()
         let backup = FakePhoneBackup()
         let keys = AIRequestKeyStore(keychain: InMemoryAIRequestKeychain())
-        treatments.dose = dose
+        treatments.doseResult = AIRequestDose(units: dose, iobAsOf: treatments.doseResult.iobAsOf)
         treatments.limits = limits
         watch.isWatchAvailable = watchAvailable
         self.clock = clock
@@ -251,11 +261,12 @@ final class CoordinatorHarness {
     }
 }
 
+/// A coordinator over fakes. Its preferences allow meal requests, which are off until the wearer turns them on.
 func makeCoordinator(
     dose: Decimal = 1.2,
     watchAvailable: Bool = true,
     limits: AIRequestLimits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250),
-    preferences: AIAssistantsPreferences = AIAssistantsPreferences(),
+    preferences: AIAssistantsPreferences = AIAssistantsPreferences(allowsMealRequests: true),
     files: CoordinatorFiles = .temporary(),
     now: Date = coordinatorTestStart,
     serviceReporter: AIRequestReporter? = nil
@@ -269,4 +280,36 @@ func makeCoordinator(
         now: now,
         serviceReporter: serviceReporter
     )
+}
+
+/// A pending-request file as Trio wrote it before it recorded `receivedAt`, `iobAsOf` and `phoneAskAt`: a request
+/// from `meal(id:)`, asked on the watch, with the dose `units`.
+func oldPendingJSON(id: String, units: String) throws -> Data {
+    let request = meal(id: id)
+    let dose = try #require(Decimal(string: units))
+    let shown = AIRequestShown(carbs: request.carbs, fat: request.fat, protein: request.protein, units: dose)
+    let pending = PendingAIRequest(
+        request: request,
+        channel: .service,
+        prompt: AIRequestPrompt(
+            id: id,
+            source: request.source,
+            description: request.description,
+            shown: shown,
+            title: "\(request.source): \(request.description)",
+            body: "\(request.carbs) g carbs · \(shown.units) U",
+            expiresAt: request.expiresAt,
+            approvalStyle: .twoStep,
+            answerRoute: .both,
+            answerToken: nil,
+            answerURL: nil
+        ),
+        askedOn: .watch,
+        units: dose
+    )
+    var object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(pending)) as? [String: Any])
+    for key in ["receivedAt", "iobAsOf", "phoneAskAt"] {
+        object.removeValue(forKey: key)
+    }
+    return try JSONSerialization.data(withJSONObject: object)
 }

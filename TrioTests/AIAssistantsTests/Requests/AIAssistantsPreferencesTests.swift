@@ -29,6 +29,7 @@ final class InMemoryAIRequestKeychain: AIRequestKeychain {
     @Test func defaults() {
         let p = AIAssistantsPreferencesStore(defaults: freshDefaults()).value
         #expect(p == AIAssistantsPreferences(
+            allowsMealRequests: false,
             approvalStyle: .twoStep,
             phoneBackupDelay: 15,
             answerRoute: .both,
@@ -44,6 +45,14 @@ final class InMemoryAIRequestKeychain: AIRequestKeychain {
         #expect(AIAssistantsPreferencesStore(defaults: store.defaultsForTests).value.phoneBackupDelay == 60)
         #expect(seen.last?.phoneBackupDelay == 60)
         _ = c
+    }
+
+    @Test func mealRequestsAreOffUntilTurnedOn() {
+        let store = AIAssistantsPreferencesStore(defaults: freshDefaults())
+        #expect(!store.value.allowsMealRequests)
+        store.value.allowsMealRequests = true
+        #expect(store.defaultsForTests.bool(forKey: "AIAssistants.allowsMealRequests"))
+        #expect(AIAssistantsPreferencesStore(defaults: store.defaultsForTests).value.allowsMealRequests)
     }
 
     @Test func unknownDelayReadsAsDefault() {

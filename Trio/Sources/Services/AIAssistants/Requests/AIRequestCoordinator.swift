@@ -60,6 +60,10 @@ actor AIRequestCoordinator {
     private static let answerClockSkew: TimeInterval = 60
     /// The longest a request is asked for, whatever `expiresAt` the service sent.
     private static let maxLifetime: TimeInterval = 5 * 60
+    /// Sent when the wearer has turned meal requests off.
+    private static let mealRequestsOffReason = "Meal requests are off in Trio"
+    /// Sent when a dose has no loop run from the last 30 minutes, so its insulin on board isn't known.
+    private static let noRecentLoopReason = "Trio hasn't looped in the last 30 minutes"
 
     private struct FinalReport: Codable {
         let id: String
@@ -114,8 +118,14 @@ actor AIRequestCoordinator {
             return
         }
         let request = withLifetimeCapped(request)
-        if now() >= request.expiresAt {
+        let receivedAt = now()
+        if receivedAt >= request.expiresAt {
             await reportFinal(.expired, for: request.id, via: channel)
+            return
+        }
+        // The test requests are made on the iPhone, so they're asked about either way.
+        if channel == .service, !preferences().allowsMealRequests {
+            await reportFinal(.failed(reason: Self.mealRequestsOffReason, carbsLogged: false), for: request.id, via: channel)
             return
         }
         if let reason = limitFailure(for: request) {
@@ -124,9 +134,16 @@ actor AIRequestCoordinator {
         }
 
         // Floored to the hundredths that `shown` has, so what's delivered is the number shown.
-        var dose = await treatments.dose(forCarbs: request.carbs)
+        let dose = await treatments.dose(forCarbs: request.carbs)
+        var calculated = dose.units
         var units = Decimal()
-        NSDecimalRound(&units, &dose, 2, .down)
+        NSDecimalRound(&units, &calculated, 2, .down)
+        // The bolus checks run now as well as at approval: a dose they'd refuse isn't asked about, and the assistant
+        // hears why.
+        if let reason = await bolusFailure(units: units, iobAsOf: dose.iobAsOf) {
+            await reportFinal(.failed(reason: reason, carbsLogged: false), for: request.id, via: channel)
+            return
+        }
         let display = await treatments.display(for: request, units: units)
 
         // Nothing suspends from here to the reports, so no other call sees the swap half done.
@@ -147,11 +164,21 @@ actor AIRequestCoordinator {
             answerToken: nil,
             answerURL: nil
         )
-        let pending = PendingAIRequest(request: request, channel: channel, prompt: prompt, askedOn: askedOn, units: units)
+        let phoneDelay = askedOn == .phone ? 0 : preferences.phoneBackupDelay
+        let pending = PendingAIRequest(
+            request: request,
+            channel: channel,
+            prompt: prompt,
+            askedOn: askedOn,
+            units: units,
+            receivedAt: receivedAt,
+            iobAsOf: dose.iobAsOf,
+            phoneAskAt: now().addingTimeInterval(phoneDelay)
+        )
         current.send(pending)
         savePending(pending)
         scheduleExpiryCheck(at: request.expiresAt)
-        phoneBackup.schedule(prompt, after: askedOn == .phone ? 0 : preferences.phoneBackupDelay)
+        phoneBackup.schedule(prompt, after: phoneDelay)
         if channel == .local {
             // The service's requests reach the watch by the service's push.
             watch.deliver(prompt)
@@ -291,8 +318,8 @@ actor AIRequestCoordinator {
         let id = pending.request.id
         let units = pending.units
         var failure = limitFailure(for: pending.request)
-        if failure == nil, units > 0 {
-            failure = await treatments.checkBolus(units)
+        if failure == nil {
+            failure = await bolusFailure(units: units, iobAsOf: pending.iobAsOf)
         }
         if let failure {
             await reportFinal(.failed(reason: failure, carbsLogged: false), for: id, via: pending.channel)
@@ -319,6 +346,15 @@ actor AIRequestCoordinator {
         } else {
             await reportFinal(.delivering(shown: pending.prompt.shown), for: id, via: pending.channel)
         }
+    }
+
+    /// Why Trio can't give `units` now, or `nil` if it can. Only insulin given after the loop run the dose was worked
+    /// out on counts as recent: the dose already took the rest into account. A dose without a recent loop run assumed
+    /// no insulin on board, so it's refused. A 0 U dose has no bolus to check.
+    private func bolusFailure(units: Decimal, iobAsOf: Date?) async -> String? {
+        guard units > 0 else { return nil }
+        guard let iobAsOf else { return Self.noRecentLoopReason }
+        return await treatments.checkBolus(units, since: iobAsOf)
     }
 
     // MARK: Requests

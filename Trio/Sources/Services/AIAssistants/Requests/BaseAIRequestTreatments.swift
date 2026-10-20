@@ -47,19 +47,24 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     }
 
     /// Trio's bolus calculator's dose for the carbs, as the watch's bolus recommendation gets it, made deliverable
-    /// exactly as shown.
-    func dose(forCarbs carbs: Decimal) async -> Decimal {
-        let minPredBG = await minPredBG()
+    /// exactly as shown, and the loop run the calculator read insulin on board from.
+    func dose(forCarbs carbs: Decimal) async -> AIRequestDose {
+        // Read before the calculator reads its own: if a loop run lands in between, `iobAsOf` is the earlier one, so
+        // the recent-insulin check counts more insulin, never less.
+        let determination = await latestDetermination()
         let result = await bolusCalculationManager.handleBolusCalculation(
             carbs: carbs,
             useFattyMealCorrection: false,
             useSuperBolus: false,
             lastLoopDate: apsManager.lastLoopDate,
-            minPredBG: minPredBG,
+            minPredBG: determination.minPredBG,
             simulatedCOB: nil,
             isBackdated: false
         )
-        return Self.deliverableDose(result.insulinCalculated, increment: settingsManager.preferences.bolusIncrement)
+        return AIRequestDose(
+            units: Self.deliverableDose(result.insulinCalculated, increment: settingsManager.preferences.bolusIncrement),
+            iobAsOf: determination.deliverAt
+        )
     }
 
     /// The largest dose at or below `units` that has at most two decimals, like the amounts shown, and is a whole
@@ -107,9 +112,11 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         )
     }
 
-    func checkBolus(_ units: Decimal) async -> String? {
+    /// Trio's bolus safety checks, with the recent-insulin window starting at `since`, as Trio Remote Control starts
+    /// it at its command's time.
+    func checkBolus(_ units: Decimal, since: Date) async -> String? {
         do {
-            switch try await bolusSafetyValidator.validate(bolusAmount: units) {
+            switch try await bolusSafetyValidator.validate(bolusAmount: units, lookbackStart: since) {
             case .allowed:
                 return nil
             case let .rejected(rejection):
@@ -160,21 +167,24 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
 
     // MARK: - Helpers
 
-    /// The last determination's `minPredBG`, read as the watch's bolus recommendation reads it.
-    private func minPredBG() async -> Decimal {
+    /// The newest determination from the last 30 minutes, the one Trio's bolus calculator reads: its `minPredBG`, read
+    /// as the watch's bolus recommendation reads it, and its `deliverAt`, which is `nil` when there's none.
+    private func latestDetermination() async -> (minPredBG: Decimal, deliverAt: Date?) {
         do {
             let context = CoreDataStack.shared.newTaskContext()
-            context.name = "AIRequestTreatments.minPredBG"
+            context.name = "AIRequestTreatments.latestDetermination"
             let ids = try await determinationStorage.fetchLastDeterminationObjectID(
                 predicate: NSPredicate.predicateFor30MinAgoForDetermination
             )
-            let minPredBG = try await context.perform { [context] in
-                try ids.first.flatMap { try context.existingObject(with: $0) as? OrefDetermination }?.minPredBGFromReason
+            let latest = try await context.perform { [context] () -> (minPredBG: Decimal?, deliverAt: Date?)? in
+                guard let id = ids.first, let determination = try context.existingObject(with: id) as? OrefDetermination
+                else { return nil }
+                return (determination.minPredBGFromReason, determination.deliverAt)
             }
-            return minPredBG ?? Self.defaultMinPredBG
+            return (latest?.minPredBG ?? Self.defaultMinPredBG, latest?.deliverAt)
         } catch {
-            debug(.service, "AI requests: couldn't read minPredBG, using \(Self.defaultMinPredBG): \(error)")
-            return Self.defaultMinPredBG
+            debug(.service, "AI requests: couldn't read the last determination, using \(Self.defaultMinPredBG): \(error)")
+            return (Self.defaultMinPredBG, nil)
         }
     }
 
@@ -202,7 +212,8 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         return nil
     }
 
-    private static func reason(for rejection: BolusSafetyRejection) -> String {
+    /// What the service is told when Trio's bolus safety checks reject the dose.
+    static func reason(for rejection: BolusSafetyRejection) -> String {
         switch rejection {
         case let .exceedsMaxBolus(maxBolus):
             return "Over your max bolus (\(maxBolus) U)"
@@ -210,9 +221,17 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
             return "Over your max IOB"
         case .iobUnavailable:
             return "Insulin on board isn't known yet"
-        case .recentBolusWithinWindow:
-            return "A bolus was given in the last few minutes"
+        case let .recentBolusWithinWindow(totalRecent):
+            return "Trio gave \(twoDecimals(totalRecent)) U after working out this dose. Ask again in a few minutes"
         }
+    }
+
+    /// The units rounded to two decimals, with a `.`, like the doses shown.
+    private static func twoDecimals(_ units: Decimal) -> String {
+        var units = units
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &units, 2, .plain)
+        return String(format: "%.2f", locale: Locale(identifier: "en_US_POSIX"), NSDecimalNumber(decimal: rounded).doubleValue)
     }
 }
 

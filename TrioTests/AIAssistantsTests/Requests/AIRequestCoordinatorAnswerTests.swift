@@ -11,7 +11,7 @@ import Testing
         let a = AIRequestSigner.sign(prompt: h.prompt("r1"), decision: .approve, declinedBy: nil, at: h.now, key: key)
         #expect(await h.coordinator.answer(.watch(a)) == .acted)
         #expect(h.treatments.stored.map(\.id) == ["r1"] && h.treatments.enacted == [1.2])
-        #expect(h.treatments.checked == [1.2]) // the safety check ran on the units it delivered
+        #expect(h.treatments.checked == [1.2, 1.2]) // the safety checks ran on arrival and on the units it delivered
         #expect(h.reporter.states.last == "r1:delivering")
         #expect(h.reporter.reports.last?.report == .delivering(shown: h.prompt("r1").shown))
         #expect(h.coordinator.current.value == nil)
@@ -67,19 +67,23 @@ import Testing
         let second = TestBox<Task<AIRequestCoordinator.AnswerOutcome, Never>?>(nil)
         h.treatments.whileEnactingBolus = { [coordinator = h.coordinator, treatments = h.treatments, backup = h.backup] in
             // While the pump takes r1's bolus, r2 arrives and is approved.
-            treatments.dose = 2.5
+            treatments.doseResult = AIRequestDose(units: 2.5, iobAsOf: coordinatorTestStart - 60)
             await coordinator.receive(meal(id: "r2"), via: .service)
             second.value = Task { await coordinator.answer(.phone(.approve, id: "r2")) }
             _ = await eventuallyTrue { backup.cancelled.contains("r2") }
-            // Give r2's approval time to run ahead of r1's bolus, if it could.
-            for _ in 0 ..< 20 where !treatments.events.contains("check 2.5") {
+            // r2 was checked once on arrival. Give its approval time to run ahead of r1's bolus, if it could.
+            let checksOfR2 = { treatments.events.filter { $0 == "check 2.5" }.count }
+            for _ in 0 ..< 20 where checksOfR2() < 2 {
                 try? await Task.sleep(for: .milliseconds(5))
             }
         }
         #expect(await h.coordinator.answer(.phone(.approve, id: "r1")) == .acted)
         #expect(await second.value?.value == .acted)
         #expect(h.treatments.events == [
-            "check 1.2", "store r1", "enact 1.2", "enacted 1.2",
+            "check 1.2", // r1 arrives
+            "check 1.2", "store r1", "enact 1.2",
+            "check 2.5", // r2 arrives
+            "enacted 1.2",
             "check 2.5", "store r2", "enact 2.5", "enacted 2.5"
         ])
         #expect(h.reporter.states == ["r1:pending", "r2:pending", "r1:delivering", "r2:delivering"])
@@ -115,7 +119,8 @@ import Testing
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         await h.coordinator.receive(meal(id: "r2"), via: .service)
         #expect(await h.coordinator.answer(.phone(.approve, id: "r1")) == .ignoredNotPending)
-        #expect(h.treatments.checked.isEmpty && h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(h.treatments.checked == [1.2, 1.2]) // each checked on arrival only
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
         #expect(h.coordinator.current.value?.request.id == "r2")
         #expect(h.reporter.states == ["r1:pending", "r1:replaced", "r2:pending"])
     }
@@ -255,8 +260,8 @@ import Testing
 
     @Test func failedSafetyCheckStoresNothing() async {
         let h = makeCoordinator()
-        h.treatments.checkResult = "Over your max IOB"
         await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.treatments.checkResult = "Over your max IOB" // allowed on arrival, refused at approval
         #expect(await h.coordinator.answer(.phone(.approve, id: "r1")) == .acted)
         #expect(h.reporter.reports.last?.report == .failed(reason: "Over your max IOB", carbsLogged: false))
         #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
@@ -269,7 +274,8 @@ import Testing
         h.treatments.limits = AIRequestLimits(maxCarbs: 10, maxFat: 250, maxProtein: 250)
         #expect(await h.coordinator.answer(.phone(.approve, id: "r1")) == .acted)
         #expect(h.reporter.reports.last?.report == .failed(reason: "Over your max carbs (10 g)", carbsLogged: false))
-        #expect(h.treatments.checked.isEmpty && h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(h.treatments.checked == [1.2]) // on arrival, not at approval
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
     }
 
     @Test func unsavedCarbsDeliverNothing() async {

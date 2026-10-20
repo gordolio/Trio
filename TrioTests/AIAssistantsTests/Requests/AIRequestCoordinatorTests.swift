@@ -40,6 +40,7 @@ import Testing
 
     @Test func promptFollowsThePreferences() async {
         let h = makeCoordinator(preferences: AIAssistantsPreferences(
+            allowsMealRequests: true,
             approvalStyle: .oneGesture,
             phoneBackupDelay: 30,
             answerRoute: .watchOnly

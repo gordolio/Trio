@@ -10,6 +10,9 @@ enum AIWakePushType: String, Codable, CaseIterable {
 
 /// How the wearer is asked to answer an AI assistant's request.
 struct AIAssistantsPreferences: Equatable {
+    /// Whether Trio asks about an assistant's meal requests. When it's off, it refuses them without asking. The test
+    /// requests made on the iPhone are asked about either way.
+    var allowsMealRequests: Bool = false
     var approvalStyle: AIRequestApprovalStyle = .twoStep
     /// Seconds before Trio also asks on the iPhone. One of `phoneBackupDelays`.
     var phoneBackupDelay: TimeInterval = 15
@@ -23,6 +26,7 @@ struct AIAssistantsPreferences: Equatable {
 /// one of the known choices reads as its default.
 final class AIAssistantsPreferencesStore {
     private enum Key {
+        static let allowsMealRequests = "AIAssistants.allowsMealRequests"
         static let approvalStyle = "AIAssistants.approvalStyle"
         static let phoneBackupDelay = "AIAssistants.phoneBackupDelay"
         static let answerRoute = "AIAssistants.answerRoute"
@@ -40,6 +44,7 @@ final class AIAssistantsPreferencesStore {
     var value: AIAssistantsPreferences {
         get { Self.read(from: defaults) }
         set {
+            defaults.set(newValue.allowsMealRequests, forKey: Key.allowsMealRequests)
             defaults.set(newValue.approvalStyle.rawValue, forKey: Key.approvalStyle)
             defaults.set(newValue.phoneBackupDelay, forKey: Key.phoneBackupDelay)
             defaults.set(newValue.answerRoute.rawValue, forKey: Key.answerRoute)
@@ -52,6 +57,9 @@ final class AIAssistantsPreferencesStore {
 
     private static func read(from defaults: UserDefaults) -> AIAssistantsPreferences {
         var preferences = AIAssistantsPreferences()
+        if let allows = defaults.object(forKey: Key.allowsMealRequests) as? Bool {
+            preferences.allowsMealRequests = allows
+        }
         if let raw = defaults.string(forKey: Key.approvalStyle), let style = AIRequestApprovalStyle(rawValue: raw) {
             preferences.approvalStyle = style
         }

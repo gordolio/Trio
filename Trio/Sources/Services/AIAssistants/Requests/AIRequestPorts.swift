@@ -87,6 +87,14 @@ enum AIRequestReport: Codable, Equatable {
     }
 }
 
+/// Trio's dose for a meal, and the loop run it was worked out on.
+struct AIRequestDose: Equatable {
+    let units: Decimal
+    /// The `deliverAt` of the determination the calculator read insulin on board from, or `nil` when there's none
+    /// from the last 30 minutes. Insulin given after it isn't in the dose, so the recent-insulin check counts from it.
+    let iobAsOf: Date?
+}
+
 /// Sends a request's states to where the request came from.
 protocol AIRequestReporter: AnyObject {
     func report(_ report: AIRequestReport, for id: String) async
@@ -95,10 +103,11 @@ protocol AIRequestReporter: AnyObject {
 /// Trio's treatment side of a request: the wearer's limits, the dose, and logging carbs and boluses.
 protocol AIRequestTreatments: AnyObject {
     var limits: AIRequestLimits { get }
-    func dose(forCarbs carbs: Decimal) async -> Decimal
+    func dose(forCarbs carbs: Decimal) async -> AIRequestDose
     func display(for request: AIMealRequest, units: Decimal) async -> AIRequestDisplay
-    /// Returns `nil` if the bolus is allowed, otherwise the reason it isn't.
-    func checkBolus(_ units: Decimal) async -> String?
+    /// Returns `nil` if the bolus is allowed, otherwise the reason it isn't. Only insulin given after `since` counts
+    /// as recent.
+    func checkBolus(_ units: Decimal, since: Date) async -> String?
     func storeCarbs(for request: AIMealRequest) async throws
     /// Returns `nil` if the pump accepted the bolus, otherwise the reason it didn't.
     func enactBolus(_ units: Decimal) async -> String?
@@ -125,4 +134,11 @@ struct PendingAIRequest: Codable, Equatable {
     let askedOn: AIRequestAskedOn
     /// Trio's dose, as computed when the request arrived.
     let units: Decimal
+    /// When Trio received the request. This and the two below are optional, so a file saved before Trio recorded
+    /// them still reads.
+    var receivedAt: Date? = nil
+    /// The dose's `iobAsOf`: `nil` when there was no loop run from the last 30 minutes.
+    var iobAsOf: Date? = nil
+    /// When the iPhone asks too, if the watch hasn't answered by then.
+    var phoneAskAt: Date? = nil
 }
