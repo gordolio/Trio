@@ -61,6 +61,11 @@ import XCTest
         #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(20)))
     }
 
+    @Test func ignoresACheckFromAClockThatRanAhead() {
+        let dates = [-3600.0, 0].map { now.addingTimeInterval($0) }
+        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(3600)))
+    }
+
     @Test func hidesDuringSensorWarmup() {
         #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: [], now: now, warmupEndsAt: now.addingTimeInterval(600)))
         #expect(GlucoseBackfillGaps.hasMissingReadings(dates: [], now: now, warmupEndsAt: now))
@@ -71,15 +76,23 @@ import XCTest
         let site = URL(string: "https://ns.example")!
         NightscoutBackfillChecks(defaults: defaults).record(now, for: site)
         let reloaded = NightscoutBackfillChecks(defaults: defaults)
-        #expect(reloaded.checkedThrough(for: site) == now)
-        #expect(reloaded.checkedThrough(for: URL(string: "https://other.example")!) == nil)
+        #expect(reloaded.checkedThrough(for: site, now: now) == now)
+        #expect(reloaded.checkedThrough(for: URL(string: "https://other.example")!, now: now) == nil)
+    }
+
+    @Test func forgetsACheckFromAClockThatRanAhead() {
+        let checks = NightscoutBackfillChecks(defaults: makeDefaults())
+        let site = URL(string: "https://ns.example")!
+        checks.record(now.addingTimeInterval(3600), for: site)
+        #expect(checks.checkedThrough(for: site, now: now) == nil)
+        #expect(checks.checkedThrough(for: site, now: now.addingTimeInterval(7200)) == nil)
     }
 
     @Test func successfulBackfillRecordsTheCheck() async throws {
         let checks = NightscoutBackfillChecks(defaults: makeDefaults())
         let api = makeAPI(status: 200, body: entries(minutesAgo: [5, 10]))
         #expect(try await NightscoutBackfill.fetchAndStore(using: api, now: now, checks: checks) { $0.count } == 2)
-        #expect(checks.checkedThrough(for: api.url) == now)
+        #expect(checks.checkedThrough(for: api.url, now: now) == now)
     }
 
     @Test func failedFetchDoesNotRecordTheCheck() async throws {
@@ -88,7 +101,7 @@ import XCTest
         await #expect(throws: NightscoutBackfillError.self) {
             try await NightscoutBackfill.fetchAndStore(using: api, now: now, checks: checks) { $0.count }
         }
-        #expect(checks.checkedThrough(for: api.url) == nil)
+        #expect(checks.checkedThrough(for: api.url, now: now) == nil)
     }
 
     @Test func failedSaveDoesNotRecordTheCheck() async throws {
@@ -99,7 +112,7 @@ import XCTest
                 throw CocoaError(.persistentStoreSave)
             }
         }
-        #expect(checks.checkedThrough(for: api.url) == nil)
+        #expect(checks.checkedThrough(for: api.url, now: now) == nil)
     }
 
     @Test func fullPageDoesNotRecordTheCheck() async throws {
@@ -107,7 +120,7 @@ import XCTest
         var api = makeAPI(status: 200, body: entries(minutesAgo: [5, 10]))
         api.pageLimit = 2
         #expect(try await NightscoutBackfill.fetchAndStore(using: api, now: now, checks: checks) { $0.count } == 2)
-        #expect(checks.checkedThrough(for: api.url) == nil)
+        #expect(checks.checkedThrough(for: api.url, now: now) == nil)
     }
 
     @MainActor @Test func publishesTheLastCheckOnRefreshAndAfterRun() async {

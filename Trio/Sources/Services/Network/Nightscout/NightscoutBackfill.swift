@@ -155,6 +155,9 @@ enum GlucoseBackfillGaps {
     static let missingReadingInterval: TimeInterval = 7.5 * 60
     /// Leaves time for a reading uploaded by another device to reach Nightscout.
     static let staleReadingInterval: TimeInterval = 10 * 60
+    /// How far past `now` a check may be dated: it can finish after the Home tick that supplies `now`.
+    /// A check further ahead was recorded under a wrong device clock.
+    static let clockSkewTolerance: TimeInterval = 10 * 60
 
     /// `checkedThrough` is the last successful Nightscout check. Nightscout had nothing more
     /// before it, so earlier gaps are hidden and the check itself counts as a reading.
@@ -162,8 +165,9 @@ enum GlucoseBackfillGaps {
         if let warmupEndsAt, warmupEndsAt > now { return false }
         var start = now.addingTimeInterval(-lookback)
         var recent: [Date] = []
-        // a check that finished after the caller's clock tick still covers everything up to `now`
-        if let checked = checkedThrough.map({ min($0, now) }), checked >= start {
+        if let checkedThrough, checkedThrough >= start, checkedThrough <= now.addingTimeInterval(clockSkewTolerance) {
+            // a check that finished after the caller's clock tick still covers everything up to `now`
+            let checked = min(checkedThrough, now)
             start = checked
             recent.append(checked)
         }
@@ -231,14 +235,22 @@ struct NightscoutBackfillClient {
 }
 
 /// Remembers when Nightscout last answered a full 24-hour backfill, per site, so Home stops
-/// offering readings Nightscout doesn't have. Expires on its own once it falls out of the lookback.
+/// offering readings Nightscout doesn't have. Expires on its own once it falls out of the lookback;
+/// a check dated further ahead than the clock-skew tolerance is forgotten.
 struct NightscoutBackfillChecks {
     var defaults: UserDefaults = .standard
     var key = "trio.nightscoutBackfill.lastCheck.v1"
 
-    func checkedThrough(for url: URL) -> Date? {
-        guard let check = defaults.dictionary(forKey: key), check["url"] as? String == url.absoluteString else { return nil }
-        return check["date"] as? Date
+    func checkedThrough(for url: URL, now: Date = Date()) -> Date? {
+        guard let check = defaults.dictionary(forKey: key), check["url"] as? String == url.absoluteString,
+              let date = check["date"] as? Date
+        else { return nil }
+        // dated in the future: it can't vouch for any window, even once real time catches up
+        guard date <= now.addingTimeInterval(GlucoseBackfillGaps.clockSkewTolerance) else {
+            defaults.removeObject(forKey: key)
+            return nil
+        }
+        return date
     }
 
     func record(_ date: Date, for url: URL) {
