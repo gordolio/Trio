@@ -22,12 +22,118 @@ import XCTest
 
     @Test func detectsStaleAndEmptyHistoryWithoutInventingLeadingGaps() {
         #expect(GlucoseBackfillGaps.hasMissingReadings(dates: [], now: now))
-        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: [now.addingTimeInterval(-451)], now: now))
+        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: [now.addingTimeInterval(-601)], now: now))
         #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: [now], now: now))
-        #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: [now.addingTimeInterval(-450)], now: now))
+        #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: [now.addingTimeInterval(-600)], now: now))
         #expect(!GlucoseBackfillGaps.hasMissingReadings(
             dates: [now.addingTimeInterval(-90000), now, now.addingTimeInterval(600)], now: now
         ))
+    }
+
+    @Test func hidesGapsTheLastCheckCovered() {
+        let dates = ([-3600.0, -3000] + stride(from: -2700.0, through: 0, by: 300)).map { now.addingTimeInterval($0) }
+        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now))
+        #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(-2800)))
+    }
+
+    @Test func countsTheLastCheckAsAReading() {
+        let dates = ([-3600.0] + stride(from: -2700.0, through: 0, by: 300)).map { now.addingTimeInterval($0) }
+        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(-3300)))
+        #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(-3000)))
+    }
+
+    @Test func staleCgmReturnsTenMinutesAfterTheLastCheck() {
+        let dates = [now.addingTimeInterval(-1800)]
+        #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(-600)))
+        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(-601)))
+    }
+
+    @Test func checksOlderThanTheLookbackDoNotInventLeadingGaps() {
+        let dates = stride(from: -3600.0, through: 0, by: 300).map { now.addingTimeInterval($0) }
+        #expect(
+            !GlucoseBackfillGaps
+                .hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(-25 * 3600))
+        )
+    }
+
+    @Test func checkFinishedAfterTheLastHomeTickStillHidesGaps() {
+        let dates = [-3600.0, 0].map { now.addingTimeInterval($0) }
+        #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(20)))
+    }
+
+    @Test func ignoresACheckFromAClockThatRanAhead() {
+        let dates = [-3600.0, 0].map { now.addingTimeInterval($0) }
+        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: dates, now: now, checkedThrough: now.addingTimeInterval(3600)))
+    }
+
+    @Test func hidesDuringSensorWarmup() {
+        #expect(!GlucoseBackfillGaps.hasMissingReadings(dates: [], now: now, warmupEndsAt: now.addingTimeInterval(600)))
+        #expect(GlucoseBackfillGaps.hasMissingReadings(dates: [], now: now, warmupEndsAt: now))
+    }
+
+    @Test func remembersTheLastCheckPerNightscoutSite() {
+        let defaults = makeDefaults()
+        let site = URL(string: "https://ns.example")!
+        NightscoutBackfillChecks(defaults: defaults).record(now, for: site)
+        let reloaded = NightscoutBackfillChecks(defaults: defaults)
+        #expect(reloaded.checkedThrough(for: site, now: now) == now)
+        #expect(reloaded.checkedThrough(for: URL(string: "https://other.example")!, now: now) == nil)
+    }
+
+    @Test func forgetsACheckFromAClockThatRanAhead() {
+        let checks = NightscoutBackfillChecks(defaults: makeDefaults())
+        let site = URL(string: "https://ns.example")!
+        checks.record(now.addingTimeInterval(3600), for: site)
+        #expect(checks.checkedThrough(for: site, now: now) == nil)
+        #expect(checks.checkedThrough(for: site, now: now.addingTimeInterval(7200)) == nil)
+    }
+
+    @Test func successfulBackfillRecordsTheCheck() async throws {
+        let checks = NightscoutBackfillChecks(defaults: makeDefaults())
+        let api = makeAPI(status: 200, body: entries(minutesAgo: [5, 10]))
+        #expect(try await NightscoutBackfill.fetchAndStore(using: api, now: now, checks: checks) { $0.count } == 2)
+        #expect(checks.checkedThrough(for: api.url, now: now) == now)
+    }
+
+    @Test func failedFetchDoesNotRecordTheCheck() async throws {
+        let checks = NightscoutBackfillChecks(defaults: makeDefaults())
+        let api = makeAPI(status: 500, body: "[]")
+        await #expect(throws: NightscoutBackfillError.self) {
+            try await NightscoutBackfill.fetchAndStore(using: api, now: now, checks: checks) { $0.count }
+        }
+        #expect(checks.checkedThrough(for: api.url, now: now) == nil)
+    }
+
+    @Test func failedSaveDoesNotRecordTheCheck() async throws {
+        let checks = NightscoutBackfillChecks(defaults: makeDefaults())
+        let api = makeAPI(status: 200, body: "[]")
+        await #expect(throws: CocoaError.self) {
+            try await NightscoutBackfill.fetchAndStore(using: api, now: now, checks: checks) { _ in
+                throw CocoaError(.persistentStoreSave)
+            }
+        }
+        #expect(checks.checkedThrough(for: api.url, now: now) == nil)
+    }
+
+    @Test func fullPageDoesNotRecordTheCheck() async throws {
+        let checks = NightscoutBackfillChecks(defaults: makeDefaults())
+        var api = makeAPI(status: 200, body: entries(minutesAgo: [5, 10]))
+        api.pageLimit = 2
+        #expect(try await NightscoutBackfill.fetchAndStore(using: api, now: now, checks: checks) { $0.count } == 2)
+        #expect(checks.checkedThrough(for: api.url, now: now) == nil)
+    }
+
+    @MainActor @Test func publishesTheLastCheckOnRefreshAndAfterRun() async {
+        let now = self.now
+        var checked: Date? = now.addingTimeInterval(-60)
+        let backfill = NightscoutBackfill(configuration: { true }, checkedThrough: { checked }) {
+            checked = now
+            return 0
+        }
+        backfill.refreshConfiguration()
+        #expect(backfill.checkedThrough == now.addingTimeInterval(-60))
+        await backfill.run()
+        #expect(backfill.checkedThrough == now)
     }
 
     @MainActor @Test func showsCountThenZeroAndRefreshesConfiguration() async {
@@ -104,7 +210,23 @@ import XCTest
         BackfillURLProtocol.body = Data(body.utf8)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BackfillURLProtocol.self]
-        return NightscoutBackfillClient(url: URL(string: "https://backfill.invalid")!, session: URLSession(configuration: configuration))
+        return NightscoutBackfillClient(
+            url: URL(string: "https://backfill.invalid")!,
+            session: URLSession(configuration: configuration)
+        )
+    }
+
+    private func makeDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "NightscoutBackfillTests.\(UUID().uuidString)")!
+    }
+
+    private func entries(minutesAgo: [Double]) -> String {
+        let items = minutesAgo.map { minutes in
+            let date = now.addingTimeInterval(-minutes * 60)
+            let dateString = Formatter.iso8601withFractionalSeconds.string(from: date)
+            return #"{"sgv":120,"date":\#(Int(date.timeIntervalSince1970 * 1000)),"dateString":"\#(dateString)"}"#
+        }
+        return "[" + items.joined(separator: ",") + "]"
     }
 }
 
