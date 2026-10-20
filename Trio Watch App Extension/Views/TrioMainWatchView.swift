@@ -225,6 +225,7 @@ struct TrioMainWatchView: View {
                 }
             }
         }
+        .aiRequestApproval()
         .ignoresSafeArea()
     }
 

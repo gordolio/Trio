@@ -215,6 +215,7 @@ extension BaseUserNotificationsManager: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        if AIRequestHooks.willPresent(notification, completionHandler) { return }
         let userInfo = notification.request.content.userInfo
         if userInfo[AlertUserInfoKey.managerIdentifier.rawValue] is String {
             completionHandler([.badge, .list])
@@ -230,6 +231,7 @@ extension BaseUserNotificationsManager: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        if AIRequestHooks.didReceive(response, completionHandler) { return }
         defer { completionHandler() }
 
         let userInfo = response.notification.request.content.userInfo

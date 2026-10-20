@@ -19,6 +19,14 @@ extension AIAssistantsConfig {
         @Published private(set) var copyCount = 0
         @Published private(set) var copiedMessage = ""
 
+        /// What the request settings on the screen show. Kept in sync with `preferencesStore` once `subscribe()` ran.
+        @Published var preferences = AIAssistantsPreferences()
+        /// Where the request preferences are kept: the request runtime's store, unless a test sets another.
+        var preferencesStore: AIAssistantsPreferencesStore? = AIRequestsRuntime.shared?.preferences
+        /// Hands a request to Trio, as the coordinator receives it. `nil` while the request runtime isn't running.
+        var receiveRequest: ((AIMealRequest, AIRequestChannel) async -> Void)? = AIRequestsRuntime.shared
+            .map { runtime in { request, channel in await runtime.coordinator.receive(request, via: channel) } }
+
         var pasteboard: (String) -> Void = { UIPasteboard.general.string = $0 }
         /// Tells VoiceOver what was copied; the confirmation on screen is hidden from it.
         var announce: (String) -> Void = { AccessibilityNotification.Announcement($0).post() }
@@ -35,6 +43,33 @@ extension AIAssistantsConfig {
             service.account
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] in self?.account = $0 }
+                .store(in: &lifetime)
+            subscribeToPreferences()
+        }
+
+        /// Both ways, and neither echoes: each side writes only a value that differs from what it has. A change
+        /// in the store reaches the screen on the main queue as the store's value of that moment, not the value
+        /// that was sent. With the sent values, two changes made before the first one arrives would overwrite
+        /// each other back and forth without end.
+        private func subscribeToPreferences() {
+            guard let store = preferencesStore else { return }
+            preferences = store.value
+            store.changes
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    let latest = store.value
+                    guard let self, self.preferences != latest else { return }
+                    self.preferences = latest
+                }
+                .store(in: &lifetime)
+            $preferences
+                .dropFirst()
+                .removeDuplicates()
+                .sink { preferences in
+                    guard store.value != preferences else { return }
+                    store.value = preferences
+                }
                 .store(in: &lifetime)
         }
 
@@ -115,6 +150,30 @@ extension AIAssistantsConfig {
                     localized: "Signed out, but Trio couldn't reach the service, so assistants may still see your last status. Sign in and sign out again when you're online."
                 )
             }
+        }
+
+        // MARK: - Test request
+
+        var canSendTestRequest: Bool {
+            receiveRequest != nil
+        }
+
+        /// Asks Trio for 10 g of carbs as if an assistant had sent it, to try the approval on the watch and
+        /// the iPhone. It lasts five minutes, and Trio's dose for it is worked out as for any request.
+        @MainActor func sendTestRequest() async {
+            guard let receiveRequest else { return }
+            let now = Date()
+            let request = AIMealRequest(
+                id: UUID().uuidString,
+                source: "Test",
+                description: "test request",
+                carbs: 10,
+                fat: 0,
+                protein: 0,
+                createdAt: now,
+                expiresAt: now.addingTimeInterval(5 * 60)
+            )
+            await receiveRequest(request, .local)
         }
 
         // MARK: - Copying

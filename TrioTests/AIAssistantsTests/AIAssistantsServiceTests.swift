@@ -5,20 +5,41 @@ import Testing
 
 @testable import Trio
 
-/// Records calls and throws the error scripted for a call's name.
+/// Records calls and throws the error scripted for a call's name. A scripted `.signedOut` is also sent on
+/// `signedOut`, with `serviceURL`, as the client does.
 final class FakeAIAssistantsAPI: AIAssistantsAPIClient {
     private let lock = NSLock()
+    private let signedOutSubject = PassthroughSubject<URL, Never>()
     private var recordedCalls: [String] = []
     private var recordedStatuses: [StatusSnapshot] = []
-    /// Keyed by call name: "putDevice", "deleteDevice" or "putStatus".
+    private var recordedRequestStates: [(id: String, body: AIRequestStateBody)] = []
+    private var storedInbox = AIInbox(requests: [], answers: [])
+    /// Keyed by call name: "putDevice", "deleteDevice", "putStatus", "getInbox" or "putRequestState".
     var errors: [String: AIAssistantsAPIError] = [:]
     /// When set, `putStatus` waits for it to open.
     var statusGate: UploadGate?
+    /// When set, `getInbox` waits for it to open, after recording the call.
+    var inboxGate: UploadGate?
+    /// When set, `getInbox` decodes it with the API's decoder instead of returning `inbox`, so a malformed
+    /// body throws as it does from the service.
+    var inboxBody: Data?
     /// Runs when `putStatus` finishes, as a token refresh writes the store during a request.
     var whenStatusSent: (() -> Void)?
+    /// The address the calls go to.
+    var serviceURL = URL(string: "https://svc.example.com")!
+
+    var signedOut: AnyPublisher<URL, Never> { signedOutSubject.eraseToAnyPublisher() }
 
     var calls: [String] { lock.withLock { recordedCalls } }
     var statuses: [StatusSnapshot] { lock.withLock { recordedStatuses } }
+    var requestStates: [(id: String, body: AIRequestStateBody)] { lock.withLock { recordedRequestStates } }
+    /// Each state report sent, including the failed ones, as `"<id>:<state>"`.
+    var reportedStates: [String] { requestStates.map { "\($0.id):\($0.body.state.rawValue)" } }
+    /// What `getInbox` returns.
+    var inbox: AIInbox {
+        get { lock.withLock { storedInbox } }
+        set { lock.withLock { storedInbox = newValue } }
+    }
 
     func putDevice(_: DeviceRegistration) async throws {
         try record("putDevice")
@@ -35,12 +56,32 @@ final class FakeAIAssistantsAPI: AIAssistantsAPIClient {
         whenStatusSent?()
     }
 
+    func getInbox() async throws -> AIInbox {
+        lock.withLock { recordedCalls.append("getInbox") }
+        if let inboxGate { await inboxGate.wait() }
+        if let error = lock.withLock({ errors["getInbox"] }) { throw thrown(error) }
+        if let inboxBody { return try AIInbox.decoder.decode(AIInbox.self, from: inboxBody) }
+        return inbox
+    }
+
+    func putRequestState(id: String, _ body: AIRequestStateBody) async throws {
+        lock.withLock { recordedRequestStates.append((id, body)) }
+        try record("putRequestState")
+    }
+
     private func record(_ call: String) throws {
         let error = lock.withLock {
             recordedCalls.append(call)
             return errors[call]
         }
-        if let error { throw error }
+        if let error { throw thrown(error) }
+    }
+
+    private func thrown(_ error: AIAssistantsAPIError) -> AIAssistantsAPIError {
+        if error == .signedOut {
+            signedOutSubject.send(serviceURL)
+        }
+        return error
     }
 }
 
@@ -493,6 +534,71 @@ func letDebouncePass() async {
         #expect(service.state.value == .notLinked)
     }
 
+    // MARK: - Calls besides the uploads
+
+    /// A check-in over the service's store and API, as the runtime makes it.
+    func makeCheckIn() -> AIAssistantsCheckIn {
+        let store = self.store
+        return AIAssistantsCheckIn(
+            api: api,
+            coordinator: makeCoordinator(serviceReporter: ServiceRequestReporter(api: api)).coordinator,
+            isLinked: { store.baseURL != nil && store.tokens != nil },
+            loopRuns: Empty().eraseToAnyPublisher(),
+            beginBackgroundActivity: activity.begin,
+            removeDeliveredCheckIns: {}
+        )
+    }
+
+    @Test("A check-in that finds Trio signed out shows signed out") func checkInSignedOutSignsOut() async {
+        api.errors["getInbox"] = .signedOut
+        let service = makeLinkedService()
+        await makeCheckIn().checkIn(reason: .loop)
+        #expect(service.state.value == .signedOut(host: "svc.example.com"))
+    }
+
+    @Test("A state report that finds Trio signed out shows signed out") func stateReportSignedOutSignsOut() async {
+        api.errors["putRequestState"] = .signedOut
+        let service = makeLinkedService()
+        await ServiceRequestReporter(api: api).report(.expired, for: "r1")
+        #expect(service.state.value == .signedOut(host: "svc.example.com"))
+    }
+
+    @Test("Signed out of another address leaves the link alone") func signedOutOfAnotherHostKeepsLink() async {
+        api.errors["getInbox"] = .signedOut
+        api.serviceURL = URL(string: "https://old.example.com")!
+        let service = makeLinkedService()
+        await makeCheckIn().checkIn(reason: .loop)
+        #expect(service.state.value == .linked(host: "svc.example.com", lastUpload: nil, lastError: nil))
+    }
+
+    @Test(
+        "Unlinking during a check-in waits for it, and no check-in starts until the link is gone"
+    ) func unlinkDuringCheckInWaitsForIt() async {
+        let gate = UploadGate()
+        api.inboxGate = gate
+        let service = makeLinkedService()
+        let checkIn = makeCheckIn()
+        service.checkIn = checkIn
+        let running = Task { await checkIn.checkIn(reason: .push) }
+        #expect(await eventuallyTrue { api.calls == ["getInbox"] })
+        let unlink = Task { await service.unlink() }
+        await letDebouncePass()
+        #expect(api.calls == ["getInbox"])
+        await checkIn.checkIn(reason: .loop)
+        #expect(api.calls == ["getInbox"])
+        gate.open()
+        _ = await unlink.value
+        await running.value
+        #expect(api.calls == ["getInbox", "deleteDevice"])
+        #expect(store.tokens == nil)
+        #expect(service.state.value == .notLinked)
+
+        // Linked again, the check-ins run again.
+        await service.completeLink(baseURL: baseURL, tokens: tokens, account: nil)
+        await checkIn.checkIn(reason: .loop)
+        #expect(api.calls.suffix(2) == ["putStatus", "getInbox"])
+    }
+
     // MARK: - App wiring
 
     @Test(
@@ -557,5 +663,107 @@ func letDebouncePass() async {
 
         defaults.set(true, forKey: "isAPNSProduction")
         #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)?.apnsEnvironment == "production")
+    }
+
+    @Test("The device registration has no watch until the watch sends its push token") func deviceRegistrationWatchNeedsToken() throws {
+        let suite = "AIAssistantsServiceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(device.apnsToken, forKey: "deviceToken")
+        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)?.watch == nil)
+
+        defaults.set("", forKey: "AIAssistants.watchPushToken")
+        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)?.watch == nil)
+
+        let watchToken = String(repeating: "cd", count: 32)
+        defaults.set(watchToken, forKey: "AIAssistants.watchPushToken")
+        let sandbox = try #require(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults))
+        #expect(sandbox.watch == WatchRegistration(
+            apnsToken: watchToken,
+            bundleId: "\(Bundle.main.bundleIdentifier ?? "").watchkitapp",
+            apnsEnvironment: "sandbox"
+        ))
+
+        // The watch is pushed to through the phone's APNs environment.
+        defaults.set(true, forKey: "isAPNSProduction")
+        let production = BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)
+        #expect(production?.watch?.apnsEnvironment == "production")
+        #expect(production?.watch?.apnsToken == watchToken)
+    }
+
+    @Test("The device registration carries the wake-up push type of the preferences") func deviceRegistrationWakePushType() throws {
+        let suite = "AIAssistantsServiceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(device.apnsToken, forKey: "deviceToken")
+        // No preferences, no runtime: the service treats a missing type as passive.
+        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)?.wakePushType == nil)
+
+        var preferences = AIAssistantsPreferences()
+        let passive = BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: preferences)
+        #expect(passive?.wakePushType == "passive")
+        preferences.wakePushType = .timeSensitive
+        let timeSensitive = BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: preferences)
+        #expect(timeSensitive?.wakePushType == "timeSensitive")
+        preferences.wakePushType = .background
+        let background = BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: preferences)
+        #expect(background?.wakePushType == "background")
+    }
+
+    @Test("A new watch or wake-up push type registers the device again") func changedWatchOrWakePushTypeRegistersDeviceAgain(
+    ) async {
+        let watch = WatchRegistration(
+            apnsToken: String(repeating: "cd", count: 32),
+            bundleId: "org.nightscout.TEAMID.trio.watchkitapp",
+            apnsEnvironment: "sandbox"
+        )
+        func registration(watch: WatchRegistration?, wakePushType: String?) -> DeviceRegistration {
+            DeviceRegistration(
+                apnsToken: device.apnsToken,
+                bundleId: device.bundleId,
+                apnsEnvironment: device.apnsEnvironment,
+                appVersion: device.appVersion,
+                watch: watch,
+                wakePushType: wakePushType
+            )
+        }
+        let service = makeLinkedService()
+        pushDevice.value = registration(watch: nil, wakePushType: "passive")
+        await service.uploadNow()
+        await service.uploadNow()
+        #expect(api.calls == ["putDevice", "putStatus"])
+
+        pushDevice.value = registration(watch: watch, wakePushType: "passive")
+        await service.uploadNow()
+        #expect(api.calls == ["putDevice", "putStatus", "putDevice"])
+        #expect(store.lastDevice?.watch == watch)
+
+        pushDevice.value = registration(watch: watch, wakePushType: "timeSensitive")
+        await service.uploadNow()
+        #expect(api.calls == ["putDevice", "putStatus", "putDevice", "putDevice"])
+        #expect(store.lastDevice?.wakePushType == "timeSensitive")
+    }
+
+    @Test("A change of the wake-up push type uploads; the first value and other changes don't") func wakePushTypeChangeUploads(
+    ) async {
+        let service = makeLinkedService()
+        pushDevice.value = device
+        let preferences = CurrentValueSubject<AIAssistantsPreferences, Never>(AIAssistantsPreferences())
+        service.uploadWhenWakePushTypeChanges(preferences.eraseToAnyPublisher())
+        await letDebouncePass()
+        #expect(api.calls.isEmpty)
+
+        // Another preference changed.
+        preferences.send(AIAssistantsPreferences(approvalStyle: .oneGesture))
+        await letDebouncePass()
+        #expect(api.calls.isEmpty)
+
+        preferences.send(AIAssistantsPreferences(approvalStyle: .oneGesture, wakePushType: .timeSensitive))
+        #expect(await eventuallyTrue { api.calls == ["putDevice", "putStatus"] })
+
+        // The same type again isn't a change.
+        preferences.send(AIAssistantsPreferences(approvalStyle: .twoStep, wakePushType: .timeSensitive))
+        await letDebouncePass()
+        #expect(api.calls == ["putDevice", "putStatus"])
     }
 }

@@ -436,7 +436,10 @@ enum SettingItems {
         SettingItem(
             title: "AI Assistants",
             view: .aiAssistantsConfig,
-            searchContents: ["Claude", "ChatGPT", "Grok", "MCP", "Sign in with Apple"],
+            searchContents: [
+                "Claude", "ChatGPT", "Grok", "MCP", "Sign in with Apple",
+                "Approval style", "Also ask on iPhone after", "Send watch answers by", "Wake-up push", "Send a test request"
+            ],
             path: ["Services", "AI Assistants"]
         ),
         SettingItem(title: "Tidepool", view: .serviceSettings, path: ["Services"]),

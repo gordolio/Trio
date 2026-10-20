@@ -3,9 +3,10 @@ import UserNotifications
 
 @main struct TrioWatchApp: App {
     @Environment(\.scenePhase) private var scenePhase
+    @WKApplicationDelegateAdaptor(AIRequestWatchAppDelegate.self) private var appDelegate
 
     init() {
-        WatchNotificationHandler.shared.configure()
+        AIRequestWatchCenter.shared.configure()
     }
 
     var body: some Scene {

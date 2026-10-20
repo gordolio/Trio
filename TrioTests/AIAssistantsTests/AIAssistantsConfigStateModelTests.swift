@@ -202,4 +202,127 @@ final class FakeAIAssistantsService: AIAssistantsService {
         await signOut.value
         #expect(state.isSigningOut == false)
     }
+
+    // MARK: - Request preferences
+
+    func freshStore() -> AIAssistantsPreferencesStore {
+        AIAssistantsPreferencesStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+    }
+
+    @Test("A change on the screen is written to the store") func preferencesWriteThrough() {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        state.preferences.approvalStyle = .oneGesture
+        state.preferences.phoneBackupDelay = 30
+        state.preferences.wakePushType = .timeSensitive
+        #expect(store.value.approvalStyle == .oneGesture)
+        #expect(store.value.phoneBackupDelay == 30)
+        #expect(store.value.wakePushType == .timeSensitive)
+    }
+
+    @Test("A change in the store reaches the screen") func storeChangesReachTheModel() async {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        store.value.answerRoute = .serviceOnly
+        #expect(await eventuallyTrue { state.preferences.answerRoute == .serviceOnly })
+    }
+
+    @Test("The screen starts with what the store holds") func screenStartsWithTheStoredPreferences() {
+        let store = freshStore()
+        store.value = AIAssistantsPreferences(
+            approvalStyle: .oneGesture,
+            phoneBackupDelay: 60,
+            answerRoute: .watchOnly,
+            wakePushType: .background
+        )
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        #expect(state.preferences == store.value)
+    }
+
+    @Test(
+        "A change on the screen is written once, and the store's update doesn't write it again"
+    ) func preferencesWriteDoesNotEcho(
+    ) async {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        var writes = 0
+        let subscription = store.changes.dropFirst().sink { _ in writes += 1 }
+        state.preferences.approvalStyle = .oneGesture
+        await letDebouncePass()
+        #expect(writes == 1)
+        #expect(state.preferences.approvalStyle == .oneGesture)
+        subscription.cancel()
+    }
+
+    @Test("Two quick changes on the screen settle on the last one") func quickChangesSettleOnTheLastOne() async {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        var writes = 0
+        let subscription = store.changes.dropFirst().sink { _ in writes += 1 }
+        state.preferences.wakePushType = .background
+        state.preferences.wakePushType = .timeSensitive
+        await letDebouncePass()
+        #expect(writes == 2)
+        #expect(state.preferences.wakePushType == .timeSensitive)
+        #expect(store.value.wakePushType == .timeSensitive)
+        subscription.cancel()
+    }
+
+    @Test("Without a store the screen keeps its own preferences") func preferencesWithoutAStoreStayOnTheScreen() async {
+        let state = makeState()
+        state.preferencesStore = nil
+        state.subscribe()
+        state.preferences.answerRoute = .watchOnly
+        await letDebouncePass()
+        #expect(state.preferences.answerRoute == .watchOnly)
+    }
+
+    @Test(
+        "Send a test request hands Trio a 10 g request from the phone that lasts five minutes"
+    ) func testRequestIsTenGramsAndLocal(
+    ) async throws {
+        let state = makeState()
+        var received: [(AIMealRequest, AIRequestChannel)] = []
+        state.receiveRequest = { received.append(($0, $1)) }
+        #expect(state.canSendTestRequest)
+        await state.sendTestRequest()
+        let (request, channel) = try #require(received.first)
+        #expect(received.count == 1)
+        #expect(channel == .local)
+        #expect(request.source == "Test")
+        #expect(request.description == "test request")
+        #expect(request.carbs == 10)
+        #expect(request.fat == 0)
+        #expect(request.protein == 0)
+        #expect(!request.id.isEmpty)
+        #expect(request.expiresAt.timeIntervalSince(request.createdAt) == 300)
+        #expect(abs(request.createdAt.timeIntervalSinceNow) < 5)
+    }
+
+    @Test("Each test request has its own ID") func testRequestsHaveDifferentIDs() async {
+        let state = makeState()
+        var ids: [String] = []
+        state.receiveRequest = { request, _ in ids.append(request.id) }
+        await state.sendTestRequest()
+        await state.sendTestRequest()
+        #expect(ids.count == 2)
+        #expect(Set(ids).count == 2)
+    }
+
+    @Test("Without the request runtime the test request can't be sent") func testRequestNeedsTheRuntime() async {
+        let state = makeState()
+        state.receiveRequest = nil
+        #expect(!state.canSendTestRequest)
+        await state.sendTestRequest()
+    }
 }

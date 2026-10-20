@@ -1,0 +1,306 @@
+import Foundation
+import Testing
+
+@testable import Trio
+
+@Suite("AI request coordinator – requests") struct AIRequestCoordinatorRequestTests {
+    @Test func newRequestIsAskedOnTheWatchWithTheDose() async {
+        let h = makeCoordinator(dose: 1.2, watchAvailable: true)
+        await h.coordinator.receive(meal(id: "r1", carbs: 20), via: .service)
+        #expect(h.reporter.states == ["r1:pending"])
+        guard case let .pending(askedOn, style, route, shown, display) = h.reporter.reports.first?.report else {
+            Issue.record("Expected a pending report")
+            return
+        }
+        #expect(askedOn == .watch && style == .twoStep && route == .both && shown.units == "1.20")
+        #expect(h.backup.scheduled.map(\.delay) == [15])
+        #expect(h.watch.delivered.isEmpty) // service requests reach the watch by push
+        let prompt = h.prompt("r1")
+        #expect(prompt.shown == shown && prompt.title == display.title && prompt.body == display.body)
+        #expect(prompt.answerToken == nil && prompt.answerURL == nil)
+    }
+
+    @Test func noWatchMeansThePhoneRightAway() async {
+        let h = makeCoordinator(watchAvailable: false)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        guard case let .pending(askedOn, _, _, _, _) = h.reporter.reports.first?.report else {
+            Issue.record("Expected a pending report")
+            return
+        }
+        #expect(askedOn == .phone)
+        #expect(h.backup.scheduled.map(\.delay) == [0])
+    }
+
+    @Test func localRequestIsDeliveredOverWatchConnectivity() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .local)
+        #expect(h.reporter.states == ["r1:pending"])
+        #expect(h.watch.delivered.count == 1 && h.watch.delivered.first == h.prompt("r1"))
+    }
+
+    @Test func promptFollowsThePreferences() async {
+        let h = makeCoordinator(preferences: AIAssistantsPreferences(
+            approvalStyle: .oneGesture,
+            phoneBackupDelay: 30,
+            answerRoute: .watchOnly
+        ))
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        guard case let .pending(_, style, route, _, _) = h.reporter.reports.first?.report else {
+            Issue.record("Expected a pending report")
+            return
+        }
+        #expect(style == .oneGesture && route == .watchOnly)
+        #expect(h.prompt("r1").approvalStyle == .oneGesture && h.prompt("r1").answerRoute == .watchOnly)
+        #expect(h.backup.scheduled.map(\.delay) == [30])
+    }
+
+    @Test func overMaxCarbsFailsWithoutAsking() async {
+        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 50, maxProtein: 50))
+        await h.coordinator.receive(meal(id: "r1", carbs: 80), via: .service)
+        #expect(h.reporter.reports.map(\.report) == [.failed(reason: "Over your max carbs (50 g)", carbsLogged: false)])
+        #expect(h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
+    }
+
+    @Test func overMaxFatOrProteinFailsWithItsOwnWording() async {
+        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 30, maxProtein: 40))
+        await h.coordinator.receive(meal(id: "r1", fat: 31), via: .service)
+        await h.coordinator.receive(meal(id: "r2", protein: 41), via: .service)
+        await h.coordinator.receive(meal(id: "r3", carbs: 50, fat: 30, protein: 40), via: .service)
+        #expect(h.reporter.states == ["r1:failed", "r2:failed", "r3:pending"])
+        #expect(h.reporter.reports.prefix(2).map(\.report) == [
+            .failed(reason: "Over your max fat (30 g)", carbsLogged: false),
+            .failed(reason: "Over your max protein (40 g)", carbsLogged: false)
+        ])
+    }
+
+    @Test(arguments: [
+        // (carbs, fat, protein)
+        (Decimal(-1), Decimal(10), Decimal(8)),
+        (Decimal(20), Decimal(-0.5), Decimal(8)),
+        (Decimal(20), Decimal(10), Decimal(-8))
+    ]) func negativeAmountFailsWithoutAsking(carbs: Decimal, fat: Decimal, protein: Decimal) async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1", carbs: carbs, fat: fat, protein: protein), via: .service)
+        #expect(h.reporter.reports.map(\.report) == [.failed(reason: "Invalid amounts", carbsLogged: false)])
+        #expect(h.backup.scheduled.isEmpty && h.watch.delivered.isEmpty && h.coordinator.current.value == nil)
+    }
+
+    @Test func requestIsAskedForAtMostFiveMinutesAfterItWasMade() async {
+        let h = makeCoordinator()
+        let request = timedMeal(id: "r1", createdAt: coordinatorTestStart, expiresAt: coordinatorTestStart + 60 * 60)
+        await h.coordinator.receive(request, via: .service)
+        #expect(h.coordinator.current.value?.request.expiresAt == coordinatorTestStart + 5 * 60)
+        #expect(h.prompt("r1").expiresAt == coordinatorTestStart + 5 * 60)
+        h.now = coordinatorTestStart + 5 * 60
+        await h.coordinator.expireIfDue()
+        #expect(h.reporter.states == ["r1:pending", "r1:expired"])
+    }
+
+    @Test func requestFromAServiceClockAheadIsAskedForAtMostFiveMinutesFromNow() async {
+        let h = makeCoordinator()
+        let createdAt = coordinatorTestStart + 10 * 60
+        await h.coordinator.receive(timedMeal(id: "r1", createdAt: createdAt, expiresAt: createdAt + 5 * 60), via: .service)
+        #expect(h.coordinator.current.value?.request.expiresAt == coordinatorTestStart + 5 * 60)
+    }
+
+    @Test func shorterLifetimeIsKept() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(
+            timedMeal(id: "r1", createdAt: coordinatorTestStart, expiresAt: coordinatorTestStart + 60),
+            via: .service
+        )
+        #expect(h.coordinator.current.value?.request.expiresAt == coordinatorTestStart + 60)
+    }
+
+    @Test func expiredOnArrivalIsNotAsked() async {
+        let h = makeCoordinator(now: coordinatorTestStart + 5 * 60)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(h.reporter.states == ["r1:expired"])
+        #expect(h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
+    }
+
+    @Test func requestWithoutIDIsDropped() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: ""), via: .service)
+        #expect(h.reporter.reports.isEmpty && h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
+    }
+
+    @Test func unsavedRequestIDFailsWithoutAsking() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let h = makeCoordinator(files: CoordinatorFiles(
+            seen: folder.appendingPathComponent("seen-requests.json"),
+            pending: CoordinatorFiles.temporary().pending
+        ))
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        try FileManager.default.removeItem(at: folder) // so the next seen-ID write fails
+        await h.coordinator.receive(meal(id: "r2"), via: .service)
+        #expect(h.reporter.states == ["r1:pending", "r2:failed"])
+        #expect(h.reporter.reports.last?.report == .failed(reason: "Trio couldn't save the request ID", carbsLogged: false))
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        #expect(h.backup.scheduled.map(\.id) == ["r1"] && h.backup.cancelled.isEmpty && h.watch.withdrawn.isEmpty)
+        await h.coordinator.receive(meal(id: "r2"), via: .service) // seen, but neither pending nor final
+        #expect(h.reporter.states == ["r1:pending", "r2:failed"])
+    }
+
+    @Test func repeatedIDIsNotAskedAgainAndRepeatsTheOutcome() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.now = coordinatorTestStart + 5 * 60
+        await h.coordinator.expireIfDue()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(h.reporter.states == ["r1:pending", "r1:expired", "r1:expired"])
+        #expect(h.backup.scheduled.count == 1)
+    }
+
+    @Test func repeatedPendingRequestResendsPending() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(h.reporter.states == ["r1:pending", "r1:pending"])
+        #expect(h.reporter.reports.count == 2 && h.reporter.reports[0].report == h.reporter.reports[1].report)
+        #expect(h.backup.scheduled.count == 1 && h.coordinator.current.value?.request.id == "r1")
+    }
+
+    @Test func repeatedIDAfterRelaunchRepeatsTheSavedOutcome() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.now = coordinatorTestStart + 5 * 60
+        await h.coordinator.expireIfDue()
+        let relaunched = makeCoordinator(files: h.files, now: h.now)
+        await relaunched.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(relaunched.reporter.states == ["r1:expired"])
+        #expect(relaunched.backup.scheduled.isEmpty)
+    }
+
+    @Test func finalReportSurvivesRelaunch() async {
+        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 50, maxProtein: 50))
+        await h.coordinator.receive(meal(id: "r1", carbs: 80), via: .service)
+        let failed = AIRequestReport.failed(reason: "Over your max carbs (50 g)", carbsLogged: false)
+        #expect(h.reporter.reports.map(\.report) == [failed])
+        // Default limits: asking again would make it pending, so a `failed` here is the saved report.
+        let relaunched = makeCoordinator(files: h.files)
+        await relaunched.coordinator.receive(meal(id: "r1", carbs: 80), via: .service)
+        #expect(relaunched.reporter.reports.map(\.report) == [failed])
+        #expect(relaunched.backup.scheduled.isEmpty && relaunched.coordinator.current.value == nil)
+    }
+
+    @Test func newRequestReplacesThePendingOne() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.receive(meal(id: "r2"), via: .service)
+        #expect(h.reporter.states == ["r1:pending", "r1:replaced", "r2:pending"])
+        #expect(h.backup.cancelled == ["r1"])
+        #expect(h.watch.withdrawn == ["r1"])
+        #expect(h.coordinator.current.value?.request.id == "r2")
+    }
+
+    @Test func expiresAtExpiresAt() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.now = coordinatorTestStart + 5 * 60 - 1
+        await h.coordinator.expireIfDue()
+        #expect(h.reporter.states == ["r1:pending"])
+        h.now = coordinatorTestStart + 5 * 60
+        await h.coordinator.expireIfDue()
+        #expect(h.reporter.states == ["r1:pending", "r1:expired"])
+        #expect(h.coordinator.current.value == nil)
+        #expect(h.backup.cancelled == ["r1"] && h.watch.withdrawn == ["r1"])
+        #expect(!FileManager.default.fileExists(atPath: h.files.pending.path))
+    }
+
+    @Test func receiveBeforeStartKeepsTheOldRequest() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        let relaunched = makeCoordinator(files: h.files)
+        await relaunched.coordinator.receive(meal(id: "r2"), via: .service)
+        #expect(relaunched.reporter.states == ["r1:replaced", "r2:pending"])
+        #expect(relaunched.backup.cancelled == ["r1"] && relaunched.watch.withdrawn == ["r1"])
+    }
+
+    @Test func relaunchExpiresAnOverdueRequest() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        let relaunched = makeCoordinator(files: h.files, now: coordinatorTestStart + 5 * 60)
+        await relaunched.coordinator.start()
+        #expect(relaunched.reporter.states == ["r1:expired"])
+        #expect(relaunched.coordinator.current.value == nil)
+        #expect(relaunched.backup.scheduled.isEmpty && relaunched.watch.delivered.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: h.files.pending.path))
+    }
+
+    @Test func relaunchKeepsARequestStillInItsWindow() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        let relaunched = makeCoordinator(files: h.files, now: coordinatorTestStart + 4 * 60)
+        await relaunched.coordinator.start()
+        #expect(relaunched.coordinator.current.value?.request.id == "r1")
+        #expect(relaunched.coordinator.current.value == h.coordinator.current.value)
+        #expect(relaunched.reporter.reports.isEmpty && relaunched.backup.scheduled.isEmpty)
+        relaunched.now = coordinatorTestStart + 5 * 60
+        await relaunched.coordinator.expireIfDue()
+        #expect(relaunched.reporter.states == ["r1:expired"])
+    }
+
+    @Test func withdrawPendingReportsWithdrawn() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.withdraw(id: "r1", request: nil, via: .service)
+        #expect(h.reporter.states == ["r1:pending", "r1:withdrawn"])
+        #expect(h.backup.cancelled == ["r1"] && h.watch.withdrawn == ["r1"])
+        #expect(h.coordinator.current.value == nil)
+        #expect(!FileManager.default.fileExists(atPath: h.files.pending.path))
+    }
+
+    @Test func withdrawOfAFinishedRequestResendsItsOutcome() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.now = coordinatorTestStart + 5 * 60
+        await h.coordinator.expireIfDue()
+        await h.coordinator.withdraw(id: "r1", request: nil, via: .service)
+        #expect(h.reporter.states == ["r1:pending", "r1:expired", "r1:expired"])
+        #expect(h.backup.cancelled == ["r1"] && h.watch.withdrawn == ["r1"])
+    }
+
+    @Test func withdrawOfAnUnseenRequestMarksItSeen() async {
+        let h = makeCoordinator()
+        await h.coordinator.withdraw(id: "r9", request: meal(id: "r9"), via: .service)
+        #expect(h.reporter.states == ["r9:withdrawn"])
+        await h.coordinator.receive(meal(id: "r9"), via: .service)
+        #expect(h.reporter.states == ["r9:withdrawn", "r9:withdrawn"])
+        #expect(h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
+    }
+
+    @Test func onlyTheFirstFinalStateIsReported() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.now = coordinatorTestStart + 5 * 60
+        await h.coordinator.expireIfDue()
+        await h.coordinator.expireIfDue()
+        await h.coordinator.withdraw(id: "r1", request: nil, via: .service)
+        await h.coordinator.withdraw(id: "r1", request: meal(id: "r1"), via: .service)
+        // The second expiry sends nothing, and each withdraw re-sends the first final report.
+        #expect(h.reporter.states == ["r1:pending", "r1:expired", "r1:expired", "r1:expired"])
+    }
+
+    @Test func doseIsFlooredToTwoDecimals() async {
+        let h = makeCoordinator(dose: 0.275)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(h.coordinator.current.value?.units == 0.27)
+        #expect(h.prompt("r1").shown.units == "0.27")
+    }
+}
+
+/// A meal request made and expiring at the given times.
+private func timedMeal(id: String, createdAt: Date, expiresAt: Date) -> AIMealRequest {
+    AIMealRequest(
+        id: id,
+        source: "ChatGPT",
+        description: "slice of pizza",
+        carbs: 20,
+        fat: 10,
+        protein: 8,
+        createdAt: createdAt,
+        expiresAt: expiresAt
+    )
+}

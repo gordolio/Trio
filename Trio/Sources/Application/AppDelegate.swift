@@ -35,6 +35,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject, UNUserNoti
         didReceiveRemoteNotification userInfo: [AnyHashable: Any],
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
+        if AIRequestHooks.handleRemoteNotification(userInfo, completionHandler) { return }
         debug(.remoteControl, "Received notification")
 
         do {
