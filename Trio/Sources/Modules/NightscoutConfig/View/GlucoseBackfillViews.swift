@@ -10,12 +10,11 @@ extension Home.RootView {
             backfillCarbsOnBoard.lineLimit(1).minimumScaleFactor(0.5)
             Spacer(minLength: 0)
             HStack(spacing: 0) {
-                GlucoseBackfillButton(
+                HomeGlucoseBackfillButton(
                     backfill: backfill,
-                    hasMissingReadings: GlucoseBackfillGaps.hasMissingReadings(
-                        dates: state.glucoseFromPersistence.filter { !$0.isManual }.compactMap(\.date),
-                        now: state.timerDate
-                    )
+                    readingDates: state.glucoseFromPersistence.filter { !$0.isManual }.compactMap(\.date),
+                    now: state.timerDate,
+                    warmupEndsAt: state.cgmWarmupEndsAt
                 )
                 alarmsPill
                     .dynamicTypeSize(...DynamicTypeSize.large)
@@ -80,6 +79,27 @@ extension View {
             GlucoseBackfillToast(backfill: resolver.resolve(NightscoutBackfill.self)!)
                 .alignmentGuide(.top) { $0[.bottom] }
         }
+    }
+}
+
+/// Observes the backfill service so a finished check hides the button right away
+/// instead of on Home's next 30-second tick.
+private struct HomeGlucoseBackfillButton: View {
+    @ObservedObject var backfill: NightscoutBackfill
+    let readingDates: [Date]
+    let now: Date
+    let warmupEndsAt: Date?
+
+    var body: some View {
+        GlucoseBackfillButton(
+            backfill: backfill,
+            hasMissingReadings: GlucoseBackfillGaps.hasMissingReadings(
+                dates: readingDates,
+                now: now,
+                checkedThrough: backfill.checkedThrough,
+                warmupEndsAt: warmupEndsAt
+            )
+        )
     }
 }
 

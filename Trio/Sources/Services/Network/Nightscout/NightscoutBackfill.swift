@@ -25,12 +25,19 @@ final class NightscoutBackfill: ObservableObject {
     @Published private(set) var isConfigured = false
     @Published private(set) var isRunning = false
     @Published private(set) var feedback: Feedback?
+    @Published private(set) var checkedThrough: Date?
 
     private let configuration: () -> Bool
+    private let lastCheck: () -> Date?
     private let operation: () async throws -> Int
 
-    init(configuration: @escaping () -> Bool, operation: @escaping () async throws -> Int) {
+    init(
+        configuration: @escaping () -> Bool,
+        checkedThrough lastCheck: @escaping () -> Date? = { nil },
+        operation: @escaping () async throws -> Int
+    ) {
         self.configuration = configuration
+        self.lastCheck = lastCheck
         self.operation = operation
     }
 
@@ -44,17 +51,15 @@ final class NightscoutBackfill: ObservableObject {
                 secret: keychain.getValue(String.self, forKey: NightscoutConfig.Config.secretKey)
             )
         }
-        self.init(configuration: { api() != nil }) {
+        let checks = NightscoutBackfillChecks()
+        self.init(
+            configuration: { api() != nil },
+            checkedThrough: { api().flatMap { checks.checkedThrough(for: $0.url) } }
+        ) {
             guard let nightscout = api() else { throw NightscoutBackfillError.notConfigured }
-            let now = Date()
-            let since = now.addingTimeInterval(-GlucoseBackfillGaps.lookback)
-            let readings = try await nightscout.fetch(since: since)
-            try Task.checkCancellation()
-            let eligible = readings.filter {
-                $0.dateString >= since && $0.dateString <= now &&
-                    ($0.glucose ?? 0) > 0 && ($0.glucose ?? 0) <= Int(Int16.max)
+            let count = try await Self.fetchAndStore(using: nightscout, now: Date(), checks: checks) {
+                try await glucoseStorage.backfillGlucoseReportingCount($0)
             }
-            let count = try await glucoseStorage.backfillGlucoseReportingCount(eligible)
             if count > 0 {
                 Task { await healthKitManager.uploadGlucose() }
             }
@@ -62,8 +67,30 @@ final class NightscoutBackfill: ObservableObject {
         }
     }
 
+    static func fetchAndStore(
+        using nightscout: NightscoutBackfillClient,
+        now: Date,
+        checks: NightscoutBackfillChecks,
+        store: ([BloodGlucose]) async throws -> Int
+    ) async throws -> Int {
+        let since = now.addingTimeInterval(-GlucoseBackfillGaps.lookback)
+        let readings = try await nightscout.fetch(since: since)
+        try Task.checkCancellation()
+        let eligible = readings.filter {
+            $0.dateString >= since && $0.dateString <= now &&
+                ($0.glucose ?? 0) > 0 && ($0.glucose ?? 0) <= Int(Int16.max)
+        }
+        let count = try await store(eligible)
+        // a full page may have cut off the oldest readings, so it doesn't vouch for the whole window
+        if readings.count < nightscout.pageLimit {
+            checks.record(now, for: nightscout.url)
+        }
+        return count
+    }
+
     @MainActor func refreshConfiguration() {
         isConfigured = configuration()
+        checkedThrough = lastCheck()
     }
 
     @MainActor func run() async {
@@ -89,6 +116,7 @@ final class NightscoutBackfill: ObservableObject {
                 isError: true
             )
         }
+        checkedThrough = lastCheck()
 
         if let feedback {
             // the result card owns its auto-dismiss countdown
@@ -123,13 +151,29 @@ final class NightscoutBackfill: ObservableObject {
 
 enum GlucoseBackfillGaps {
     static let lookback: TimeInterval = 24 * 60 * 60
+    /// Two 5-minute readings this far apart have at least one missed reading between them.
     static let missingReadingInterval: TimeInterval = 7.5 * 60
+    /// Leaves time for a reading uploaded by another device to reach Nightscout.
+    static let staleReadingInterval: TimeInterval = 10 * 60
+    /// How far past `now` a check may be dated: it can finish after the Home tick that supplies `now`.
+    /// A check further ahead was recorded under a wrong device clock.
+    static let clockSkewTolerance: TimeInterval = 10 * 60
 
-    static func hasMissingReadings(dates: [Date], now: Date) -> Bool {
-        let start = now.addingTimeInterval(-lookback)
-        let recent = dates.filter { $0 >= start && $0 <= now }.sorted()
+    /// `checkedThrough` is the last successful Nightscout check. Nightscout had nothing more
+    /// before it, so earlier gaps are hidden and the check itself counts as a reading.
+    static func hasMissingReadings(dates: [Date], now: Date, checkedThrough: Date? = nil, warmupEndsAt: Date? = nil) -> Bool {
+        if let warmupEndsAt, warmupEndsAt > now { return false }
+        var start = now.addingTimeInterval(-lookback)
+        var recent: [Date] = []
+        if let checkedThrough, checkedThrough >= start, checkedThrough <= now.addingTimeInterval(clockSkewTolerance) {
+            // a check that finished after the caller's clock tick still covers everything up to `now`
+            let checked = min(checkedThrough, now)
+            start = checked
+            recent.append(checked)
+        }
+        recent = (recent + dates.filter { $0 >= start && $0 <= now }).sorted()
         guard let last = recent.last else { return true }
-        if now.timeIntervalSince(last) > missingReadingInterval {
+        if now.timeIntervalSince(last) > staleReadingInterval {
             return true
         }
         return zip(recent, recent.dropFirst()).contains {
@@ -162,12 +206,13 @@ struct NightscoutBackfillClient {
     let url: URL
     var secret: String?
     var session: URLSession = .shared
+    var pageLimit = 1600
 
     func fetch(since: Date) async throws -> [BloodGlucose] {
         var components = URLComponents(url: url.appendingPathComponent("api/v1/entries/sgv.json"), resolvingAgainstBaseURL: false)
         components?.fragment = nil
         components?.queryItems = [
-            URLQueryItem(name: "count", value: "1600"),
+            URLQueryItem(name: "count", value: "\(pageLimit)"),
             URLQueryItem(name: "find[dateString][$gte]", value: Formatter.iso8601withFractionalSeconds.string(from: since))
         ]
         guard let requestURL = components?.url else { throw URLError(.badURL) }
@@ -186,6 +231,30 @@ struct NightscoutBackfillClient {
             reading.glucose = $0.sgv ?? $0.mbg
             return reading
         }
+    }
+}
+
+/// Remembers when Nightscout last answered a full 24-hour backfill, per site, so Home stops
+/// offering readings Nightscout doesn't have. Expires on its own once it falls out of the lookback;
+/// a check dated further ahead than the clock-skew tolerance is forgotten.
+struct NightscoutBackfillChecks {
+    var defaults: UserDefaults = .standard
+    var key = "trio.nightscoutBackfill.lastCheck.v1"
+
+    func checkedThrough(for url: URL, now: Date = Date()) -> Date? {
+        guard let check = defaults.dictionary(forKey: key), check["url"] as? String == url.absoluteString,
+              let date = check["date"] as? Date
+        else { return nil }
+        // dated in the future: it can't vouch for any window, even once real time catches up
+        guard date <= now.addingTimeInterval(GlucoseBackfillGaps.clockSkewTolerance) else {
+            defaults.removeObject(forKey: key)
+            return nil
+        }
+        return date
+    }
+
+    func record(_ date: Date, for url: URL) {
+        defaults.set(["url": url.absoluteString, "date": date], forKey: key)
     }
 }
 
