@@ -6,7 +6,8 @@ import UserNotifications
 /// gets none either: nobody was waiting for it. Nor does a failure the approval sheet is showing.
 final class AIRequestResultNotifier {
     private let center: AIRequestNotificationScheduling
-    /// Whether the approval sheet is showing the request with this ID. It's called on the main queue.
+    /// Whether the approval sheet is showing the request with this ID to the wearer, which takes Trio being in front. It's
+    /// called on the main queue.
     private let isShowing: (String) -> Bool
 
     init(center: AIRequestNotificationScheduling, isShowing: @escaping (String) -> Bool) {

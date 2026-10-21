@@ -102,6 +102,46 @@ private func outcome(
         #expect(asked.value == ["r1"])
     }
 
+    // MARK: The runtime's notifier: the sheet shows a request only while Trio is in front
+
+    private func runtimeNotifier(
+        center: FakeNotificationCenter,
+        presentedID: String?,
+        isAppActive: Bool
+    ) -> AIRequestResultNotifier {
+        AIRequestsRuntime.makeNotifier(center: center, presentedID: { presentedID }, isAppActive: { isAppActive })
+    }
+
+    @Test func failureIsSuppressedWhileTheSheetShowsItInFront() {
+        let center = FakeNotificationCenter()
+        let notifier = runtimeNotifier(center: center, presentedID: "r1", isAppActive: true)
+        notifier.notify(outcome(.failed(reason: "No", carbsLogged: false), approvedOn: .phone))
+        #expect(center.added.isEmpty)
+    }
+
+    @Test func failureIsPostedWhenTheSheetIsPresentedButTrioIsNotInFront() {
+        // The wearer approved, then locked the phone or switched apps: the sheet is still presented, behind them.
+        let center = FakeNotificationCenter()
+        let notifier = runtimeNotifier(center: center, presentedID: "r1", isAppActive: false)
+        notifier.notify(outcome(.failed(reason: "No", carbsLogged: true), approvedOn: .phone))
+        #expect(center.added.count == 1)
+        #expect(center.added.first?.identifier == "ai-request-result-r1")
+    }
+
+    @Test func failureIsPostedWhenTrioIsInFrontButTheSheetIsNotPresented() {
+        let center = FakeNotificationCenter()
+        let notifier = runtimeNotifier(center: center, presentedID: nil, isAppActive: true)
+        notifier.notify(outcome(.failed(reason: "No", carbsLogged: false), approvedOn: .watch))
+        #expect(center.added.count == 1)
+    }
+
+    @Test func failureIsPostedWhenTheSheetShowsAnotherRequest() {
+        let center = FakeNotificationCenter()
+        let notifier = runtimeNotifier(center: center, presentedID: "r2", isAppActive: true)
+        notifier.notify(outcome(.failed(reason: "No", carbsLogged: false), approvedOn: .phone))
+        #expect(center.added.count == 1)
+    }
+
     @Test func sheetIsNotAskedAboutAnOutcomeThatNeverPosts() {
         let asked = TestBox<[String]>([])
         let notifier = AIRequestResultNotifier(center: FakeNotificationCenter(), isShowing: { id in

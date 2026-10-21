@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Swinject
+import UIKit
 import UserNotifications
 import WatchConnectivity
 
@@ -70,12 +71,12 @@ final class AIRequestsRuntime {
 
         // Subscribed here, before anything can start the coordinator: `outcomes` has no replay, and `start()` can send
         // one at once, for an approval that Trio stopped carrying out. A later subscriber would miss it.
-        let notifier = AIRequestResultNotifier(
+        // The sheet counts as showing a request only while Trio is in front. Both are read on the main queue, where the
+        // outcomes are received.
+        let notifier = AIRequestsRuntime.makeNotifier(
             center: UNUserNotificationCenter.current(),
-            isShowing: { id in
-                // Called from the main queue, where the outcomes are received.
-                MainActor.assumeIsolated { AIRequestPhoneApprovalPresenter.shared.presented?.id == id }
-            }
+            presentedID: { MainActor.assumeIsolated { AIRequestPhoneApprovalPresenter.shared.presented?.id } },
+            isAppActive: { MainActor.assumeIsolated { UIApplication.shared.applicationState == .active } }
         )
         outcomeSubscription = coordinator.outcomes
             .receive(on: DispatchQueue.main)
@@ -99,6 +100,18 @@ final class AIRequestsRuntime {
 }
 
 extension AIRequestsRuntime {
+    /// The notifier for failures after an approval. It skips a request only while the approval sheet is showing it to
+    /// the wearer: the sheet is presenting it, and Trio is in front. The sheet stays presented through "Checking…" and
+    /// its result, so a wearer who approves and then locks the phone or switches apps still gets the notification.
+    /// `presentedID` and `isAppActive` are read on the main queue.
+    static func makeNotifier(
+        center: AIRequestNotificationScheduling,
+        presentedID: @escaping () -> String?,
+        isAppActive: @escaping () -> Bool
+    ) -> AIRequestResultNotifier {
+        AIRequestResultNotifier(center: center, isShowing: { id in isAppActive() && presentedID() == id })
+    }
+
     /// Tells the watch and the iPhone how a request ended. The watch hears the result of a request it was asked, and
     /// the notifier decides whether the iPhone needs a notification.
     static func publish(
