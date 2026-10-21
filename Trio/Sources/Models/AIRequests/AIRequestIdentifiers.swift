@@ -17,7 +17,6 @@ enum AIRequestIdentifiers {
 
     static let actionReview = "AIRequest.review"
     static let actionApprove = "AIRequest.approve"
-    static let actionDecline = "AIRequest.decline"
 
     // MARK: WatchConnectivity keys
 
@@ -99,37 +98,20 @@ enum AIRequestIdentifiers {
         }
     }
 
-    /// The categories the watch registers: a request's two, and the iPhone's backup, which the watch opens when it's
-    /// forwarded to the wrist. Double tap runs the first action that isn't destructive, so the action to take comes
-    /// first and Decline last.
+    /// The categories the watch registers: a request's, whose Review opens it on the watch's Confirm screen, and the
+    /// iPhone's backup, which the watch opens the same way when it's forwarded to the wrist.
     static func watchCategories() -> Set<UNNotificationCategory> {
         let review = UNNotificationAction(
             identifier: actionReview,
             title: String(localized: "Review", comment: "Open an AI assistant's request on the watch to review it"),
             options: [.foreground]
         )
-        let approve = UNNotificationAction(
-            identifier: actionApprove,
-            title: String(localized: "Approve", comment: "Approve an AI assistant's request from the notification"),
-            options: [.authenticationRequired]
-        )
-        let decline = UNNotificationAction(
-            identifier: actionDecline,
-            title: String(localized: "Decline", comment: "Decline an AI assistant's request from the notification"),
-            options: [.destructive]
-        )
 
         // `.customDismissAction`, so that swiping a request away reaches the app and counts as a decline.
         return [
             UNNotificationCategory(
                 identifier: categoryReview,
-                actions: [review, decline],
-                intentIdentifiers: [],
-                options: [.customDismissAction]
-            ),
-            UNNotificationCategory(
-                identifier: categoryApprove,
-                actions: [approve, decline],
+                actions: [review],
                 intentIdentifiers: [],
                 options: [.customDismissAction]
             ),

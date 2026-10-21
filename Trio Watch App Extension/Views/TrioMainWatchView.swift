@@ -225,7 +225,7 @@ struct TrioMainWatchView: View {
                 }
             }
         }
-        .aiRequestApproval()
+        .aiRequestFlow(state: state, navigationPath: $navigationPath)
         .ignoresSafeArea()
     }
 

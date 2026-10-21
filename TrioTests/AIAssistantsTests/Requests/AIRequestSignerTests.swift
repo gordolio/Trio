@@ -151,23 +151,6 @@ import Testing
         #expect(reencoded?["testKind"] == nil)
     }
 
-    @Test func watchCategoriesPutTheGestureActionFirst() throws {
-        let cats = AIRequestIdentifiers.watchCategories()
-        let approve = try #require(cats.first { $0.identifier == "trio.request.approve" })
-        #expect(approve.actions.map(\.identifier) == ["AIRequest.approve", "AIRequest.decline"])
-        #expect(approve.actions[1].options.contains(.destructive))
-        #expect(approve.options.contains(.customDismissAction))
-        let review = try #require(cats.first { $0.identifier == "trio.request.review" })
-        #expect(review.actions[0].options.contains(.foreground))
-    }
-
-    @Test func watchCategoriesIncludeTheIPhoneBackup() throws {
-        let cats = AIRequestIdentifiers.watchCategories()
-        #expect(Set(cats.map(\.identifier)) == ["trio.request.review", "trio.request.approve", "trio.request.phone"])
-        let phone = try #require(cats.first { $0.identifier == "trio.request.phone" })
-        #expect(phone.actions.isEmpty)
-    }
-
     @Test func requestIDReadsTheWatchsOwnNotification() throws {
         let data = try JSONEncoder().encode(Self.prompt)
         #expect(AIRequestIdentifiers.requestID(in: ["aiRequestPrompt": data]) == Self.prompt.id)

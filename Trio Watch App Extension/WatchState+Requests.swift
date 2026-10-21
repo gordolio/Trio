@@ -8,6 +8,7 @@ extension WatchState {
     /// - Parameters:
     ///   - amount: The insulin amount to be delivered
     func sendBolusRequest(_ amount: Decimal) {
+        if AIRequestWatchFlowController.shared.interceptBolus(amount) { return }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Bolus request aborted: session unreachable")
@@ -41,6 +42,7 @@ extension WatchState {
     ///   - amount: The amount of carbs in grams
     ///   - date: The timestamp for the carb entry (defaults to current time)
     func sendCarbsRequest(_ amount: Int, _ date: Date = Date()) {
+        if AIRequestWatchFlowController.shared.interceptCarbs(amount) { return }
         guard let session = session, session.isReachable else {
             Task {
                 await WatchLogger.shared.log("⌚️ Carbs request aborted: session unreachable")
