@@ -420,13 +420,54 @@ private final class RelayRig {
         #expect(rig.session.userInfos.isEmpty)
     }
 
-    @Test func openForAnotherRequestSendsNothing() async {
+    @Test func openForAnotherRequestSendsNoDetails() async throws {
         let rig = RelayRig()
         await rig.ask("r1")
 
         await rig.relay.open("r2")
 
-        #expect(rig.session.messages.isEmpty && rig.session.userInfos.isEmpty)
+        // The relay has no ending for it, so it ended before Trio launched: nothing was logged for it.
+        #expect(try rig.sent(AIRequestIdentifiers.keyDetails, as: AIRequestWatchDetails.self).isEmpty)
+        #expect(try rig.ended() == [AIRequestEnded(id: "r2", headline: "Expired", isSuccess: false)])
+        #expect(rig.harness.coordinator.current.value?.request.id == "r1")
+    }
+
+    @Test func openForAnEndedRequestRepliesWithItsEnding() async throws {
+        let rig = RelayRig()
+        await rig.ask("r1")
+        await rig.harness.coordinator.close(id: "r1", on: .phone, dismissed: false)
+        // The decline's own ending reaches the watch from the main queue.
+        #expect(await eventuallyTrue { ((try? rig.ended().count) ?? 0) == 1 })
+        await rig.ask("r2")
+        await rig.relay.confirm(AIRequestWatchConfirm(id: "r2", units: d("1.2"), carbs: nil))
+
+        // The wearer opens them again from their old notifications, and one Trio doesn't know.
+        await rig.relay.open("r1")
+        await rig.relay.open("r2")
+        await rig.relay.open("r9")
+
+        #expect(try rig.sent(AIRequestIdentifiers.keyDetails, as: AIRequestWatchDetails.self).isEmpty)
+        #expect(try rig.ended() == [
+            AIRequestEnded(id: "r1", headline: "Declined on your iPhone", isSuccess: false),
+            AIRequestEnded(id: "r1", headline: "Declined on your iPhone", isSuccess: false),
+            AIRequestEnded(id: "r2", headline: "Logged on your watch", isSuccess: true),
+            AIRequestEnded(id: "r9", headline: "Expired", isSuccess: false)
+        ])
+    }
+
+    @Test func openAfterExpiryRepliesExpired() async throws {
+        let rig = RelayRig()
+        await rig.ask("r1")
+        rig.harness.now = coordinatorTestStart + 5 * 60
+
+        await rig.relay.open("r1")
+
+        #expect(try rig.sent(AIRequestIdentifiers.keyDetails, as: AIRequestWatchDetails.self).isEmpty)
+        // The open's own reply, and the expiry's ending from the main queue, in either order.
+        #expect(await eventuallyTrue { ((try? rig.ended().count) ?? 0) == 2 })
+        let expired = AIRequestEnded(id: "r1", headline: "Expired", isSuccess: false)
+        #expect(try rig.ended() == [expired, expired])
+        #expect(rig.harness.reporter.states == ["r1:pending", "r1:expired"])
     }
 
     @Test func confirmCarriesOutAndAcknowledges() async {

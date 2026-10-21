@@ -194,13 +194,15 @@ import Observation
         return true
     }
 
-    /// Upstream's screens after each change: whether the navigation path is empty, and the carbs and bolus they hold.
+    /// Upstream's screens after each change: how many are on the navigation path, and the carbs and bolus they hold.
     /// The first report of screens while a request is active marks them up. Leaving them (the path emptied) declines
-    /// the request, and is checked first, since Cancel empties the path and zeroes the values at once. Their values
-    /// going to 0 under them (upstream zeroes them when the phone becomes reachable again) ends the flow without an
-    /// answer. Once the screens of a flow that ended are gone, the watch is idle.
-    func screensChanged(pathIsEmpty: Bool, carbs: Int, bolus: Double) {
-        if pathIsEmpty {
+    /// the request, and is checked first, since Cancel empties the path and zeroes the values at once. More screens
+    /// than the flow's own, before its confirm, are another flow the wearer started on top of them (see
+    /// `anotherFlowStarted()`). Their values going to 0 under them (upstream zeroes them when the phone becomes
+    /// reachable again) ends the flow without an answer. Once the screens of a flow that ended are gone, the watch is
+    /// idle.
+    func screensChanged(pathCount: Int, carbs: Int, bolus: Double) {
+        if pathCount == 0 {
             let wereUp = screensUp
             screensUp = false
             switch phase {
@@ -218,6 +220,10 @@ import Observation
             }
             return
         }
+        if case .active = phase, screensUp, pathCount > flowScreenCount, recordedCarbs == nil {
+            anotherFlowStarted()
+            return
+        }
         if case .active = phase {
             screensUp = true
             holdsSends = false
@@ -225,6 +231,24 @@ import Observation
         if screensUp, carbs == 0, bolus == 0 {
             valuesZeroed()
         }
+    }
+
+    /// The wearer started another flow on top of the request's screens: they went up under the treatment menu, which
+    /// covered the main screen, and the wearer picked a treatment from it. The request is declined, and the watch is
+    /// idle at once, holding nothing, so that flow's sends go to the phone as upstream's own.
+    private func anotherFlowStarted() {
+        guard case let .active(details) = phase else { return }
+        flow += 1
+        screensUp = false
+        holdsSends = false
+        phase = .idle
+        sendMessage(AIRequestWatchClose(id: details.id, dismissed: false), as: AIRequestIdentifiers.keyClose)
+    }
+
+    /// How many screens the flow opens: Confirm, with the bolus screen behind it, and the carbs screen behind that
+    /// when there are carbs. The watch's `aiRequestFlow` modifier opens them so.
+    private var flowScreenCount: Int {
+        requestedCarbs > 0 ? 3 : 2
     }
 
     /// The wearer left the request's screens without confirming: it's declined.

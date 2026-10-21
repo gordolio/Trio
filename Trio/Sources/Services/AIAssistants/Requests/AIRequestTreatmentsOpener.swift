@@ -57,7 +57,7 @@ import UIKit
         await openPending { await isDue($0, now()) }
     }
 
-    /// Opens the sheet for the pending request if it's `wanted` and no other sheet is open.
+    /// Opens the sheet for the pending request if it's `wanted`, its time isn't up, and no other sheet is open.
     private func openPending(if wanted: (PendingAIRequest) async -> Bool) async {
         guard let coordinator = coordinator(), let router = router() else { return }
         // Before the pending request is read, so the sheet hears it leave from here on.
@@ -65,17 +65,30 @@ import UIKit
         // Reads the pending request from disk on a cold launch, and drops it if its time is up.
         await coordinator.expireIfDue()
         guard let candidate = coordinator.current.value, await wanted(candidate) else { return }
-        // Read again after the waits. Nothing waits from here until the sheet is asked for.
+        // Read again after the waits.
         guard let pending = coordinator.current.value, pending.request.id == candidate.request.id else { return }
-        // Sheets and covers shown outside the router count too, such as Home's own.
+        let id = pending.request.id
+        // Sheets and covers shown outside the router count too, such as Home's own. The request's own sheet counts as
+        // well: it keeps holding the request.
         guard router.mainModalScreen.value == nil, router.mainSecondaryModalView.value == nil, !keyWindowPresents() else {
-            debug(.service, "AI requests: another sheet is open, so \(pending.request.id) isn't opened")
+            debug(.service, "AI requests: another sheet is open, so \(id) isn't opened")
             return
         }
+        // A request whose time is up is still pending only while a screen holds it. It isn't opened fresh: opening it
+        // lets go of a hold the iPhone kept, and the coordinator expires it unless the watch holds it.
+        guard now() < pending.request.expiresAt else {
+            _ = await coordinator.open(id: id, on: .phone)
+            debug(.service, "AI requests: \(id)'s time is up, so it isn't opened")
+            return
+        }
+        // Nothing waits from here until the sheet is asked for.
         session.begin(pending)
         router.mainModalScreen.send(.treatmentView)
-        // Holds the request's expiry while the sheet is up.
-        _ = await coordinator.open(id: pending.request.id, on: .phone)
+        // Holds the request's expiry while the sheet is up. Without the hold, the request isn't opened: its time ran out
+        // as the sheet opened. A request that left pending meanwhile closes the sheet itself, with its notice.
+        if await coordinator.open(id: id, on: .phone) == nil, coordinator.current.value?.request.id == id {
+            session.notOpened(id)
+        }
     }
 }
 

@@ -57,6 +57,10 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         )
     }
 
+    var logsFatAndProtein: Bool {
+        settingsManager.settings.useFPUconversion
+    }
+
     /// Trio's bolus calculator's dose for the carbs, as the watch's bolus recommendation gets it, made deliverable
     /// exactly as shown.
     func dose(forCarbs carbs: Decimal) async -> AIRequestDose {
@@ -183,15 +187,14 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     }
 
     /// Stores the meal as Trio's remote meal command does, eaten now, with the assistant and the description in the
-    /// note, then checks the meal entry was saved: `CarbsStorage` doesn't report a failed save. `carbs` replaces the
-    /// request's own carbs when set.
-    func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws {
+    /// note, then checks the meal entry was saved: `CarbsStorage` doesn't report a failed save.
+    func storeCarbs(for request: AIMealRequest, carbs: Decimal, fat: Decimal, protein: Decimal) async throws {
         let id = UUID()
         let entry = CarbsEntry(
             id: id.uuidString, createdAt: Date(), actualDate: nil,
-            carbs: carbs ?? request.carbs, fat: request.fat, protein: request.protein,
+            carbs: carbs, fat: fat, protein: protein,
             note: request.note, enteredBy: CarbsEntry.local, isFPU: false,
-            fpuID: request.fat > 0 || request.protein > 0 ? UUID().uuidString : nil
+            fpuID: fat > 0 || protein > 0 ? UUID().uuidString : nil
         )
         do {
             try await carbsStorage.storeCarbs([entry], areFetchedFromRemote: false)

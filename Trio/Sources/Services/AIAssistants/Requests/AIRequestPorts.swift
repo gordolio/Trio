@@ -145,14 +145,17 @@ protocol AIRequestReporter: AnyObject {
 /// screens a request opens are those screens' own.
 protocol AIRequestTreatments: AnyObject {
     var limits: AIRequestLimits { get }
+    /// Whether the wearer's "Enable Fat and Protein Entries" setting is on. Off, which is the default, a meal's fat and
+    /// protein aren't logged or shown, as on the wearer's own Treatments sheet: only its carbs are.
+    var logsFatAndProtein: Bool { get }
     func dose(forCarbs carbs: Decimal) async -> AIRequestDose
     /// Why Trio's dose is 0 U, for the notification, when `units` is 0 and Trio knows the reason is true. `nil` for a
     /// dose over 0 U, and for a 0 U dose with no reason to give: the bolus calculator also gives 0 U when the dose it
     /// works out is 0 or under the pump's increment.
     func noDoseReason(units: Decimal) async -> String?
-    /// Stores the request's meal, eaten now, with the note `AI: <source> – <description>`. `carbs` replaces the
-    /// request's own carbs when set; the fat and protein are always the request's.
-    func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws
+    /// Stores the request's meal, eaten now, with the note `AI: <source> – <description>`: `carbs`, `fat` and `protein`
+    /// are the grams logged.
+    func storeCarbs(for request: AIMealRequest, carbs: Decimal, fat: Decimal, protein: Decimal) async throws
     /// Returns `nil` if the pump accepted the bolus, otherwise the reason it didn't.
     func enactBolus(_ units: Decimal) async -> String?
 }

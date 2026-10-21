@@ -74,6 +74,45 @@ import Testing
         #expect(relaunched.left == [LeftEvent(id: "r1", left: .expired, source: "ChatGPT")])
     }
 
+    @Test func openAfterExpiryDoesNotOpenAndExpires() async {
+        // The watch's flow ended without answering ("Open the request again."), so its hold stayed. Reopening the request
+        // after its five minutes doesn't open it: its hold goes, and with nothing else holding it, it expires.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(await h.coordinator.open(id: "r1", on: .watch) != nil)
+        h.now = expiresAt + 60
+        #expect(await h.coordinator.open(id: "r1", on: .watch) == nil)
+        #expect(h.coordinator.current.value == nil)
+        #expect(h.reporter.states == ["r1:pending", "r1:expired"])
+        #expect(h.left == [LeftEvent(id: "r1", left: .expired, source: "ChatGPT")])
+
+        // The same for the iPhone, whose sheet went without answering.
+        h.now = coordinatorTestStart
+        await h.coordinator.receive(meal(id: "r2"), via: .service)
+        #expect(await h.coordinator.open(id: "r2", on: .phone) != nil)
+        h.now = expiresAt + 60
+        #expect(await h.coordinator.open(id: "r2", on: .phone) == nil)
+        #expect(h.coordinator.current.value == nil)
+        #expect(h.reporter.reports(for: "r2").last == .expired)
+    }
+
+    @Test func openAfterExpiryWhileTheOtherSideHoldsDoesNotOpen() async {
+        // The watch has the request's Confirm screen up past its five minutes. The iPhone's backup is tapped: it doesn't
+        // open, and the request stays held for the watch.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(await h.coordinator.open(id: "r1", on: .watch) != nil)
+        h.now = expiresAt + 60
+        #expect(await h.coordinator.open(id: "r1", on: .phone) == nil)
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        #expect(h.reporter.states == ["r1:pending"])
+        #expect(h.left.isEmpty)
+
+        // The watch's confirm still goes through.
+        let report = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+        #expect(report == .delivering(shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: d("1.2"))))
+    }
+
     @Test func openingAfterExpiryExpiresInstead() async {
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1"), via: .service)
@@ -128,7 +167,7 @@ import Testing
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         #expect(await h.coordinator.claim(id: "r1", on: .phone))
-        #expect(await h.coordinator.claim(id: "r1", on: .watch) == false)
+        #expect(await h.coordinator.claim(id: "r1", on: .phone) == false)
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.phone), source: "ChatGPT")])
         #expect(h.coordinator.current.value == nil)
         #expect(h.backup.cancelled == ["r1"])
@@ -182,6 +221,56 @@ import Testing
             LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT"),
             LeftEvent(id: "r2", left: .claimed(.watch), source: "ChatGPT")
         ])
+    }
+
+    @Test func watchConfirmLogsCarbsOnlyWhenEntriesAreOff() async {
+        // "Enable Fat and Protein Entries" is off, as it is by default: the request's fat and protein aren't logged, so
+        // Trio doesn't turn them into carb equivalents to dose for, and the report says so.
+        let h = makeCoordinator()
+        h.treatments.logsFatAndProtein = false
+        await h.coordinator.receive(meal(id: "r1", carbs: d("82.5"), fat: 10, protein: 5), via: .service)
+        let exact = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("2.15"), carbs: nil))
+        #expect(exact == .delivering(shown: AIRequestShown(carbs: d("82.5"), fat: 0, protein: 0, units: d("2.15"))))
+
+        await h.coordinator.receive(meal(id: "r2", carbs: 40, fat: 10, protein: 5), via: .service)
+        let carbsOnly = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r2", units: 0, carbs: 30))
+        #expect(carbsOnly == .logged(shown: AIRequestShown(carbs: 30, fat: 0, protein: 0, units: 0)))
+
+        #expect(h.treatments.storedCarbs == [
+            StoredCarbs(id: "r1", carbs: d("82.5"), fat: 0, protein: 0),
+            StoredCarbs(id: "r2", carbs: 30, fat: 0, protein: 0)
+        ])
+        #expect(h.reporter.reports(for: "r1").last == exact)
+        #expect(h.reporter.reports(for: "r2").last == carbsOnly)
+    }
+
+    @Test func confirmAfterExpiryLogsNothing() async {
+        // Confirmed in time on the watch, but it reaches the iPhone at `expiresAt`, with no screen holding the request.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.now = expiresAt
+        #expect(await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil)) == nil)
+        #expect(h.treatments.storedCarbs.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(h.reporter.states == ["r1:pending", "r1:expired"])
+        #expect(h.reporter.reports(for: "r1").last == .expired)
+        #expect(h.left == [LeftEvent(id: "r1", left: .expired, source: "ChatGPT")])
+    }
+
+    @Test func phoneClaimAfterExpiryLogsNothing() async {
+        // The iPhone's Log reaches the coordinator at `expiresAt`, with no screen holding the request.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        h.now = expiresAt
+        #expect(await h.coordinator.claim(id: "r1", on: .phone) == false)
+        // A result for it changes nothing: the iPhone never claimed it.
+        await h.coordinator.reportPhoneResult(
+            id: "r1",
+            AIRequestPhoneResult(carbs: 20, fat: 10, protein: 8, units: d("1.2"), bolus: .started)
+        )
+        #expect(h.treatments.storedCarbs.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(h.reporter.states == ["r1:pending", "r1:expired"])
+        #expect(h.reporter.reports(for: "r1").last == .expired)
+        #expect(h.left == [LeftEvent(id: "r1", left: .expired, source: "ChatGPT")])
     }
 
     @Test func watchConfirmCapsAtMaxBolus() async {

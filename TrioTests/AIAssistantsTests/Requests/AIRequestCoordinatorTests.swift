@@ -65,13 +65,44 @@ import Testing
     }
 
     @Test func arrivalNoLongerRefusesForRecentInsulin() async {
-        // A manual bolus just before the request used to make the bolus checks refuse it on arrival. The screens it
-        // opens have their own checks, so it's asked about, and the only thing Trio works out first is the dose.
+        // A bolus just before the request used to make the bolus checks refuse it on arrival. The screens it opens have
+        // their own checks, so it's asked about, and the only thing Trio works out first is the dose.
         let h = makeCoordinator()
+        // A minute before the request, a 3 U bolus went in.
+        await h.coordinator.receive(meal(id: "r0"), via: .service)
+        let bolus = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r0", units: 3, carbs: nil))
+        #expect(bolus == .delivering(shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: 3)))
+        // Trio's calculator sees it as insulin on board, which leaves no dose for the new meal.
+        h.now = coordinatorTestStart + 60
+        h.treatments.doseResult = AIRequestDose(units: 0)
+        h.treatments.noDoseReasonResult = "insulin on board is at your max"
+
         await h.coordinator.receive(meal(id: "r1"), via: .service)
+
         #expect(h.coordinator.current.value?.request.id == "r1")
-        #expect(h.reporter.states == ["r1:pending"])
-        #expect(h.treatments.events.isEmpty)
+        #expect(h.reporter.states == ["r0:pending", "r0:delivering", "r1:pending"])
+        #expect(h.prompt("r1").body.hasSuffix("Trio suggests no insulin now: insulin on board is at your max"))
+        // Nothing was checked, stored or given for it.
+        #expect(h.treatments.events == ["store r0", "enact 3", "enacted 3"])
+    }
+
+    @Test func notificationHasNoFatProteinLineWhenEntriesAreOff() async throws {
+        // "Enable Fat and Protein Entries" is off, as it is by default: the fat and protein won't be logged, so the
+        // notification doesn't show them.
+        let h = makeCoordinator(dose: 1.2)
+        h.treatments.logsFatAndProtein = false
+        await h.coordinator.receive(meal(id: "r1", carbs: 20, fat: 10, protein: 8), via: .service)
+        guard case let .pending(_, _, display) = h.reporter.reports.first?.report else {
+            Issue.record("Expected a pending report")
+            return
+        }
+        #expect(display.body == "Bolus 1.20\u{00A0}U · 20\u{00A0}g carbs")
+        #expect(h.prompt("r1").body == display.body)
+
+        // With them on, they're shown.
+        h.treatments.logsFatAndProtein = true
+        await h.coordinator.receive(meal(id: "r2", carbs: 20, fat: 10, protein: 8), via: .service)
+        #expect(h.prompt("r2").body == "Bolus 1.20\u{00A0}U · 20\u{00A0}g carbs\n10\u{00A0}g fat · 8\u{00A0}g protein")
     }
 
     @Test func overMaxCarbsFailsWithoutAsking() async {

@@ -99,7 +99,8 @@ extension AIRequestsRuntime {
 }
 
 /// Hands what the watch sends to the coordinator, and tells the watch what comes of it: the request's details when it
-/// opens one, the acknowledgement of its confirmation, and the ending of a request that leaves pending. The coordinator
+/// opens one, or why it ended, the acknowledgement of its confirmation, and the ending of a request that leaves
+/// pending. The coordinator
 /// is made after the link that receives the watch's messages, and needs that link, so the relay is connected to both
 /// once they exist, before anything can reach the link.
 final class WatchRelay {
@@ -144,11 +145,15 @@ final class WatchRelay {
             .sink { [weak self] event in self?.sendEnded(event) }
     }
 
-    /// The wearer opened the request on the watch. It's answered with the request's details, or with nothing when the
-    /// request isn't pending, so the watch's own wait for them runs out.
+    /// The wearer opened the request on the watch. It's answered with the request's details, or, when the request
+    /// isn't pending or its time is up, with why it ended, so the watch says so rather than waiting for details that
+    /// won't come.
     func open(_ id: String) async {
         guard let connection = current else { return }
-        guard let details = await connection.coordinator.open(id: id, on: .watch) else { return }
+        guard let details = await connection.coordinator.open(id: id, on: .watch) else {
+            connection.link.sendEnded(ending(ofRequest: id))
+            return
+        }
         connection.link.sendDetails(details)
     }
 
@@ -201,6 +206,14 @@ final class WatchRelay {
     }
 
     // MARK: Endings
+
+    /// Why the request ended, as the relay remembers it. One it doesn't remember ended before Trio launched, or its
+    /// time is up while the iPhone's sheet holds it: nothing was logged for it on the watch, and it's expired there.
+    private func ending(ofRequest id: String) -> AIRequestEnded {
+        let ending = lock.withLock { endings.last { $0.id == id } }
+        let text = AIRequestLeftText.headline(for: ending?.left ?? .expired, source: ending?.source ?? "")
+        return AIRequestEnded(id: id, headline: text.headline, isSuccess: text.isSuccess)
+    }
 
     private func remember(_ event: Left) {
         lock.withLock {

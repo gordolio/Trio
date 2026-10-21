@@ -26,8 +26,8 @@ extension Text {
 
 /// Drives upstream's screens from `AIRequestWatchFlowController`: when a request opens, it fills in `WatchState` and
 /// puts the Confirm screen on top, with the bolus and carbs screens behind it. It reports the screens back to the
-/// controller after each change, which decides what leaving them or their values going to 0 means. A flow that ends
-/// with a notice shows it in the watch's own acknowledgement banner.
+/// controller after each change, which decides what leaving them, another flow on top of them, or their values going
+/// to 0 means. A flow that ends with a notice shows it in the watch's own acknowledgement banner.
 private struct AIRequestFlowModifier: ViewModifier {
     /// The controller's state the modifier follows, as one value, so a flow that ends with a notice is handled once.
     private struct Snapshot: Equatable {
@@ -71,10 +71,15 @@ private struct AIRequestFlowModifier: ViewModifier {
             if isFirst || new.phase != old.phase {
                 open(details)
             }
-        case .idle,
-             .loading,
+        case .idle:
+            // The wearer left the request's screens, and their values go. If the wearer started another flow on top of
+            // them instead, that flow's screens and values are the wearer's own, and stay.
+            if case .active = old.phase, navigationPath.isEmpty {
+                clearScreens()
+            }
+        case .loading,
              .unreachable:
-            // The flow ended, or another request is opening: its screens and their values go.
+            // Another request is opening: the earlier screens and their values go.
             if case .active = old.phase {
                 clearScreens()
                 navigationPath = NavigationPath()
@@ -111,7 +116,7 @@ private struct AIRequestFlowModifier: ViewModifier {
         path.append(NavigationDestinations.bolusInput)
         path.append(NavigationDestinations.bolusConfirm)
         navigationPath = path
-        controller.screensChanged(pathIsEmpty: false, carbs: carbs, bolus: bolus)
+        controller.screensChanged(pathCount: path.count, carbs: carbs, bolus: bolus)
     }
 
     /// Shows the notice on the acknowledgement screen, with upstream's own banner, which goes back to the main screen
@@ -135,7 +140,7 @@ private struct AIRequestFlowModifier: ViewModifier {
 
     private func report() {
         controller.screensChanged(
-            pathIsEmpty: navigationPath.isEmpty,
+            pathCount: navigationPath.count,
             carbs: state.carbsAmount,
             bolus: state.bolusAmount
         )

@@ -9,7 +9,7 @@ import UserNotifications
 /// fills the sheet in once the wearer's limits have loaded, keeps the request's decimals in its gram fields, and reports
 /// what the sheet did: what was logged and given if the wearer submitted it, or a decline if they closed it. If the
 /// request leaves pending while the sheet is open, as when it was logged on the watch, the session closes the sheet and
-/// says why in a notice.
+/// says why in a notice, and a Log pressed on it then logs nothing.
 ///
 /// The sheet is closed when Trio's router no longer shows it. It can disappear while it's still shown, under a cover
 /// such as the AI food chat, and then it comes back.
@@ -48,12 +48,22 @@ import UserNotifications
     private var routerSubscription: AnyCancellable?
     /// The submits whose outcome is still watched, which can be after their sheet closed.
     private var watched: [ObjectIdentifier: Submission] = [:]
+    /// The last request's sheet to appear. It's kept after the sheet closes, as its Log can still be pressed while it goes.
+    private var requestSheet: RequestSheet?
+    /// The request whose sheet closed when its submit was refused, before the session heard why it left pending. Its
+    /// notice is posted once the session hears.
+    private var noticeOwed: PendingAIRequest?
 
-    /// Sent when a bolus asked for on the sheet failed, and Trio has no error saying why.
-    fileprivate static let bolusFailedReason = String(
-        localized: "Bolus failed",
-        comment: "Report reason: the bolus the wearer asked for on the Treatments sheet failed"
-    )
+    /// Sent when a bolus asked for on the sheet failed, and Trio has no error saying why. The service passes it to the
+    /// assistant, so it's plain English, like the coordinator's reasons.
+    fileprivate static let bolusFailedReason = "Bolus failed"
+
+    /// A request's sheet: its state model, weakly, so a sheet the wearer opens later, which has a state model of its
+    /// own, is never taken for it.
+    private struct RequestSheet {
+        weak var state: Treatments.StateModel?
+        let requestID: String
+    }
 
     /// A request's sheet, from `begin(_:)` until it closes.
     private struct Active {
@@ -131,26 +141,52 @@ import UserNotifications
     // MARK: The sheet
 
     /// The Treatments sheet appeared. A request's sheet is filled in with its carbs, fat, protein and note once the
-    /// wearer's limits have loaded, and `recalculate` then works out the forecast and the recommendation for them. The
-    /// bolus and the time stay as the sheet has them. A sheet that comes back from under a cover isn't filled in again.
+    /// wearer's settings have loaded, and `recalculate` then works out the forecast and the recommendation for them.
+    /// The bolus and the time stay as the sheet has them. A sheet that comes back from under a cover isn't filled in
+    /// again.
     func sheetAppeared(state: Treatments.StateModel, recalculate: @escaping () -> Void) {
         guard var active, !active.appeared, !active.leftElsewhere else { return }
         active.appeared = true
         self.active = active
+        requestSheet = RequestSheet(state: state, requestID: active.pending.request.id)
         fillWhenLimitsLoad(state, id: active.pending.request.id, recalculate: recalculate)
     }
 
-    /// The wearer pressed the sheet's Log button. On a request's sheet, the iPhone claims the request, and the session
-    /// watches what comes of the submit (see `Submission`). If the claim fails, the request was taken elsewhere: the
-    /// sheet's entry goes ahead as the wearer's own, and nothing more is done for the request.
-    func willSubmit(from state: Treatments.StateModel) {
-        guard var active, active.appeared, !active.leftElsewhere, active.submission == nil,
-              let coordinator = coordinator()
-        else { return }
+    /// The wearer pressed the sheet's Log button. Returns whether the sheet's submit is refused, so that nothing is
+    /// logged or given. A sheet the wearer opened themselves is never refused.
+    ///
+    /// A request's sheet is refused once its request is no longer the pending one: it was logged on the watch, say, or
+    /// a newer request replaced it, maybe a moment ago, before the sheet heard. The sheet closes, and the notice says
+    /// why, as when it hears first. A sheet already closing for its request is refused too, and so is a second Log on a
+    /// sheet that submitted its request.
+    ///
+    /// Otherwise, on a request's sheet, the iPhone claims the request, and the session watches what comes of the
+    /// submit (see `Submission`). If the claim still fails, as when the watch's confirm reached the coordinator within
+    /// the same moment, the submit goes ahead as the wearer's own, and nothing more is done for the request.
+    func refusesSubmit(from state: Treatments.StateModel) -> Bool {
+        guard let sheet = requestSheet, sheet.state === state else { return false }
+        let id = sheet.requestID
+        guard var active, active.pending.request.id == id else {
+            // The sheet closed for its request: it was answered here, or it left pending and the notice said so.
+            debug(.service, "AI requests: the Treatments sheet of \(id) has closed, so its submit logs nothing")
+            return true
+        }
+        guard !active.leftElsewhere, active.submission == nil else {
+            debug(.service, "AI requests: the Treatments sheet of \(id) is closing or submitted, so this submit logs nothing")
+            return true
+        }
+        guard let coordinator = coordinator() else { return false }
+        guard coordinator.current.value?.request.id == id else {
+            debug(.service, "AI requests: \(id) left pending as its Treatments sheet's Log was pressed, so it logs nothing")
+            active.leftElsewhere = true
+            self.active = active
+            noticeOwed = active.pending
+            closeSheet()
+            return true
+        }
         // Nothing to log or give: the sheet only closes, which declines the request.
-        guard state.carbs > 0 || state.fat > 0 || state.protein > 0 || state.amount > 0 else { return }
+        guard state.carbs > 0 || state.fat > 0 || state.protein > 0 || state.amount > 0 else { return false }
 
-        let id = active.pending.request.id
         let claim = Task { await coordinator.claim(id: id, on: .phone) }
         let submission = Submission(id: id, state: state, submittedAt: now(), claim: claim, coordinator: coordinator)
         let key = ObjectIdentifier(submission)
@@ -172,6 +208,7 @@ import UserNotifications
                 submission?.stop()
             }
         }
+        return false
     }
 
     /// The Treatments sheet disappeared. It's closed only if the router no longer shows it; otherwise something covers
@@ -184,7 +221,8 @@ import UserNotifications
     // MARK: Filling in
 
     /// The sheet caps carbs, fat and protein at the wearer's limits, which are 0 until its settings have loaded, so the
-    /// request waits for them.
+    /// request waits for them. Its fat and protein entries setting loads with them: with it off, as by default, the sheet
+    /// hides fat and protein, so they stay 0. Upstream would still log them, and dose for their carb equivalents.
     private func fillWhenLimitsLoad(_ state: Treatments.StateModel, id: String, recalculate: @escaping () -> Void) {
         guard let active, active.pending.request.id == id, active.appeared, !active.filled, !active.leftElsewhere
         else { return }
@@ -204,8 +242,10 @@ import UserNotifications
         }
         let request = active.pending.request
         state.carbs = request.carbs
-        state.fat = request.fat
-        state.protein = request.protein
+        if state.useFPUconversion {
+            state.fat = request.fat
+            state.protein = request.protein
+        }
         state.note = request.note
         self.active?.filled = true
         debug(.service, "AI requests: filled in the Treatments sheet for \(id)")
@@ -251,6 +291,12 @@ import UserNotifications
     /// The request left pending while its sheet was up, other than by this sheet claiming it. The sheet closes without
     /// reporting anything, and a notice says why.
     private func requestLeft(_ id: String, why left: AIRequestLeft, source: String) {
+        if let owed = noticeOwed, owed.request.id == id {
+            // Its sheet closed when its submit was refused, before the session heard why.
+            noticeOwed = nil
+            postNotice(for: owed, left: left, source: source)
+            return
+        }
         guard var active, active.pending.request.id == id, !active.leftElsewhere, left != .claimed(.phone) else { return }
         active.leftElsewhere = true
         active.submission?.stop()
@@ -258,8 +304,23 @@ import UserNotifications
         debug(.service, "AI requests: \(id) left pending with its Treatments sheet up, so the sheet closes")
 
         postNotice(for: active.pending, left: left, source: source)
+        closeSheet()
+    }
+
+    /// The opener asked for the request's sheet, but couldn't hold the request: its time ran out as the sheet opened,
+    /// and the watch holds it. The sheet closes again without answering.
+    func notOpened(_ id: String) {
+        guard var active, active.pending.request.id == id, !active.leftElsewhere else { return }
+        active.leftElsewhere = true
+        self.active = active
+        debug(.service, "AI requests: \(id)'s time ran out as its Treatments sheet opened, so the sheet closes")
+        closeSheet()
+    }
+
+    /// Closes the request's sheet. The router following it closes the session; a sheet the router no longer shows is
+    /// closed here.
+    private func closeSheet() {
         if let router = router(), router.mainModalScreen.value == .treatmentView {
-            // The router following it closes the session.
             router.mainModalScreen.send(nil)
         } else {
             sheetClosed()
@@ -287,7 +348,8 @@ import UserNotifications
 ///
 /// What the pump took is confirmed from Trio's pump history: the bolus this sheet gave is a stored bolus that the loop
 /// didn't give and isn't external, timestamped at or after Log, and its amount is the units reported. External insulin
-/// is confirmed the same way, from the external insulin stored at the sheet's time with the sheet's amount. The pump's
+/// is confirmed the same way, from the external insulin stored at the sheet's time with the sheet's amount, which
+/// upstream caps at three times the max bolus. The pump's
 /// progress alone never confirms a bolus: an SMB sends it too. It only prompts another look at the history.
 ///
 /// Face ID is followed through the sheet's state:
@@ -378,7 +440,8 @@ import UserNotifications
     private func isOwn(_ event: AIRequestPumpBolusEvent) -> Bool {
         guard !event.isSMB else { return false }
         if isExternal {
-            guard event.isExternal, event.amount == amount else { return false }
+            // Upstream logs external insulin of at most three times the max bolus.
+            guard event.isExternal, event.amount == min(amount, state.maxBolus * 3) else { return false }
             // Stored at the sheet's time, or at the moment it was stored when that time was ahead.
             return abs(event.timestamp.timeIntervalSince(treatmentDate)) <= 1
                 || (treatmentDate > submittedAt && event.timestamp >= submittedAt)

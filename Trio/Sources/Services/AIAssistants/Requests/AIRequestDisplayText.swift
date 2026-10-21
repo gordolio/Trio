@@ -11,8 +11,9 @@ import Foundation
 ///     10 g fat · 12 g protein
 ///     Trio suggests no insulin now: glucose is low (52 mg/dL)
 ///
-/// The fat and protein line is there only when the request has fat or protein, and shows the parts above 0. Each
-/// amount in grams or units sits next to its unit with a no-break space (U+00A0), so a line never wraps between them.
+/// The fat and protein line is there only when the request has fat or protein and they're logged, which is when the
+/// wearer's fat and protein entries are on, and shows the parts above 0. Each amount in grams or units sits next to its
+/// unit with a no-break space (U+00A0), so a line never wraps between them.
 /// Nothing about the wearer's glucose, carbs or insulin is in it: the screens the request opens show them.
 enum AIRequestDisplayText {
     /// The service refuses notification text longer than this many UTF-16 code units, which is what its
@@ -60,22 +61,24 @@ enum AIRequestDisplayText {
         }
     }
 
-    /// The title and body of a request: the dose line, the fat and protein when there are any, and for a 0 U dose why.
-    /// `noDoseReason` is a reason Trio knows is true, for example "glucose is low (52 mg/dL)", or `nil` when it knows
-    /// none.
+    /// The title and body of a request: the dose line, the fat and protein when there are any and they're logged, and
+    /// for a 0 U dose why. `logsFatAndProtein` is the wearer's fat and protein entries setting: off, the fat and protein
+    /// aren't logged, so they aren't shown. `noDoseReason` is a reason Trio knows is true, for example "glucose is low
+    /// (52 mg/dL)", or `nil` when it knows none.
     static func display(
         source: String,
         description: String,
         shown: AIRequestShown,
+        logsFatAndProtein: Bool,
         noDoseReason: String?
     ) -> AIRequestDisplay {
         AIRequestDisplay(
             title: title(source: source, description: description),
-            body: body(shown: shown, noDoseReason: noDoseReason)
+            body: body(shown: shown, logsFatAndProtein: logsFatAndProtein, noDoseReason: noDoseReason)
         )
     }
 
-    private static func body(shown: AIRequestShown, noDoseReason: String?) -> String {
+    private static func body(shown: AIRequestShown, logsFatAndProtein: Bool, noDoseReason: String?) -> String {
         let givesNoBolus = Self.givesNoBolus(shown)
         let carbs = trimmed(shown.carbs)
         var lines: [String] = []
@@ -93,13 +96,13 @@ enum AIRequestDisplayText {
         )
 
         var details: [String] = []
-        if let fat = positive(shown.fat) {
+        if logsFatAndProtein, let fat = positive(shown.fat) {
             details.append(String(
                 localized: "\(fat)\u{00A0}g fat",
                 comment: "Request notification: the fat in grams. The no-break space keeps the number with its unit."
             ))
         }
-        if let protein = positive(shown.protein) {
+        if logsFatAndProtein, let protein = positive(shown.protein) {
             details.append(String(
                 localized: "\(protein)\u{00A0}g protein",
                 comment: "Request notification: the protein in grams. The no-break space keeps the number with its unit."

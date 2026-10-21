@@ -10,11 +10,17 @@ import Testing
     private static let shown = AIRequestShown(carbs: 35, fat: 10, protein: 12, units: 2.1)
     private static let noDose = AIRequestShown(carbs: 35, fat: 10, protein: 12, units: 0)
 
-    private func display(shown: AIRequestShown = Self.shown, noDoseReason: String? = nil) -> AIRequestDisplay {
+    /// The text with the wearer's fat and protein entries on, unless `logsFatAndProtein` says otherwise.
+    private func display(
+        shown: AIRequestShown = Self.shown,
+        logsFatAndProtein: Bool = true,
+        noDoseReason: String? = nil
+    ) -> AIRequestDisplay {
         AIRequestDisplayText.display(
             source: "ChatGPT",
             description: "slice of pizza",
             shown: shown,
+            logsFatAndProtein: logsFatAndProtein,
             noDoseReason: noDoseReason
         )
     }
@@ -40,6 +46,15 @@ import Testing
         // With no dose and no fat or protein the 0 U line follows the dose line directly.
         let none = AIRequestShown(carbs: 35, fat: 0, protein: 0, units: 0)
         #expect(display(shown: none, noDoseReason: "glucose is low (52 mg/dL)").body == """
+        No bolus · 35\u{00A0}g carbs
+        Trio suggests no insulin now: glucose is low (52 mg/dL)
+        """)
+    }
+
+    @Test func bodyLeavesOutFatAndProteinThatArentLogged() {
+        // "Enable Fat and Protein Entries" is off: the fat and protein aren't logged, so they aren't shown.
+        #expect(display(logsFatAndProtein: false).body == "Bolus 2.10\u{00A0}U · 35\u{00A0}g carbs")
+        #expect(display(shown: Self.noDose, logsFatAndProtein: false, noDoseReason: "glucose is low (52 mg/dL)").body == """
         No bolus · 35\u{00A0}g carbs
         Trio suggests no insulin now: glucose is low (52 mg/dL)
         """)

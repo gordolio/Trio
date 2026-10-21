@@ -86,12 +86,18 @@ private final class FlowHarness {
         harness.controller.open(id: details.id)
         harness.controller.receive(details)
         harness.controller.screensChanged(
-            pathIsEmpty: false,
+            pathCount: Self.screenCount(for: harness.controller),
             carbs: harness.controller.requestedCarbs,
             bolus: Double(truncating: details.units as NSNumber)
         )
         harness.clearSent()
         return harness
+    }
+
+    /// How many screens the watch's modifier opens for the controller's request: the bolus screen and Confirm, and the
+    /// carbs screen behind them when there are carbs.
+    private static func screenCount(for controller: AIRequestWatchFlowController) -> Int {
+        controller.requestedCarbs > 0 ? 3 : 2
     }
 
     // MARK: Opening
@@ -325,7 +331,7 @@ private final class FlowHarness {
 
         // The screens saw the values go to 0.
         let zeroed = Self.active()
-        zeroed.controller.screensChanged(pathIsEmpty: false, carbs: 0, bolus: 0)
+        zeroed.controller.screensChanged(pathCount: 3, carbs: 0, bolus: 0)
         zeroed.runTurn()
 
         #expect(zeroed.sent.isEmpty)
@@ -344,7 +350,7 @@ private final class FlowHarness {
         )
         let harness = Self.active(empty)
 
-        harness.controller.screensChanged(pathIsEmpty: false, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 2, carbs: 0, bolus: 0)
         #expect(harness.controller.phase == .active(empty))
 
         #expect(harness.controller.interceptBolus(0))
@@ -357,8 +363,8 @@ private final class FlowHarness {
 
         #expect(harness.controller.interceptCarbs(83))
         // "No Bolus, Log Carbs" sets the watch's carbs to 0 after its send.
-        harness.controller.screensChanged(pathIsEmpty: false, carbs: 0, bolus: 0)
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 3, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
         harness.runTurn()
 
         #expect(harness.confirms == [AIRequestWatchConfirm(id: "r1", units: 0, carbs: nil)])
@@ -397,7 +403,7 @@ private final class FlowHarness {
         #expect(harness.intercepts == 0)
 
         // Back on the main screen, upstream's sends are its own again, and nothing was declined.
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
         #expect(harness.controller.phase == .idle)
         #expect(harness.sent.isEmpty)
         #expect(!harness.controller.interceptCarbs(83))
@@ -406,7 +412,7 @@ private final class FlowHarness {
 
     @Test("Sends after the values were zeroed are dropped") func sendsAfterZeroedValuesAreSwallowed() {
         let harness = Self.active()
-        harness.controller.screensChanged(pathIsEmpty: false, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 3, carbs: 0, bolus: 0)
         #expect(harness.controller.phase == .closing(id: "r1"))
 
         #expect(harness.controller.interceptCarbs(83))
@@ -427,7 +433,7 @@ private final class FlowHarness {
         harness.runTurn()
         #expect(harness.sent.isEmpty)
 
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
         #expect(!harness.controller.interceptBolus(2))
         #expect(harness.sent.isEmpty)
     }
@@ -439,7 +445,7 @@ private final class FlowHarness {
 
         harness.controller.open(id: "r2")
         // The modifier takes the first request's screens down and zeroes their values.
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
         harness.clearSent()
         // The first Confirm's send, 0.1 s after its crown.
         #expect(harness.controller.interceptCarbs(83))
@@ -463,9 +469,53 @@ private final class FlowHarness {
         #expect(harness.controller.phase == .active(second))
 
         // Once its screens are up, the sends are the second request's own.
-        harness.controller.screensChanged(pathIsEmpty: false, carbs: 30, bolus: 1)
+        harness.controller.screensChanged(pathCount: 3, carbs: 30, bolus: 1)
         #expect(harness.controller.interceptBolus(1))
         #expect(harness.confirms == [AIRequestWatchConfirm(id: "r2", units: 1, carbs: 0)])
+    }
+
+    // MARK: Another flow over the request's screens
+
+    @Test(
+        "A manual flow started over the request's screens declines it, and its sends are upstream's own"
+    ) func aManualFlowOverTheRequestDeclinesAndLetsItsSendsThrough() {
+        // The treatment menu covered the main screen as the request opened, so its screens went up underneath. The
+        // wearer picks a meal from the menu: its carbs screen goes on top of the request's three.
+        let harness = Self.active()
+        harness.controller.screensChanged(pathCount: 4, carbs: 83, bolus: 2.2)
+
+        #expect(harness.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
+        #expect(harness.controller.phase == .idle)
+        #expect(harness.controller.notice == nil)
+        harness.clearSent()
+
+        // The manual flow's Confirm: its sends go to the phone as upstream's own, not as the request's confirm.
+        harness.controller.screensChanged(pathCount: 6, carbs: 40, bolus: 1)
+        #expect(!harness.controller.interceptCarbs(40))
+        #expect(!harness.controller.interceptBolus(1))
+        harness.runTurn()
+        #expect(harness.sent.isEmpty)
+        #expect(harness.intercepts == 0)
+
+        // Back on the main screen, nothing more is declined, and upstream's sends stay its own.
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
+        #expect(harness.sent.isEmpty)
+        #expect(harness.controller.phase == .idle)
+        #expect(!harness.controller.interceptBolus(2))
+
+        // A request with no carbs opens two screens, so a third is another flow's.
+        let noCarbs = Self.active(Self.subHalfGram(units: 1))
+        noCarbs.controller.screensChanged(pathCount: 3, carbs: 0, bolus: 1)
+        #expect(noCarbs.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
+        #expect(noCarbs.controller.phase == .idle)
+
+        // Upstream's acknowledgement screen, which goes on top after the request's own confirm, isn't another flow.
+        let confirmed = Self.active()
+        #expect(confirmed.controller.interceptBolus(2))
+        confirmed.clearSent()
+        confirmed.controller.screensChanged(pathCount: 4, carbs: 0, bolus: 0)
+        #expect(confirmed.sent.isEmpty)
+        #expect(confirmed.controller.phase == .confirmed(id: "r1"))
     }
 
     // MARK: Leaving
@@ -473,7 +523,7 @@ private final class FlowHarness {
     @Test("Leaving the screens declines the request") func leavingTheFlowDeclines() {
         let harness = Self.active()
 
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 83, bolus: 2.2)
+        harness.controller.screensChanged(pathCount: 0, carbs: 83, bolus: 2.2)
 
         #expect(harness.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
         #expect(harness.controller.phase == .idle)
@@ -483,14 +533,14 @@ private final class FlowHarness {
         let confirmed = Self.active()
         _ = confirmed.controller.interceptBolus(2)
         confirmed.clearSent()
-        confirmed.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        confirmed.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
         #expect(confirmed.sent.isEmpty)
     }
 
     @Test("Cancel empties the screens and zeroes their values at once, and declines") func cancelDeclinesBeforeZeroedNotice() {
         let harness = Self.active()
 
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
 
         #expect(harness.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
         #expect(harness.controller.phase == .idle)
@@ -503,12 +553,12 @@ private final class FlowHarness {
         harness.controller.receive(Self.details)
         harness.clearSent()
 
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
         #expect(harness.sent.isEmpty)
         #expect(harness.controller.phase == .active(Self.details))
 
-        harness.controller.screensChanged(pathIsEmpty: false, carbs: 83, bolus: 2.2)
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 83, bolus: 2.2)
+        harness.controller.screensChanged(pathCount: 3, carbs: 83, bolus: 2.2)
+        harness.controller.screensChanged(pathCount: 0, carbs: 83, bolus: 2.2)
         #expect(harness.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
     }
 
@@ -569,9 +619,9 @@ private final class FlowHarness {
         #expect(!harness.controller.interceptBolus(2))
 
         harness.controller.receive(Self.details)
-        harness.controller.screensChanged(pathIsEmpty: false, carbs: 83, bolus: 2.2)
+        harness.controller.screensChanged(pathCount: 3, carbs: 83, bolus: 2.2)
         _ = harness.controller.interceptBolus(2)
-        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
         harness.clearSent()
         #expect(!harness.controller.interceptCarbs(83))
         #expect(!harness.controller.interceptBolus(2))

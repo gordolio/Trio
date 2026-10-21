@@ -21,7 +21,7 @@ func meal(id: String, carbs: Decimal = 20, fat: Decimal = 10, protein: Decimal =
     )
 }
 
-/// The meal a `storeCarbs` call stored: the carbs override, or the request's own carbs, with its fat and protein.
+/// The meal a `storeCarbs` call stored.
 struct StoredCarbs: Equatable {
     let id: String
     let carbs: Decimal
@@ -40,6 +40,8 @@ final class FakeTreatments: AIRequestTreatments {
     private var enactHook: (() async -> Void)?
 
     var limits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250, maxBolus: 10)
+    /// The wearer's "Enable Fat and Protein Entries": on, so a request's fat and protein are logged.
+    var logsFatAndProtein = true
     /// What `dose(forCarbs:)` returns: 1.2 U.
     var doseResult = AIRequestDose(units: 1.2)
     /// What `noDoseReason(units:)` returns.
@@ -63,7 +65,7 @@ final class FakeTreatments: AIRequestTreatments {
     /// The `units` of each `noDoseReason(units:)` call.
     var reasonedUnits: [Decimal] { lock.withLock { reasonUnits } }
     var stored: [AIMealRequest] { lock.withLock { storedRequests } }
-    /// What each `storeCarbs` stored, with its carbs override applied.
+    /// What each `storeCarbs` stored.
     var storedCarbs: [StoredCarbs] { lock.withLock { storedMeals } }
     var enacted: [Decimal] { lock.withLock { enactedUnits } }
     /// Every call in order: `store <id>`, `enact <units>` and, when it returns, `enacted <units>`.
@@ -78,7 +80,7 @@ final class FakeTreatments: AIRequestTreatments {
         return noDoseReasonResult
     }
 
-    func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws {
+    func storeCarbs(for request: AIMealRequest, carbs: Decimal, fat: Decimal, protein: Decimal) async throws {
         let hook = lock.withLock {
             defer { storeHook = nil }
             return storeHook
@@ -87,12 +89,7 @@ final class FakeTreatments: AIRequestTreatments {
         if let storeError { throw storeError }
         lock.withLock {
             storedRequests.append(request)
-            storedMeals.append(StoredCarbs(
-                id: request.id,
-                carbs: carbs ?? request.carbs,
-                fat: request.fat,
-                protein: request.protein
-            ))
+            storedMeals.append(StoredCarbs(id: request.id, carbs: carbs, fat: fat, protein: protein))
             recordedEvents.append("store \(request.id)")
         }
     }

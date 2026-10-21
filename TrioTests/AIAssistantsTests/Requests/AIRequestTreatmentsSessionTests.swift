@@ -153,23 +153,36 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         }
     }
 
-    /// Opens `request` from its notification, and shows its sheet with the wearer's limits loaded.
-    @discardableResult private func openSheet(_ request: AIMealRequest = pizza()) async -> Treatments.StateModel {
+    /// Opens `request` from its notification, and shows its sheet with the wearer's settings loaded: their limits, and
+    /// whether their fat and protein entries are on.
+    @discardableResult private func openSheet(
+        _ request: AIMealRequest = pizza(),
+        fatAndProteinEntries: Bool = true
+    ) async -> Treatments.StateModel {
         await h.coordinator.receive(request, via: .service)
         await opener.open(requestID: request.id).value
         await flushMainQueue()
         let state = Treatments.StateModel()
+        state.useFPUconversion = fatAndProteinEntries
+        state.maxBolus = 10
         state.maxCarbs = 250
         session.sheetAppeared(state: state, recalculate: {})
         return state
     }
 
-    /// The wearer presses Log with `amount` in the Bolus field, for now.
+    /// The wearer presses Log with `amount` in the Bolus field, for now. The sheet's submit goes ahead.
     private func submit(_ state: Treatments.StateModel, amount: Decimal, external: Bool = false) {
         state.amount = amount
         state.externalInsulin = external
         state.date = h.now
-        session.willSubmit(from: state)
+        #expect(!session.refusesSubmit(from: state))
+    }
+
+    /// Holds the main thread, without letting the main queue run, until `condition` holds or 2 s have passed: what the
+    /// coordinator sends the sheet on the main queue meanwhile isn't delivered yet.
+    private func holdMainQueue(until condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(2)
+        while !condition(), Date() < deadline {}
     }
 
     /// The pump took this bolus, `seconds` after Log, and Trio stored it.
@@ -316,6 +329,56 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(session.requestID == nil)
     }
 
+    @Test func requestIsNotOpenedAfterItsTime() async {
+        // The sheet went before it appeared, as on a cold launch, so the iPhone's hold stayed. Five minutes on, bringing
+        // Trio to the front doesn't open the old meal: the hold goes, and the request expires.
+        await h.coordinator.receive(pizza(), via: .service)
+        await opener.open(requestID: "r1").value
+        await flushMainQueue()
+        router.mainModalScreen.send(nil)
+        await flushMainQueue()
+
+        h.now = coordinatorTestStart + 5 * 60 + 1
+        await opener.openDueRequest()
+
+        #expect(router.sent == [.treatmentView, nil])
+        #expect(session.requestID == nil)
+        #expect(h.coordinator.current.value == nil)
+        #expect(h.reporter.states == ["r1:pending", "r1:expired"])
+    }
+
+    @Test func openSheetPastItsTimeStaysWhenTrioComesToTheFront() async {
+        // The sheet holds its request past its five minutes. Bringing Trio to the front again, or tapping the request's
+        // notification, doesn't let go of that hold.
+        await openSheet()
+        h.now = coordinatorTestStart + 5 * 60 + 1
+        await opener.openDueRequest()
+        await opener.open(requestID: "r1").value
+        await flushMainQueue()
+
+        #expect(router.sent == [.treatmentView])
+        #expect(session.requestID == "r1")
+        await h.coordinator.expireIfDue()
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        #expect(h.reporter.states == ["r1:pending"])
+        #expect(h.left.isEmpty)
+    }
+
+    @Test func requestTheWatchHoldsIsNotOpenedAfterItsTime() async {
+        // The watch has the request's Confirm screen up past its five minutes; the iPhone's backup is tapped.
+        await h.coordinator.receive(pizza(), via: .service)
+        #expect(await h.coordinator.open(id: "r1", on: .watch) != nil)
+
+        h.now = coordinatorTestStart + 5 * 60 + 1
+        await opener.open(requestID: "r1").value
+
+        #expect(router.sent.isEmpty)
+        #expect(session.requestID == nil)
+        // The watch's screens still hold it.
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        #expect(h.reporter.states == ["r1:pending"])
+    }
+
     @Test func opensTheDueRequestWhenTrioComesToTheFront() async {
         // Asked on the watch first; the iPhone asks too 15 s later.
         await h.coordinator.receive(pizza(), via: .service)
@@ -335,6 +398,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         await opener.open(requestID: "r1").value
         let state = Treatments.StateModel()
         #expect(state.maxCarbs == 0)
+        state.useFPUconversion = true
         let recalculated = TestBox(0)
         session.sheetAppeared(state: state, recalculate: { recalculated.value += 1 })
         await flushMainQueue()
@@ -349,6 +413,21 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(state.note == "AI: ChatGPT – pizza")
         #expect(state.amount == 0)
         #expect(recalculated.value == 1)
+    }
+
+    @Test func fatAndProteinStayZeroWhenEntriesAreOff() async {
+        // "Enable Fat and Protein Entries" is off, as it is by default: the sheet hides fat and protein, so the request
+        // doesn't fill them in. Upstream would log them, and dose for their carb equivalents, unseen.
+        let state = await openSheet(fatAndProteinEntries: false)
+        #expect(state.carbs == d("82.5"))
+        #expect(state.fat == 0)
+        #expect(state.protein == 0)
+        #expect(state.note == "AI: ChatGPT – pizza")
+
+        // What the sheet logs, and so the report, has no fat or protein.
+        submit(state, amount: 0)
+        await closeSheet()
+        #expect(await finalReport() == .logged(shown: AIRequestShown(carbs: d("82.5"), fat: 0, protein: 0, units: 0)))
     }
 
     @Test func requestFormatterKeepsFractionalGrams() async throws {
@@ -730,7 +809,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         state.amount = 3
         state.externalInsulin = true
         state.date = h.now - 15 * 60
-        session.willSubmit(from: state)
+        #expect(!session.refusesSubmit(from: state))
         await unlock(state)
         history.store(AIRequestPumpBolusEvent(timestamp: h.now - 15 * 60, amount: 3, isSMB: false, isExternal: true))
         await settle()
@@ -749,6 +828,19 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         await expectNoFinalReport()
     }
 
+    @Test func externalInsulinOverTheClampIsReported() async {
+        // Upstream logs external insulin of at most three times the max bolus: 7 U on a 2 U max is logged as 6 U.
+        let state = await openSheet()
+        state.maxBolus = 2
+        submit(state, amount: 7, external: true)
+        state.amount = 6
+        await unlock(state)
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now, amount: 6, isSMB: false, isExternal: true))
+        await settle()
+        await closeSheet()
+        #expect(await finalReport() == .logged(shown: pizzaShown(units: 6)))
+    }
+
     @Test func externalWithFaceIDCancelIsNotLogged() async {
         let state = await openSheet()
         submit(state, amount: 3, external: true)
@@ -759,22 +851,79 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
 
     // MARK: Claims
 
-    @Test func failedClaimDoesNothingMore() async {
-        // The watch took the request before the session heard it leave.
-        await h.coordinator.receive(pizza(), via: .service)
-        let pending = h.coordinator.current.value!
-        session.begin(pending)
-        router.mainModalScreen.send(.treatmentView)
-        let state = Treatments.StateModel()
-        state.maxCarbs = 250
-        session.sheetAppeared(state: state, recalculate: {})
-        #expect(await watchConfirms())
-        submit(state, amount: 2)
-        await unlock(state)
-        await storeOwnBolus(2)
-        await closeSheet()
+    @Test func submitAfterTheRequestLeftLogsNothing() async throws {
+        let state = await openSheet()
+        // The watch takes the request, and the wearer presses Log before the main queue brings the sheet the news.
+        let confirm = Task.detached { [coordinator = h.coordinator] in
+            await coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+        }
+        holdMainQueue { h.coordinator.current.value == nil }
+        state.amount = 2
+        state.date = h.now
+
+        // Upstream's submit doesn't run, so nothing is logged or given, and the sheet closes at once.
+        #expect(session.refusesSubmit(from: state))
+        #expect(router.sent == [.treatmentView, nil])
+        #expect(deadlines.value.isEmpty)
+        #expect(await confirm.value == .delivering(shown: pizzaShown(units: d("1.2"))))
+
+        // Once the sheet hears the request left, the notice says why.
+        await flushMainQueue()
+        await flushMainQueue()
+        let notice = try #require(center.added.first)
+        #expect(center.added.count == 1)
+        #expect(notice.content.title == "Logged on your watch")
+        #expect(session.requestID == nil)
+
+        session.sheetDisappeared()
         await expectOnlyTheWatchsReport()
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT")])
+    }
+
+    @Test func submitWhenAnotherRequestIsPendingLogsNothing() async throws {
+        let state = await openSheet()
+        // A newer request replaces this one, and the wearer presses Log before the sheet hears.
+        let newer = Task.detached { [coordinator = h.coordinator] in
+            await coordinator.receive(pizza(id: "r2"), via: .service)
+        }
+        holdMainQueue { h.coordinator.current.value?.request.id == "r2" }
+        state.amount = 2
+        state.date = h.now
+
+        #expect(session.refusesSubmit(from: state))
+        #expect(router.sent == [.treatmentView, nil])
+        await newer.value
+        await flushMainQueue()
+        await flushMainQueue()
+        #expect(try #require(center.added.first).content.title == "Replaced by a newer request")
+        #expect(center.added.count == 1)
+
+        session.sheetDisappeared()
+        try? await Task.sleep(for: .milliseconds(50))
+        // Neither request was claimed: the newer one is still pending, and it doesn't open on its own.
+        #expect(h.coordinator.current.value?.request.id == "r2")
+        #expect(h.reporter.states == ["r1:pending", "r1:replaced", "r2:pending"])
+        #expect(h.left == [LeftEvent(id: "r1", left: .replaced, source: "ChatGPT")])
+        #expect(router.sent == [.treatmentView, nil])
+    }
+
+    @Test func submitOnASheetClosingForItsRequestLogsNothing() async {
+        // The sheet heard the watch take its request, and is going; Log is pressed as it goes.
+        let state = await openSheet()
+        #expect(await watchConfirms())
+        await flushMainQueue()
+        await flushMainQueue()
+        #expect(router.sent == [.treatmentView, nil])
+
+        state.amount = 2
+        state.date = h.now
+        #expect(session.refusesSubmit(from: state))
+        #expect(router.sent == [.treatmentView, nil])
+        #expect(center.added.count == 1)
+        #expect(deadlines.value.isEmpty)
+
+        session.sheetDisappeared()
+        await expectOnlyTheWatchsReport()
     }
 
     // MARK: Leaving

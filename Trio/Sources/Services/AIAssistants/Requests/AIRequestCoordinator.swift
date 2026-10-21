@@ -64,10 +64,7 @@ actor AIRequestCoordinator {
     /// The longest an open screen holds a request past its `expiresAt`. trio-rc's grace covers it, so don't change it.
     private static let openScreenHold: TimeInterval = 10 * 60
     /// Sent when the Treatments sheet asked for a bolus that neither started nor failed, as when Face ID was canceled.
-    private static let bolusNotStartedReason = String(
-        localized: "The bolus wasn't started",
-        comment: "Report reason: the wearer asked for a bolus on the Treatments sheet, but it wasn't started"
-    )
+    private static let bolusNotStartedReason = "The bolus wasn't started"
     /// Sent when the wearer has turned meal requests off.
     private static let mealRequestsOffReason = "Meal requests are off in Trio"
     /// Sent at launch for an approval Trio stopped carrying out before it started the bolus.
@@ -165,6 +162,7 @@ actor AIRequestCoordinator {
             source: request.source,
             description: request.description,
             shown: shown,
+            logsFatAndProtein: treatments.logsFatAndProtein,
             noDoseReason: noDoseReason
         )
         let prompt = AIRequestPrompt(
@@ -261,9 +259,18 @@ actor AIRequestCoordinator {
     /// A device opened the pending request on its screen: the Treatments sheet on the iPhone, or the Confirm flow on
     /// the watch. While it's open, the request doesn't expire (see `expireIfDue()`). The watch opening it puts the
     /// iPhone's backup off, once. Returns the request's amounts with Trio's dose for them worked out now, or `nil`
-    /// unless `id` is pending. A request whose time is up, with no screen holding it, is expired instead.
+    /// unless `id` is pending.
+    ///
+    /// A request is never opened fresh once its time is up: `nil` then too. The device's own hold, left by a screen that
+    /// ended without answering, goes, and the request expires unless the other device's screen still holds it.
     func open(id: String, on side: AIRequestAnswerSide) async -> AIRequestWatchDetails? {
         ensureLoaded()
+        if let pending = current.value, pending.request.id == id, now() >= pending.request.expiresAt {
+            openOn.remove(side)
+            debug(.service, "AI requests: the \(side.rawValue) opened \(id) after its time, so it isn't opened")
+            await expireIfDue()
+            return nil
+        }
         await expireIfDue()
         guard let pending = current.value, pending.request.id == id else {
             debug(.service, "AI requests: the \(side.rawValue) opened \(id), but it isn't pending")
@@ -322,9 +329,9 @@ actor AIRequestCoordinator {
     }
 
     /// Carries out what the wearer confirmed on the watch: claims the request for the watch, stores its carbs (its own
-    /// grams, or the watch's when the wearer changed them) with its fat and protein, then gives the units, at most the
-    /// max bolus. Returns the final report, or `nil` when the claim failed, as when the iPhone claimed it first: then
-    /// nothing is logged.
+    /// grams, or the watch's when the wearer changed them) with its fat and protein when the wearer's fat and protein
+    /// entries are on, then gives the units, at most the max bolus. Returns the final report, or `nil` when the claim
+    /// failed, as when the iPhone claimed it first: then nothing is logged.
     func carryOutWatchConfirm(_ confirm: AIRequestWatchConfirm) async -> AIRequestReport? {
         ensureLoaded()
         guard let pending = await takeClaimed(id: confirm.id, on: .watch) else { return nil }
@@ -390,6 +397,10 @@ actor AIRequestCoordinator {
         await reportStoppedCarryOut()
         let request = pending.request
         let carbs = confirm.carbs ?? request.carbs
+        // With the wearer's fat and protein entries off, as on their own screens, only the carbs are logged.
+        let logsFatAndProtein = treatments.logsFatAndProtein
+        let fat = logsFatAndProtein ? request.fat : 0
+        let protein = logsFatAndProtein ? request.protein : 0
         let units = max(0, min(confirm.units, treatments.limits.maxBolus))
         mark(AIRequestCarryOutMarker(
             id: request.id,
@@ -406,11 +417,11 @@ actor AIRequestCoordinator {
             return await reportFinal(.failed(reason: failure, carbsLogged: false), id: request.id, via: pending.channel)
         }
 
-        let carbsLogged = carbs > 0 || request.fat > 0 || request.protein > 0
+        let carbsLogged = carbs > 0 || fat > 0 || protein > 0
         if carbsLogged {
             mark(.storingCarbs)
             do {
-                try await treatments.storeCarbs(for: request, carbs: confirm.carbs)
+                try await treatments.storeCarbs(for: request, carbs: carbs, fat: fat, protein: protein)
             } catch {
                 return await reportFinal(
                     .failed(reason: error.localizedDescription, carbsLogged: false),
@@ -420,7 +431,7 @@ actor AIRequestCoordinator {
             }
         }
 
-        let done = AIRequestShown(carbs: carbs, fat: request.fat, protein: request.protein, units: units)
+        let done = AIRequestShown(carbs: carbs, fat: fat, protein: protein, units: units)
         guard units > 0 else {
             return await reportFinal(.logged(shown: done), id: request.id, via: pending.channel)
         }
