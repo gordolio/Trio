@@ -144,14 +144,14 @@ final class FakeWatch: AIRequestWatchDelivery {
 
 final class FakePhoneBackup: AIRequestPhoneBackupScheduling {
     private let lock = NSLock()
-    private var scheduledBackups: [(id: String, delay: TimeInterval)] = []
+    private var scheduledBackups: [(id: String, delay: TimeInterval, askedOn: AIRequestAskedOn)] = []
     private var cancelledIDs: [String] = []
 
-    var scheduled: [(id: String, delay: TimeInterval)] { lock.withLock { scheduledBackups } }
+    var scheduled: [(id: String, delay: TimeInterval, askedOn: AIRequestAskedOn)] { lock.withLock { scheduledBackups } }
     var cancelled: [String] { lock.withLock { cancelledIDs } }
 
-    func schedule(_ prompt: AIRequestPrompt, after delay: TimeInterval) {
-        lock.withLock { scheduledBackups.append((prompt.id, delay)) }
+    func schedule(_ prompt: AIRequestPrompt, after delay: TimeInterval, askedOn: AIRequestAskedOn) {
+        lock.withLock { scheduledBackups.append((prompt.id, delay, askedOn)) }
     }
 
     func cancel(id: String) {

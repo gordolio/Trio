@@ -70,20 +70,25 @@ private func samplePrompt(id: String) -> AIRequestPrompt {
     )
 }
 
-private func samplePending(id: String, askedOn: AIRequestAskedOn = .phone) -> PendingAIRequest {
+private func samplePending(
+    id: String,
+    askedOn: AIRequestAskedOn = .phone,
+    phoneAskAt: Date? = nil
+) -> PendingAIRequest {
     PendingAIRequest(
         request: meal(id: id),
         channel: .service,
         prompt: samplePrompt(id: id),
         askedOn: askedOn,
-        units: 1.2
+        units: 1.2,
+        phoneAskAt: phoneAskAt
     )
 }
 
 @Suite("AI request phone backup") struct AIRequestPhoneBackupTests {
     @Test func immediateHasNoTrigger() throws {
         let c = FakeNotificationCenter()
-        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 0)
+        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 0, askedOn: .phone)
         let r = try #require(c.added.first)
         #expect(r.identifier == "ai-request-r1" && r.trigger == nil)
         #expect(r.content.categoryIdentifier == "trio.request.phone" && r.content.interruptionLevel == .timeSensitive)
@@ -91,17 +96,32 @@ private func samplePending(id: String, askedOn: AIRequestAskedOn = .phone) -> Pe
 
     @Test func delayedUsesTimeIntervalTrigger() throws {
         let c = FakeNotificationCenter()
-        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 15)
+        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 15, askedOn: .watch)
         #expect((c.added.first?.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval == 15)
     }
 
-    @Test func contentShowsTheRequestAndSaysHowToApprove() throws {
+    @Test func contentShowsTheRequestAndSaysToReviewIt() throws {
         let c = FakeNotificationCenter()
-        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 0)
+        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 0, askedOn: .phone)
         let content = try #require(c.added.first?.content)
         #expect(content.title == "ChatGPT: slice of pizza")
-        #expect(content.body == "20 g carbs · 1.2 U · Tap to approve with Face ID")
+        #expect(content.body == "20 g carbs · 1.2 U\nTap to review.")
         #expect(content.userInfo["aiRequestId"] as? String == "r1")
+    }
+
+    @Test func watchFirstBodySaysNotAnsweredOnTheWatch() throws {
+        let c = FakeNotificationCenter()
+        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 15, askedOn: .watch)
+        let content = try #require(c.added.first?.content)
+        #expect(content.body == "20 g carbs · 1.2 U\nNot answered on your watch yet. Tap to review.")
+    }
+
+    @Test func backupUsesTheRequestThread() throws {
+        let c = FakeNotificationCenter()
+        let backup = AIRequestPhoneBackup(center: c)
+        backup.schedule(samplePrompt(id: "r1"), after: 15, askedOn: .watch)
+        backup.schedule(samplePrompt(id: "r2"), after: 0, askedOn: .phone)
+        #expect(c.added.map(\.content.threadIdentifier) == ["trio.ai-request", "trio.ai-request"])
     }
 
     @Test func cancelRemovesPendingAndDelivered() {
@@ -114,25 +134,50 @@ private func samplePending(id: String, askedOn: AIRequestAskedOn = .phone) -> Pe
         let c = FakeNotificationCenter()
         c.categories = [UNNotificationCategory(identifier: "Trio.alert", actions: [], intentIdentifiers: [], options: [])]
         let backup = AIRequestPhoneBackup(center: c)
-        backup.schedule(samplePrompt(id: "r1"), after: 0)
-        backup.schedule(samplePrompt(id: "r2"), after: 0)
+        backup.schedule(samplePrompt(id: "r1"), after: 0, askedOn: .phone)
+        backup.schedule(samplePrompt(id: "r2"), after: 0, askedOn: .phone)
         #expect(c.categories.map(\.identifier).sorted() == ["Trio.alert", "trio.request.phone"])
     }
 
     @Test func requestAskedOnTheIPhoneIsDue() async {
         let c = FakeNotificationCenter()
-        #expect(await AIRequestPhoneBackup(center: c).isDue(samplePending(id: "r1", askedOn: .phone)))
+        let pending = samplePending(id: "r1", askedOn: .phone)
+        #expect(await AIRequestPhoneBackup(center: c).isDue(pending, now: coordinatorTestStart))
     }
 
     @Test func requestAskedOnTheWatchIsDueOnceItsNotificationIsDelivered() async {
         let c = FakeNotificationCenter()
         let backup = AIRequestPhoneBackup(center: c)
+        let pending = samplePending(id: "r1", askedOn: .watch)
         // The watch still has its time.
-        #expect(await backup.isDue(samplePending(id: "r1", askedOn: .watch)) == false)
+        #expect(await backup.isDue(pending, now: coordinatorTestStart) == false)
         c.delivered = ["ai-request-r2", "Trio.alert"]
-        #expect(await backup.isDue(samplePending(id: "r1", askedOn: .watch)) == false)
+        #expect(await backup.isDue(pending, now: coordinatorTestStart) == false)
         c.delivered = ["Trio.alert", "ai-request-r1"]
-        #expect(await backup.isDue(samplePending(id: "r1", askedOn: .watch)))
+        #expect(await backup.isDue(pending, now: coordinatorTestStart))
+    }
+
+    @Test func dueAfterPhoneAskAtWithoutANotification() async {
+        let c = FakeNotificationCenter()
+        let backup = AIRequestPhoneBackup(center: c)
+        let pending = samplePending(id: "r1", askedOn: .watch, phoneAskAt: coordinatorTestStart + 15)
+        #expect(await backup.isDue(pending, now: coordinatorTestStart + 15))
+        #expect(await backup.isDue(pending, now: coordinatorTestStart + 16))
+    }
+
+    @Test func notDueBeforePhoneAskAt() async {
+        let c = FakeNotificationCenter()
+        let backup = AIRequestPhoneBackup(center: c)
+        let pending = samplePending(id: "r1", askedOn: .watch, phoneAskAt: coordinatorTestStart + 15)
+        #expect(await backup.isDue(pending, now: coordinatorTestStart) == false)
+        #expect(await backup.isDue(pending, now: coordinatorTestStart + 14.9) == false)
+    }
+
+    @Test func deliveredNotificationMakesItDueBeforePhoneAskAt() async {
+        let c = FakeNotificationCenter()
+        c.delivered = ["ai-request-r1"]
+        let pending = samplePending(id: "r1", askedOn: .watch, phoneAskAt: coordinatorTestStart + 60)
+        #expect(await AIRequestPhoneBackup(center: c).isDue(pending, now: coordinatorTestStart))
     }
 
     @Test func schedulingReplacesAnOlderPhoneCategory() {
@@ -143,7 +188,7 @@ private func samplePending(id: String, askedOn: AIRequestAskedOn = .phone) -> Pe
             intentIdentifiers: [],
             options: [.customDismissAction]
         )]
-        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 0)
+        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 0, askedOn: .phone)
         #expect(c.categories.count == 1)
         #expect(c.categories.first?.options == [])
     }
@@ -261,7 +306,9 @@ private func samplePending(id: String, askedOn: AIRequestAskedOn = .phone) -> Pe
     private func makePresenter(delivered: [String] = []) -> AIRequestPhoneApprovalPresenter {
         let center = FakeNotificationCenter()
         center.delivered = delivered
-        return AIRequestPhoneApprovalPresenter(isBackupDue: { await AIRequestPhoneBackup(center: center).isDue($0) })
+        return AIRequestPhoneApprovalPresenter(isBackupDue: {
+            await AIRequestPhoneBackup(center: center).isDue($0, now: Date())
+        })
     }
 
     @Test func openingTrioPresentsARequestAskedOnTheIPhone() async {

@@ -26,8 +26,9 @@ extension WCSession: AIRequestWatchSession {
     }
 }
 
-/// The phone's side of the watch's requests: shows a request on the watch, withdraws it, and reads what the watch
-/// sends back, which is a request for the answer key, a signed answer, or the watch's push token.
+/// The phone's side of the watch's requests: shows a request on the watch, withdraws it, tells it how a request ended,
+/// and reads what the watch sends back, which is a request for the answer key, a signed answer, the ID of the request
+/// whose screen it opened, or the watch's push token.
 final class AIRequestWatchLink: AIRequestWatchDelivery {
     static let watchPushTokenKey = "AIAssistants.watchPushToken"
 
@@ -35,6 +36,7 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
     private let keys: AIRequestKeyStore
     private let defaults: UserDefaults
     private let onAnswer: (AIRequestAnswer) -> Void
+    private let onViewing: (String) -> Void
     private let onWatchTokenChanged: () -> Void
 
     init(
@@ -42,12 +44,14 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         keys: AIRequestKeyStore,
         defaults: UserDefaults = .standard,
         onAnswer: @escaping (AIRequestAnswer) -> Void,
+        onViewing: @escaping (String) -> Void,
         onWatchTokenChanged: @escaping () -> Void
     ) {
         self.session = session
         self.keys = keys
         self.defaults = defaults
         self.onAnswer = onAnswer
+        self.onViewing = onViewing
         self.onWatchTokenChanged = onWatchTokenChanged
     }
 
@@ -75,6 +79,21 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         send([AIRequestIdentifiers.keyWithdraw: id])
     }
 
+    /// Tells the watch how a request ended. It's always queued as user info, so a watch that is asleep or out of reach
+    /// hears it when it wakes, and it's also sent live when the watch is reachable, so an open screen updates at once.
+    /// The watch may get it twice, and keeps one result for each request ID.
+    func sendResult(_ message: AIRequestResultMessage) {
+        do {
+            let payload: [String: Any] = [AIRequestIdentifiers.keyResult: try JSONEncoder().encode(message)]
+            session.queueUserInfo(payload)
+            if session.isReachable {
+                session.sendMessage(payload)
+            }
+        } catch {
+            debug(.service, "AI requests: couldn't encode the result of \(message.id) for the watch: \(error)")
+        }
+    }
+
     /// Handles a message from the watch. Returns `false` if it isn't one of the request messages, so the
     /// caller can handle it.
     func receive(_ message: [String: Any]) -> Bool {
@@ -86,6 +105,14 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         if let answer = message[AIRequestIdentifiers.keyAnswer] {
             handled = true
             forward(answer)
+        }
+        if let viewed = message[AIRequestIdentifiers.keyViewing] {
+            handled = true
+            if let id = viewed as? String {
+                onViewing(id)
+            } else {
+                debug(.service, "AI requests: ignored a viewing message without a request ID")
+            }
         }
         if let token = message[AIRequestIdentifiers.keyWatchPushToken] as? String {
             handled = true

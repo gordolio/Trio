@@ -61,6 +61,9 @@ actor AIRequestCoordinator {
     /// The marker of the approval Trio was carrying out when it stopped, read from disk at launch, until it's
     /// reported. One that can't be read yet stays `.unreadable`, and is read again before it's needed.
     private var leftoverCarryOut: AIRequestCarryOutMarker.Reading = .absent
+    /// The request whose backup was postponed, so each request is postponed once. It's kept in memory only: a relaunch
+    /// while the request is pending allows one more.
+    private var postponedBackupID: String?
     /// Whether the pending request, the final reports and the carry-out marker were read from disk.
     private var loaded = false
     /// The final reports on record, oldest first, so a repeated ID gets the same report again.
@@ -71,6 +74,8 @@ actor AIRequestCoordinator {
     private static let answerClockSkew: TimeInterval = 60
     /// The longest a request is asked for, whatever `expiresAt` the service sent.
     private static let maxLifetime: TimeInterval = 5 * 60
+    /// How long from the watch opening its approval screen the iPhone's backup waits.
+    private static let backupPostponement: TimeInterval = 60
     /// Sent when the wearer has turned meal requests off.
     private static let mealRequestsOffReason = "Meal requests are off in Trio"
     /// Sent when a dose has no loop run from the last 30 minutes, so its insulin on board isn't known.
@@ -201,7 +206,7 @@ actor AIRequestCoordinator {
         current.send(pending)
         savePending(pending)
         scheduleExpiryCheck(at: request.expiresAt)
-        phoneBackup.schedule(prompt, after: phoneDelay)
+        phoneBackup.schedule(prompt, after: phoneDelay, askedOn: askedOn)
         if channel == .local {
             // The service's requests reach the watch by the service's push.
             watch.deliver(prompt)
@@ -255,6 +260,23 @@ actor AIRequestCoordinator {
         guard let pending = current.value, now() >= pending.request.expiresAt else { return }
         _ = takePending()
         await reportFinal(AIRequestOutcome(.expired, pending: pending), via: pending.channel)
+    }
+
+    /// The watch opened the approval screen of the pending request, so the iPhone's backup waits: it's asked a minute
+    /// from now instead. It's done once for each request, so a wearer who keeps reopening the screen doesn't put the
+    /// backup off for good. Only a request the watch was asked first has a backup to wait.
+    func postponePhoneBackup(id: String) {
+        ensureLoaded()
+        guard var pending = current.value, pending.request.id == id, pending.askedOn == .watch,
+              now() < pending.request.expiresAt, postponedBackupID != id
+        else { return }
+        postponedBackupID = id
+        pending.phoneAskAt = now().addingTimeInterval(Self.backupPostponement)
+        current.send(pending)
+        savePending(pending)
+        phoneBackup.cancel(id: id)
+        phoneBackup.schedule(pending.prompt, after: Self.backupPostponement, askedOn: pending.askedOn)
+        debug(.service, "AI requests: the watch opened \(id), so the iPhone waits \(Int(Self.backupPostponement)) s")
     }
 
     /// Carries out the wearer's answer to the pending request. The first answer accepted takes the request

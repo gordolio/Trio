@@ -23,6 +23,7 @@ final class FakeWatchSession: AIRequestWatchSession {
 /// What the link told its owner, in order.
 private final class LinkEvents {
     var answers: [AIRequestAnswer] = []
+    var viewed: [String] = []
     var tokenChanges = 0
 }
 
@@ -37,6 +38,7 @@ private func makeLink(
         keys: keys,
         defaults: defaults,
         onAnswer: { events.answers.append($0) },
+        onViewing: { events.viewed.append($0) },
         onWatchTokenChanged: { events.tokenChanges += 1 }
     )
 }
@@ -234,6 +236,68 @@ private let sampleAnswer = AIRequestSigner.sign(
         link.withdraw(id: "r2")
         #expect(session.messages.count == 1 && session.userInfos.count == 1)
         #expect(session.userInfos.first?[AIRequestIdentifiers.keyWithdraw] as? String == "r2")
+    }
+
+    @Test func sendResultQueuesAndSendsLive() throws {
+        let session = FakeWatchSession()
+        session.isReachable = true
+        let link = makeLink(session: session)
+        let message = AIRequestResultMessage(
+            id: "r1",
+            title: "ChatGPT: slice of pizza",
+            headline: "Bolus started: 2.10\u{00A0}U",
+            detail: "35\u{00A0}g carbs logged.",
+            tone: .success,
+            answeredOn: .watch
+        )
+
+        link.sendResult(message)
+
+        #expect(session.userInfos.count == 1 && session.messages.count == 1)
+        let queued = try #require(session.userInfos.first?[AIRequestIdentifiers.keyResult] as? Data)
+        let live = try #require(session.messages.first?[AIRequestIdentifiers.keyResult] as? Data)
+        #expect(try JSONDecoder().decode(AIRequestResultMessage.self, from: queued) == message)
+        #expect(try JSONDecoder().decode(AIRequestResultMessage.self, from: live) == message)
+        #expect(session.userInfos.first?.count == 1 && session.messages.first?.count == 1)
+    }
+
+    @Test func sendResultOnlyQueuesWhenTheWatchIsNotReachable() throws {
+        let session = FakeWatchSession()
+        session.isReachable = false
+        let link = makeLink(session: session)
+
+        link.sendResult(AIRequestResultMessage(
+            id: "r1",
+            title: "ChatGPT: slice of pizza",
+            headline: "Declined",
+            detail: "Nothing was logged.",
+            tone: .neutral,
+            answeredOn: .watch
+        ))
+
+        #expect(session.messages.isEmpty)
+        let queued = try #require(session.userInfos.first?[AIRequestIdentifiers.keyResult] as? Data)
+        #expect(try JSONDecoder().decode(AIRequestResultMessage.self, from: queued).id == "r1")
+    }
+
+    @Test func viewingMessageCallsOnViewing() {
+        let events = LinkEvents()
+        let session = FakeWatchSession()
+        let link = makeLink(session: session, events: events)
+
+        #expect(link.receive([AIRequestIdentifiers.keyViewing: "r1"]))
+        #expect(events.viewed == ["r1"])
+        // Nothing is sent back, and the other callbacks are left alone.
+        #expect(session.messages.isEmpty && session.userInfos.isEmpty)
+        #expect(events.answers.isEmpty && events.tokenChanges == 0)
+    }
+
+    @Test func viewingMessageWithoutAnIDIsHandledButNotForwarded() {
+        let events = LinkEvents()
+        let link = makeLink(events: events)
+
+        #expect(link.receive([AIRequestIdentifiers.keyViewing: 7]))
+        #expect(events.viewed.isEmpty)
     }
 
     @Test func messagesHeldBeforeTheRuntimeAreReplayed() throws {

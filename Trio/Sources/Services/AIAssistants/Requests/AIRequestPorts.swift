@@ -200,9 +200,10 @@ protocol AIRequestWatchDelivery: AnyObject {
     func withdraw(id: String)
 }
 
-/// The iPhone's backup notification, which asks for Face ID before approving.
+/// The iPhone's backup notification, which opens Trio's approval screen. `askedOn` says where the request was asked
+/// first, which its wording follows.
 protocol AIRequestPhoneBackupScheduling: AnyObject {
-    func schedule(_ prompt: AIRequestPrompt, after delay: TimeInterval)
+    func schedule(_ prompt: AIRequestPrompt, after delay: TimeInterval, askedOn: AIRequestAskedOn)
     func cancel(id: String)
 }
 

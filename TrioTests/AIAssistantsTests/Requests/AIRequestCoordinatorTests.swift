@@ -290,6 +290,67 @@ import Testing
         #expect(h.coordinator.current.value?.units == 0.27)
         #expect(h.prompt("r1").shown.units == "0.27")
     }
+
+    // MARK: The watch is open
+
+    @Test func viewingPostponesTheBackupOnce() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(h.coordinator.current.value?.phoneAskAt == coordinatorTestStart + 15)
+
+        h.now = coordinatorTestStart + 10
+        await h.coordinator.postponePhoneBackup(id: "r1")
+        // Opening the screen again doesn't put it off again.
+        h.now = coordinatorTestStart + 20
+        await h.coordinator.postponePhoneBackup(id: "r1")
+
+        #expect(h.backup.scheduled.map(\.delay) == [15, 60])
+        #expect(h.backup.scheduled.map(\.id) == ["r1", "r1"])
+        #expect(h.backup.scheduled.map(\.askedOn) == [.watch, .watch])
+        #expect(h.backup.cancelled == ["r1"])
+        #expect(h.coordinator.current.value?.phoneAskAt == coordinatorTestStart + 70)
+    }
+
+    @Test func postponedBackupIsSavedAndSurvivesARelaunch() async {
+        let files = CoordinatorFiles.temporary()
+        let h = makeCoordinator(files: files)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.postponePhoneBackup(id: "r1")
+
+        let relaunched = makeCoordinator(files: files)
+        await relaunched.coordinator.start()
+        #expect(relaunched.coordinator.current.value?.phoneAskAt == coordinatorTestStart + 60)
+    }
+
+    @Test func viewingLeavesARequestAskedOnThePhoneAlone() async {
+        let h = makeCoordinator(watchAvailable: false)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.postponePhoneBackup(id: "r1")
+        #expect(h.backup.scheduled.map(\.delay) == [0])
+        #expect(h.backup.cancelled.isEmpty)
+        #expect(h.coordinator.current.value?.phoneAskAt == coordinatorTestStart)
+    }
+
+    @Test func viewingForAnotherOrNoRequestChangesNothing() async {
+        let h = makeCoordinator()
+        await h.coordinator.postponePhoneBackup(id: "r1") // nothing is pending
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.postponePhoneBackup(id: "r2")
+        #expect(h.backup.scheduled.map(\.delay) == [15])
+        #expect(h.backup.cancelled.isEmpty)
+        #expect(h.coordinator.current.value?.phoneAskAt == coordinatorTestStart + 15)
+    }
+
+    @Test func eachRequestCanBePostponedOnce() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.postponePhoneBackup(id: "r1")
+        await h.coordinator.receive(meal(id: "r2"), via: .service) // replaces r1
+        await h.coordinator.postponePhoneBackup(id: "r2")
+        await h.coordinator.postponePhoneBackup(id: "r2")
+        #expect(h.backup.scheduled.map(\.delay) == [15, 60, 15, 60])
+        #expect(h.backup.scheduled.map(\.id) == ["r1", "r1", "r2", "r2"])
+    }
 }
 
 /// A meal request made and expiring at the given times.

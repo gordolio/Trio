@@ -24,7 +24,11 @@ extension PendingAIRequest: Identifiable {
     private var latest: PendingAIRequest?
     private var subscription: AnyCancellable?
 
-    init(isBackupDue: @escaping (PendingAIRequest) async -> Bool = { await AIRequestPhoneBackup().isDue($0) }) {
+    init(
+        isBackupDue: @escaping (PendingAIRequest) async -> Bool = {
+            await AIRequestPhoneBackup().isDue($0, now: Date())
+        }
+    ) {
         self.isBackupDue = isBackupDue
     }
 

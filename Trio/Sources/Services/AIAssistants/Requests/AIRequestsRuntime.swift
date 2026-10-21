@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Swinject
+import UserNotifications
 import WatchConnectivity
 
 /// Everything that handles an AI assistant's requests, built once at launch. The hooks in
@@ -25,6 +26,8 @@ final class AIRequestsRuntime {
     /// The one store of the request preferences, so a change in the settings reaches the coordinator.
     let preferences: AIAssistantsPreferencesStore
     let checkIn: AIAssistantsCheckIn
+    /// Sends each outcome to the watch and the notifier, for as long as the runtime lives.
+    private let outcomeSubscription: AnyCancellable
 
     /// `isLinked` says whether Trio is linked to the service, and `loopRuns` sends each loop run's date.
     /// `uploadNow` registers the device with the service again, which a new watch push token needs.
@@ -44,11 +47,12 @@ final class AIRequestsRuntime {
             .appendingPathComponent("pending-request.json")
 
         // The link forwards answers to the coordinator, which needs the link to reach the watch.
-        let answers = WatchAnswerRelay()
+        let relay = WatchRelay()
         let watchLink = AIRequestWatchLink(
             session: WCSession.default,
             keys: keys,
-            onAnswer: { answers.forward($0) },
+            onAnswer: { relay.forward($0) },
+            onViewing: { relay.viewing($0) },
             onWatchTokenChanged: uploadNow
         )
         let phoneBackup = AIRequestPhoneBackup()
@@ -62,7 +66,22 @@ final class AIRequestsRuntime {
             phoneBackup: phoneBackup,
             reporters: [.service: ServiceRequestReporter(api: api), .local: LoggingReporter()]
         )
-        answers.coordinator = coordinator
+        relay.coordinator = coordinator
+
+        // Subscribed here, before anything can start the coordinator: `outcomes` has no replay, and `start()` can send
+        // one at once, for an approval that Trio stopped carrying out. A later subscriber would miss it.
+        let notifier = AIRequestResultNotifier(
+            center: UNUserNotificationCenter.current(),
+            isShowing: { id in
+                // Called from the main queue, where the outcomes are received.
+                MainActor.assumeIsolated { AIRequestPhoneApprovalPresenter.shared.presented?.id == id }
+            }
+        )
+        outcomeSubscription = coordinator.outcomes
+            .receive(on: DispatchQueue.main)
+            .sink { outcome in
+                AIRequestsRuntime.publish(outcome, to: watchLink, notifier: notifier)
+            }
 
         self.coordinator = coordinator
         self.watchLink = watchLink
@@ -79,14 +98,35 @@ final class AIRequestsRuntime {
     }
 }
 
-/// Hands the watch's answers to the coordinator, which is made after the link that receives them. It is set
-/// before anything can reach the link.
-private final class WatchAnswerRelay {
+extension AIRequestsRuntime {
+    /// Tells the watch and the iPhone how a request ended. The watch hears the result of a request it was asked, and
+    /// the notifier decides whether the iPhone needs a notification.
+    static func publish(
+        _ outcome: AIRequestOutcome,
+        to watchLink: AIRequestWatchLink,
+        notifier: AIRequestResultNotifier
+    ) {
+        if outcome.askedOn == .watch {
+            watchLink.sendResult(AIRequestResultText.message(for: outcome))
+        }
+        notifier.notify(outcome)
+    }
+}
+
+/// Hands what the watch sends to the coordinator, which is made after the link that receives it. It is set before
+/// anything can reach the link.
+private final class WatchRelay {
     var coordinator: AIRequestCoordinator?
 
     func forward(_ answer: AIRequestAnswer) {
         guard let coordinator else { return }
         Task { _ = await coordinator.answer(.watch(answer)) }
+    }
+
+    /// The watch opened the approval screen of the request with this ID.
+    func viewing(_ id: String) {
+        guard let coordinator else { return }
+        Task { await coordinator.postponePhoneBackup(id: id) }
     }
 }
 

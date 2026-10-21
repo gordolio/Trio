@@ -30,6 +30,20 @@ enum AIRequestIdentifiers {
     static let keyAnswer = "aiRequestAnswer"
     /// The watch's push token, as hex, for the service to reach the watch directly.
     static let keyWatchPushToken = "aiWatchPushToken"
+    /// How a request ended, as JSON-encoded `AIRequestResultMessage`, sent from the phone to the watch.
+    static let keyResult = "aiRequestResult"
+    /// The ID of the request whose approval screen the watch has opened, sent from the watch to the phone so its
+    /// backup waits.
+    static let keyViewing = "aiRequestViewing"
+
+    // MARK: Notification slots
+
+    /// The identifier of a request's notification, so a newer request takes the place of an older one.
+    static let notificationSlot = "ai-request"
+    /// The identifier of a result's notification.
+    static let resultNotificationSlot = "ai-request-result"
+    /// The thread that groups the request, backup and result notifications.
+    static let threadID = "trio.ai-request"
 
     // MARK: Push payload
 

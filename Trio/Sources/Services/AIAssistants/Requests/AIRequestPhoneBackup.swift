@@ -35,7 +35,7 @@ extension UNUserNotificationCenter: AIRequestNotificationScheduling {
 }
 
 /// The iPhone's backup for a request: a time-sensitive notification that opens Trio's approval screen, which
-/// asks for Face ID before it approves.
+/// asks for Face ID before it approves. It's in the request's thread, with the notifications on the watch.
 final class AIRequestPhoneBackup: AIRequestPhoneBackupScheduling {
     /// The `userInfo` key that holds the request's ID.
     static let requestIDKey = "aiRequestId"
@@ -46,17 +46,26 @@ final class AIRequestPhoneBackup: AIRequestPhoneBackupScheduling {
         self.center = center
     }
 
-    func schedule(_ prompt: AIRequestPrompt, after delay: TimeInterval) {
+    func schedule(_ prompt: AIRequestPrompt, after delay: TimeInterval, askedOn: AIRequestAskedOn) {
         registerCategory()
 
         let content = UNMutableNotificationContent()
         content.title = prompt.title
-        content.body = String(
-            localized: "\(prompt.body) · Tap to approve with Face ID",
-            comment: "The body of the iPhone notification that asks to approve an AI assistant's request"
-        )
+        switch askedOn {
+        case .watch:
+            content.body = String(
+                localized: "\(prompt.body)\nNot answered on your watch yet. Tap to review.",
+                comment: "The body of the iPhone notification for a request that the watch was asked first"
+            )
+        case .phone:
+            content.body = String(
+                localized: "\(prompt.body)\nTap to review.",
+                comment: "The body of the iPhone notification for a request that is asked on the iPhone"
+            )
+        }
         content.sound = .default
         content.interruptionLevel = .timeSensitive
+        content.threadIdentifier = AIRequestIdentifiers.threadID
         content.categoryIdentifier = AIRequestIdentifiers.categoryPhone
         content.userInfo = [Self.requestIDKey: prompt.id]
 
@@ -71,15 +80,17 @@ final class AIRequestPhoneBackup: AIRequestPhoneBackupScheduling {
         center.removeDelivered([Self.identifier(for: id)])
     }
 
-    /// Whether the iPhone is asking for the request now, so opening Trio may show it: it was asked on the iPhone,
-    /// or its notification has been delivered. Before that, the watch is still asking alone.
-    func isDue(_ pending: PendingAIRequest) async -> Bool {
+    /// Whether the iPhone is asking for the request at `now`, so opening Trio may show it: it was asked on the iPhone,
+    /// the time it asks too has come, or its notification has been delivered. The time counts without the notification,
+    /// which may be gone: the wearer cleared it, or it was never allowed. Before then, the watch is still asking alone.
+    func isDue(_ pending: PendingAIRequest, now: Date) async -> Bool {
         if pending.askedOn == .phone { return true }
+        if let phoneAskAt = pending.phoneAskAt, now >= phoneAskAt { return true }
         return await center.deliveredIDs().contains(Self.identifier(for: pending.request.id))
     }
 
     private static func identifier(for requestID: String) -> String {
-        "ai-request-\(requestID)"
+        "\(AIRequestIdentifiers.notificationSlot)-\(requestID)"
     }
 
     /// Adds the phone category to the categories Trio has already registered. It's done when a request is
