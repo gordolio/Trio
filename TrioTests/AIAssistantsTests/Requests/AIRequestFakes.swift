@@ -29,6 +29,7 @@ final class FakeTreatments: AIRequestTreatments {
     private var storedRequests: [AIMealRequest] = []
     private var enactedUnits: [Decimal] = []
     private var recordedEvents: [String] = []
+    private var contextUnits: [Decimal] = []
     private var checkHook: (() async -> Void)?
     private var storeHook: (() async -> Void)?
     private var enactHook: (() async -> Void)?
@@ -36,6 +37,8 @@ final class FakeTreatments: AIRequestTreatments {
     var limits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250)
     /// What `dose(forCarbs:)` returns: 1.2 U, worked out on a loop run a minute before the tests start.
     var doseResult = AIRequestDose(units: 1.2, iobAsOf: coordinatorTestStart - 60)
+    /// What `context(for:units:)` returns.
+    var contextResult = AIRequestContext()
     /// What `checkBolus` returns: `nil` allows the bolus.
     var checkResult: String?
     /// What `carbsLogged(after:)` returns: `true` means carbs were logged after the date.
@@ -62,6 +65,8 @@ final class FakeTreatments: AIRequestTreatments {
         set { lock.withLock { enactHook = newValue } }
     }
 
+    /// The `units` of each `context(for:units:)` call.
+    var contextedUnits: [Decimal] { lock.withLock { contextUnits } }
     var checked: [Decimal] { lock.withLock { checkedUnits } }
     /// The `since` of each `checkBolus` call.
     var checkedSince: [Date] { lock.withLock { checkedSinceDates } }
@@ -76,8 +81,9 @@ final class FakeTreatments: AIRequestTreatments {
         doseResult
     }
 
-    func display(for request: AIMealRequest, units: Decimal) async -> AIRequestDisplay {
-        AIRequestDisplay(title: "\(request.source): \(request.description)", body: "\(request.carbs) g carbs · \(units) U")
+    func context(for _: AIMealRequest, units: Decimal) async -> AIRequestContext {
+        lock.withLock { contextUnits.append(units) }
+        return contextResult
     }
 
     func checkBolus(_ units: Decimal, since: Date) async -> String? {

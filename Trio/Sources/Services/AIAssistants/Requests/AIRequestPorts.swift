@@ -110,6 +110,8 @@ extension AIRequestOutcome {
 struct AIRequestDisplay: Codable, Equatable {
     let title: String
     let body: String
+    /// What Trio itself adds to the request, sent to the service so it can relay it to the watch.
+    var context: AIRequestContext? = nil
 }
 
 /// The wearer's max carbs, fat and protein, in grams.
@@ -182,7 +184,9 @@ protocol AIRequestReporter: AnyObject {
 protocol AIRequestTreatments: AnyObject {
     var limits: AIRequestLimits { get }
     func dose(forCarbs carbs: Decimal) async -> AIRequestDose
-    func display(for request: AIMealRequest, units: Decimal) async -> AIRequestDisplay
+    /// Trio's own facts for the request's approval: the latest glucose, recent carbs and insulin, and why the dose is
+    /// 0 U when `units` is 0. Every value is inside trio-rc's limits.
+    func context(for request: AIMealRequest, units: Decimal) async -> AIRequestContext
     /// Returns `nil` if the bolus is allowed, otherwise the reason it isn't. Only insulin given after `since` counts
     /// as recent.
     func checkBolus(_ units: Decimal, since: Date) async -> String?

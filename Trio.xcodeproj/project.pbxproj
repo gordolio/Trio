@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3F4DC5F2F4DE4EEE9846B260 /* AIRequestContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */; };
 		82CFBACD25404D5A8B965195 /* AIRequestResultNotifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6FDE9BB72A4935925E6D8A /* AIRequestResultNotifierTests.swift */; };
 		E731CC198F894E9BB7AA30A5 /* AIRequestResultNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C05967D293C74389915F3CF2 /* AIRequestResultNotifier.swift */; };
 		EDA143FE31514BC592665F76 /* AIRequestResultTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49878384CE7B446CA27D933B /* AIRequestResultTextTests.swift */; };
@@ -1326,6 +1327,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestContextTests.swift; sourceTree = "<group>"; };
 		CE6FDE9BB72A4935925E6D8A /* AIRequestResultNotifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestResultNotifierTests.swift; sourceTree = "<group>"; };
 		C05967D293C74389915F3CF2 /* AIRequestResultNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestResultNotifier.swift; sourceTree = "<group>"; };
 		49878384CE7B446CA27D933B /* AIRequestResultTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestResultTextTests.swift; sourceTree = "<group>"; };
@@ -2659,6 +2661,7 @@
 		7ADFEF598A034B3EAB259796 /* Requests */ = {
 			isa = PBXGroup;
 			children = (
+				252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */,
 				CE6FDE9BB72A4935925E6D8A /* AIRequestResultNotifierTests.swift */,
 				49878384CE7B446CA27D933B /* AIRequestResultTextTests.swift */,
 				249DB618871B4ABD9A90078D /* AIRequestOutcomeTests.swift */,
@@ -6891,6 +6894,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3F4DC5F2F4DE4EEE9846B260 /* AIRequestContextTests.swift in Sources */,
 				82CFBACD25404D5A8B965195 /* AIRequestResultNotifierTests.swift in Sources */,
 				EDA143FE31514BC592665F76 /* AIRequestResultTextTests.swift in Sources */,
 				AD1D7DCE6F7F4F9DB0ABAE35 /* AIRequestOutcomeTests.swift in Sources */,

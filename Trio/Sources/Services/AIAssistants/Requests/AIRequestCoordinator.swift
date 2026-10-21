@@ -172,13 +172,21 @@ actor AIRequestCoordinator {
             await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
             return
         }
-        let display = await treatments.display(for: request, units: units)
+        let context = await treatments.context(for: request, units: units)
 
         // Nothing suspends from here to the reports, so no other call sees the swap half done.
         let replaced = takePending()
         let preferences = self.preferences()
         let askedOn: AIRequestAskedOn = watch.isWatchAvailable ? .watch : .phone
         let shown = AIRequestShown(carbs: request.carbs, fat: request.fat, protein: request.protein, units: units)
+        let display = AIRequestDisplayText.display(
+            source: request.source,
+            description: request.description,
+            shown: shown,
+            context: context,
+            style: preferences.approvalStyle,
+            testKind: request.testKind
+        )
         let prompt = AIRequestPrompt(
             id: request.id,
             source: request.source,
@@ -190,7 +198,9 @@ actor AIRequestCoordinator {
             approvalStyle: preferences.approvalStyle,
             answerRoute: preferences.answerRoute,
             answerToken: nil,
-            answerURL: nil
+            answerURL: nil,
+            context: context,
+            testKind: request.testKind
         )
         let phoneDelay = askedOn == .phone ? 0 : preferences.phoneBackupDelay
         let pending = PendingAIRequest(
@@ -635,7 +645,11 @@ actor AIRequestCoordinator {
             approvalStyle: pending.prompt.approvalStyle,
             answerRoute: pending.prompt.answerRoute,
             shown: pending.prompt.shown,
-            display: AIRequestDisplay(title: pending.prompt.title, body: pending.prompt.body)
+            display: AIRequestDisplay(
+                title: pending.prompt.title,
+                body: pending.prompt.body,
+                context: pending.prompt.context
+            )
         )
     }
 

@@ -55,6 +55,88 @@ import Testing
         #expect(AIRequestPrompt.fromPush(["trio-rc": ["v": 1, "type": "check-in"]]) == nil)
     }
 
+    /// The service's push for a request, with `context` as `request.context` when it's given.
+    private static func push(context: Any? = nil) -> [AnyHashable: Any] {
+        var request: [String: Any] = [
+            "id": "r1", "source": "ChatGPT", "description": "slice of pizza",
+            "shown": ["carbs": "20.00", "fat": "0.00", "protein": "0.00", "units": "1.20"],
+            "expiresAt": "2026-10-19T15:09:05Z"
+        ]
+        if let context { request["context"] = context }
+        return [
+            "aps": ["alert": ["title": "t", "body": "b"], "category": "trio.request.review"],
+            "trio-rc": ["v": 1, "type": "request", "request": request]
+        ]
+    }
+
+    @Test func pushContextIsReadFromTheRequest() throws {
+        let context: [String: Any] = [
+            "glucose": "142 mg/dL ↗",
+            "glucoseAgeMinutes": 3,
+            "recentCarbs": ["amount": "20", "minutesAgo": 6],
+            "recentBolus": ["amount": "3.00", "minutesAgo": 8],
+            "noDoseReason": "glucose is low (52 mg/dL)"
+        ]
+        let prompt = try #require(AIRequestPrompt.fromPush(Self.push(context: context)))
+        #expect(prompt.context == AIRequestContext(
+            glucose: "142 mg/dL ↗",
+            glucoseAgeMinutes: 3,
+            recentCarbs: .init(amount: "20", minutesAgo: 6),
+            recentBolus: .init(amount: "3.00", minutesAgo: 8),
+            noDoseReason: "glucose is low (52 mg/dL)"
+        ))
+        #expect(prompt.testKind == nil)
+    }
+
+    @Test func pushContextMayHaveOnlySomeKeys() throws {
+        let prompt = try #require(AIRequestPrompt.fromPush(Self.push(context: ["glucose": "142 mg/dL"])))
+        #expect(prompt.context == AIRequestContext(glucose: "142 mg/dL"))
+        // An empty object is a context with nothing in it.
+        let empty = try #require(AIRequestPrompt.fromPush(Self.push(context: [String: Any]())))
+        #expect(empty.context == AIRequestContext())
+    }
+
+    @Test func pushWithoutAContextHasNone() throws {
+        #expect(try #require(AIRequestPrompt.fromPush(Self.push())).context == nil)
+    }
+
+    @Test func malformedPushContextIsIgnoredWithoutFailingThePrompt() throws {
+        let malformed: [Any] = [
+            "not an object",
+            7,
+            [1, 2, 3],
+            ["glucoseAgeMinutes": "three"],
+            ["glucoseAgeMinutes": 1.5],
+            ["glucose": 142],
+            ["recentCarbs": ["amount": "20"]],
+            ["recentBolus": ["amount": 3, "minutesAgo": 8]],
+            ["recentCarbs": "20 g"],
+            ["noDoseReason": ["glucose is low"]],
+            ["glucose": "142 mg/dL", "recentBolus": ["amount": "3.00", "minutesAgo": "8"]]
+        ]
+        for context in malformed {
+            // The request is still asked; it just has no context.
+            let prompt = try #require(AIRequestPrompt.fromPush(Self.push(context: context)), "\(context)")
+            #expect(prompt.id == "r1" && prompt.shown.units == "1.20")
+            #expect(prompt.context == nil, "\(context)")
+        }
+    }
+
+    @Test func promptKeepsItsContextAndTestKindThroughJSON() throws {
+        var prompt = Self.prompt
+        prompt.context = AIRequestContext(glucose: "142 mg/dL ↗", recentBolus: .init(amount: "3.00", minutesAgo: 8))
+        prompt.testKind = .real
+        let decoded = try JSONDecoder().decode(AIRequestPrompt.self, from: JSONEncoder().encode(prompt))
+        #expect(decoded == prompt)
+        // A prompt saved before these existed still reads.
+        let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any]
+        #expect(plain?["context"] == nil && plain?["testKind"] == nil)
+        #expect(
+            try JSONDecoder().decode(AIRequestPrompt.self, from: JSONSerialization.data(withJSONObject: plain ?? [:])) == Self
+                .prompt
+        )
+    }
+
     @Test func watchCategoriesPutTheGestureActionFirst() throws {
         let cats = AIRequestIdentifiers.watchCategories()
         let approve = try #require(cats.first { $0.identifier == "trio.request.approve" })

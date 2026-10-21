@@ -71,6 +71,11 @@ struct AIRequestPrompt: Codable, Equatable {
     /// The bearer token for relaying the answer to the service. Single use.
     let answerToken: String?
     let answerURL: URL?
+    /// What Trio itself adds to the request: the latest glucose, recent carbs and insulin, and why the dose is 0 U.
+    /// `nil` for a request made before Trio recorded them, or when the service sent none.
+    var context: AIRequestContext? = nil
+    /// Set only on the iPhone's test requests, which the approval says.
+    var testKind: AIRequestTestKind? = nil
 
     /// Reads the service's watch push. Returns `nil` unless it is a well-formed request.
     static func fromPush(_ userInfo: [AnyHashable: Any]) -> AIRequestPrompt? {
@@ -105,8 +110,18 @@ struct AIRequestPrompt: Codable, Equatable {
             approvalStyle: category == AIRequestIdentifiers.categoryApprove ? .oneGesture : .twoStep,
             answerRoute: (payload["answerRoute"] as? String).flatMap(AIRequestAnswerRoute.init(rawValue:)) ?? .both,
             answerToken: payload["answerToken"] as? String,
-            answerURL: (payload["answerUrl"] as? String).flatMap(URL.init(string:))
+            answerURL: (payload["answerUrl"] as? String).flatMap(URL.init(string:)),
+            context: context(from: request["context"])
         )
+    }
+
+    /// The service's `request.context`, or `nil` when it is missing or isn't what the contract says: a request
+    /// without its context is still asked.
+    private static func context(from value: Any?) -> AIRequestContext? {
+        guard let value, JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value)
+        else { return nil }
+        return try? JSONDecoder().decode(AIRequestContext.self, from: data)
     }
 
     /// ISO 8601, with or without fractional seconds.

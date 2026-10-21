@@ -87,6 +87,31 @@ import Testing
         #expect(obj["display"] as? [String: String] == ["title": "t", "body": "b"])
     }
 
+    @Test func pendingBodyCarriesTheContextInsideTheDisplay() throws {
+        let context = AIRequestContext(
+            glucose: "142 mg/dL ↗",
+            glucoseAgeMinutes: 3,
+            recentCarbs: .init(amount: "20", minutesAgo: 6),
+            recentBolus: .init(amount: "3.00", minutesAgo: 8),
+            noDoseReason: nil
+        )
+        let body = AIRequestStateBody(.pending(
+            askedOn: .watch,
+            approvalStyle: .twoStep,
+            answerRoute: .both,
+            shown: Self.shown,
+            display: .init(title: "t", body: "b", context: context)
+        ))
+        let display = try #require(try keys(of: body)["display"] as? [String: Any])
+        #expect(Set(display.keys) == ["title", "body", "context"])
+        let sent = try #require(display["context"] as? [String: Any])
+        // Exactly the keys trio-rc reads: a fact Trio doesn't have is left out, not null.
+        #expect(Set(sent.keys) == ["glucose", "glucoseAgeMinutes", "recentCarbs", "recentBolus"])
+        #expect(sent["glucose"] as? String == "142 mg/dL ↗" && sent["glucoseAgeMinutes"] as? Int == 3)
+        #expect(sent["recentCarbs"] as? [String: AnyHashable] == ["amount": "20", "minutesAgo": 6])
+        #expect(sent["recentBolus"] as? [String: AnyHashable] == ["amount": "3.00", "minutesAgo": 8])
+    }
+
     @Test func deliveringAndLoggedBodiesCarryShown() throws {
         for (report, state) in [
             (AIRequestReport.delivering(shown: Self.shown), "delivering"),

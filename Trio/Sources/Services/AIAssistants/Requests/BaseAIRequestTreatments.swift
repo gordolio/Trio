@@ -16,6 +16,17 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     /// The `minPredBG` the watch's bolus recommendation uses without a determination from the last 30 minutes.
     private static let defaultMinPredBG: Decimal = 54
 
+    /// The glucose and `minPredBG`, in mg/dL, under which Trio's bolus calculator gives 0 U: `BolusCalculationManager.swift:452`.
+    /// Copied here to say why a dose is 0 U. They are for display only: the dose comes from the calculator.
+    static let lowGlucoseMgdl: Decimal = 54
+    /// The loop run's age over which Trio's bolus calculator gives 0 U: `BolusCalculationManager.swift:452`. For display only.
+    static let staleLoopAge: TimeInterval = 15 * 60
+
+    /// Carbs entered more recently than this are shown, so a meal that's already logged stands out.
+    private static let recentCarbsWindow: TimeInterval = 15 * 60
+    /// A bolus given more recently than this is shown, so the wearer sees insulin that's already on its way.
+    private static let recentBolusWindow: TimeInterval = 30 * 60
+
     private let settingsManager: SettingsManager
     private let carbsStorage: CarbsStorage
     private let bolusCalculationManager: BolusCalculationManager
@@ -84,31 +95,153 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         return 0
     }
 
-    func display(for request: AIMealRequest, units: Decimal) async -> AIRequestDisplay {
+    /// Trio's own facts for the approval: the latest glucose, recent carbs and insulin, and, for a 0 U dose, why. A fact
+    /// that can't be read is left out.
+    func context(for _: AIMealRequest, units: Decimal) async -> AIRequestContext {
         let now = Date()
         var glucose: StatusSnapshot.LatestGlucose?
+        var treatments: [StatusSnapshot.Treatment] = []
         var displayUnits = settingsManager.settings.units.rawValue
-        var lastCarbs: (grams: Decimal, at: Date)?
         do {
             let snapshot = try await snapshotBuilder.build(now: now)
             glucose = snapshot.glucose.latest
+            treatments = snapshot.recentTreatments
             displayUnits = snapshot.units
-            lastCarbs = Self.lastCarbs(in: snapshot.recentTreatments, now: now)
         } catch {
-            debug(.service, "AI requests: couldn't read glucose and carbs for the notification: \(error)")
+            debug(.service, "AI requests: couldn't read glucose and treatments for the approval: \(error)")
         }
-        return AIRequestDisplay(
-            title: AIRequestDisplayText.title(source: request.source, description: request.description),
-            body: AIRequestDisplayText.body(
-                carbs: request.carbs,
-                fat: request.fat,
-                protein: request.protein,
-                units: units,
-                glucose: glucose,
-                displayUnits: displayUnits,
-                lastCarbs: lastCarbs,
-                now: now
+        // Only a 0 U dose needs the forecast.
+        let minPredBG = units > 0 ? Self.defaultMinPredBG : await latestDetermination().minPredBG
+        return Self.context(
+            glucose: glucose,
+            recentTreatments: treatments,
+            lastLoopDate: apsManager.lastLoopDate,
+            minPredBG: minPredBG,
+            displayUnits: displayUnits,
+            units: units,
+            now: now
+        )
+    }
+
+    /// The context from what Trio read. Every value is inside trio-rc's limits (see `AIRequestContext.Limit`): a fact
+    /// dated in the future or more than a day ago is left out, and so is one whose text won't fit, because trio-rc
+    /// refuses the whole pending report over one such value.
+    /// - Parameters:
+    ///   - glucose: The newest glucose reading, however old.
+    ///   - recentTreatments: Carbs entries and boluses, in any order.
+    ///   - lastLoopDate: When the loop last ran, `.distantPast` if it never did.
+    ///   - minPredBG: The forecast low the dose was worked out with, in mg/dL.
+    ///   - displayUnits: A `GlucoseUnits` raw value.
+    ///   - units: Trio's dose. The 0 U reason is set only when it is 0.
+    static func context(
+        glucose: StatusSnapshot.LatestGlucose?,
+        recentTreatments: [StatusSnapshot.Treatment],
+        lastLoopDate: Date,
+        minPredBG: Decimal,
+        displayUnits: String,
+        units: Decimal,
+        now: Date
+    ) -> AIRequestContext {
+        var result = AIRequestContext()
+
+        // A reading from the future is still the latest one, so it is shown, without an age. One over a day old is
+        // too old to show as current.
+        if let glucose, now.timeIntervalSince(glucose.date) <= TimeInterval(AIRequestContext.Limit.minutes * 60) {
+            result.glucose = AIRequestContext.fitted(
+                AIRequestDisplayText.reading(glucose, displayUnits: displayUnits),
+                toUTF16Units: AIRequestContext.Limit.glucose
             )
+            result.glucoseAgeMinutes = AIRequestContext.minutes(from: glucose.date, to: now)
+        }
+
+        result.recentCarbs = recent(
+            recentTreatments.filter { $0.type == .carbs },
+            within: recentCarbsWindow,
+            now: now
+        ) { treatment in
+            // Through the text, which gives 12.3 rather than 12.300000000000001.
+            guard let carbs = treatment.carbs, carbs > 0, let grams = Decimal(string: String(carbs)) else { return nil }
+            let wholeHundredths = rounded(grams, scale: 2, roundingMode: .down)
+            return wholeHundredths > 0 ? AIRequestDisplayText.amount(wholeHundredths) : nil
+        }
+        // An automatic microbolus isn't one the wearer asked for, and there can be many.
+        result.recentBolus = recent(
+            recentTreatments.filter { $0.type == .bolus && $0.isSMB != true },
+            within: recentBolusWindow,
+            now: now
+        ) { treatment in
+            guard let given = treatment.units, given > 0, let units = Decimal(string: String(given)),
+                  rounded(units, scale: 2, roundingMode: .plain) > 0
+            else { return nil }
+            return twoDecimals(units)
+        }
+
+        if units <= 0 {
+            result.noDoseReason = noDoseReason(
+                glucose: glucose,
+                minPredBG: minPredBG,
+                lastLoopDate: lastLoopDate,
+                displayUnits: displayUnits,
+                now: now
+            ).flatMap { AIRequestContext.fitted($0, toUTF16Units: AIRequestContext.Limit.noDoseReason) }
+        }
+        return result
+    }
+
+    /// The newest of `treatments` that isn't dated in the future, is under `window` old and has an amount from
+    /// `amount`. Left out when the amount won't fit trio-rc's limit: a cut number would read as a different one.
+    private static func recent(
+        _ treatments: [StatusSnapshot.Treatment],
+        within window: TimeInterval,
+        now: Date,
+        amount: (StatusSnapshot.Treatment) -> String?
+    ) -> AIRequestContext.Recent? {
+        let candidates = treatments.compactMap { treatment -> (date: Date, amount: String)? in
+            guard treatment.date <= now, now.timeIntervalSince(treatment.date) < window, let amount = amount(treatment)
+            else { return nil }
+            return (treatment.date, amount)
+        }
+        guard let newest = candidates.max(by: { $0.date < $1.date }),
+              newest.amount.utf16.count <= AIRequestContext.Limit.amount,
+              let minutes = AIRequestContext.minutes(from: newest.date, to: now)
+        else { return nil }
+        return AIRequestContext.Recent(amount: newest.amount, minutesAgo: minutes)
+    }
+
+    /// Why Trio's dose is 0 U, using the bolus calculator's own limits and its order: low glucose, a forecast low, a
+    /// loop that hasn't run, and otherwise insulin on board at its max.
+    private static func noDoseReason(
+        glucose: StatusSnapshot.LatestGlucose?,
+        minPredBG: Decimal,
+        lastLoopDate: Date,
+        displayUnits: String,
+        now: Date
+    ) -> String? {
+        if let glucose, Decimal(glucose.mgdl) < lowGlucoseMgdl {
+            let reading = AIRequestDisplayText.value(mgdl: glucose.mgdl, displayUnits: displayUnits)
+            return String(
+                localized: "glucose is low (\(reading))",
+                comment: "Why Trio's dose is 0 U: the placeholder is the glucose, for example '52 mg/dL'"
+            )
+        }
+        if minPredBG < lowGlucoseMgdl {
+            return String(
+                localized: "glucose is forecast to go low",
+                comment: "Why Trio's dose is 0 U: Trio's forecast goes under 54 mg/dL"
+            )
+        }
+        let loopAge = now.timeIntervalSince(lastLoopDate)
+        if loopAge > staleLoopAge {
+            // A loop that never ran has no date, so its age is as long as the service takes: a day.
+            let minutes = String(Int(min(loopAge, TimeInterval(AIRequestContext.Limit.minutes * 60)) / 60))
+            return String(
+                localized: "the loop hasn't run for \(minutes) min",
+                comment: "Why Trio's dose is 0 U: the placeholder is how many minutes ago the loop last ran"
+            )
+        }
+        return String(
+            localized: "insulin on board is at your max",
+            comment: "Why Trio's dose is 0 U: the insulin Trio has already given is at the max insulin on board"
         )
     }
 
@@ -223,17 +356,6 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
             request.fetchLimit = 1
             return try context.count(for: request) > 0
         }
-    }
-
-    /// The newest carbs entry that isn't in the future and has carbs.
-    private static func lastCarbs(in treatments: [StatusSnapshot.Treatment], now: Date) -> (grams: Decimal, at: Date)? {
-        for treatment in treatments where treatment.type == .carbs && treatment.date <= now {
-            // Through the text, which gives 12.3 rather than 12.300000000000001.
-            if let carbs = treatment.carbs, carbs > 0, let grams = Decimal(string: String(carbs)) {
-                return (grams, treatment.date)
-            }
-        }
-        return nil
     }
 
     /// What the service is told when Trio's bolus safety checks reject the dose.

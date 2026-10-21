@@ -1,11 +1,14 @@
 import Foundation
 
-/// The notification text the wearer sees for a request, for example
-/// "ChatGPT: slice of pizza" over "20 g carbs · 1.2 U · 142 mg/dL ↗ · last carbs 35 g, 4 min ago".
+/// The notification text the wearer sees for a request, for example "ChatGPT: slice of pizza" over
+///
+///     Bolus 2.10 U · 35 g carbs
+///     10 g fat · 12 g protein · 142 mg/dL ↗ · 3 min ago
+///     Carbs 20 g logged 6 min ago
+///     Bolus 3.00 U given 8 min ago
+///
+/// Every number sits next to its unit with a no-break space (U+00A0), so a line never wraps between them.
 enum AIRequestDisplayText {
-    /// Carbs entered more recently than this are shown, so a meal that's already logged stands out.
-    private static let recentCarbsWindow: TimeInterval = 15 * 60
-
     /// The service refuses notification text longer than this many UTF-16 code units, which is what its
     /// JavaScript string length counts, so an emoji takes two.
     static let maxLength = 200
@@ -51,33 +54,132 @@ enum AIRequestDisplayText {
         }
     }
 
-    /// The food, the dose, the latest glucose if there is one, and the last carbs if they're recent.
-    /// `displayUnits` is a `GlucoseUnits` raw value.
-    static func body(
-        carbs: Decimal,
-        fat: Decimal,
-        protein: Decimal,
-        units: Decimal,
-        glucose: StatusSnapshot.LatestGlucose?,
-        displayUnits: String,
-        lastCarbs: (grams: Decimal, at: Date)?,
-        now: Date
-    ) -> String {
-        var food = "\(amount(carbs)) g carbs"
-        if fat > 0 { food += ", \(amount(fat)) g fat" }
-        if protein > 0 { food += ", \(amount(protein)) g protein" }
+    /// The title and body of a request, and the context the service gets. Each line of the body appears only when it
+    /// applies: the dose first, then the fat, protein and glucose, the facts about recent carbs and insulin, why the
+    /// dose is 0 U, what a test is, and, when approving from the notification gives the bolus, that it does.
+    static func display(
+        source: String,
+        description: String,
+        shown: AIRequestShown,
+        context: AIRequestContext,
+        style: AIRequestApprovalStyle,
+        testKind: AIRequestTestKind?
+    ) -> AIRequestDisplay {
+        AIRequestDisplay(
+            title: title(source: source, description: description),
+            body: body(shown: shown, context: context, style: style, testKind: testKind),
+            context: context
+        )
+    }
 
-        var parts = [food, "\(amount(units)) U"]
-        if let glucose {
-            parts.append(reading(glucose, displayUnits: displayUnits))
+    /// A glucose reading is shown with its age from this many minutes old; a younger one is current.
+    private static let glucoseAgeShownFrom = 2
+
+    private static func body(
+        shown: AIRequestShown,
+        context: AIRequestContext,
+        style: AIRequestApprovalStyle,
+        testKind: AIRequestTestKind?
+    ) -> String {
+        let givesNoBolus = (Decimal(string: shown.units) ?? 1) <= 0
+        let carbs = trimmed(shown.carbs)
+        var lines: [String] = []
+
+        lines.append(
+            givesNoBolus
+                ? String(
+                    localized: "No bolus · \(carbs)\u{00A0}g carbs",
+                    comment: "Request notification, first line when Trio's dose is 0 U: the carbs. The no-break space keeps the number with its unit."
+                )
+                : String(
+                    localized: "Bolus \(shown.units)\u{00A0}U · \(carbs)\u{00A0}g carbs",
+                    comment: "Request notification, first line: Trio's dose, then the carbs. The no-break spaces keep each number with its unit."
+                )
+        )
+
+        var details: [String] = []
+        if let fat = positive(shown.fat) {
+            details.append(String(
+                localized: "\(fat)\u{00A0}g fat",
+                comment: "Request notification: the fat in grams. The no-break space keeps the number with its unit."
+            ))
         }
-        if let lastCarbs {
-            let age = now.timeIntervalSince(lastCarbs.at)
-            if age >= 0, age < recentCarbsWindow {
-                parts.append("last carbs \(amount(lastCarbs.grams)) g, \(Int(age / 60)) min ago")
+        if let protein = positive(shown.protein) {
+            details.append(String(
+                localized: "\(protein)\u{00A0}g protein",
+                comment: "Request notification: the protein in grams. The no-break space keeps the number with its unit."
+            ))
+        }
+        if let glucose = nonEmpty(context.glucose) {
+            details.append(glucose)
+            if let age = context.glucoseAgeMinutes, age >= glucoseAgeShownFrom {
+                details.append(String(
+                    localized: "\(String(age)) min ago",
+                    comment: "Request notification: how old the glucose reading is, in minutes"
+                ))
             }
         }
-        return capped(parts.joined(separator: " · "))
+        if !details.isEmpty {
+            lines.append(details.joined(separator: " · "))
+        }
+
+        if let reason = nonEmpty(context.noDoseReason) {
+            lines.append(String(
+                localized: "Trio suggests no insulin now: \(reason)",
+                comment: "Request notification: why Trio's dose is 0 U. The placeholder is the reason, for example 'glucose is low (52 mg/dL)'."
+            ))
+        }
+        if let carbs = context.recentCarbs {
+            lines.append(String(
+                localized: "Carbs \(carbs.amount)\u{00A0}g logged \(String(carbs.minutesAgo)) min ago",
+                comment: "Request notification: carbs logged a few minutes ago. The no-break space keeps the number with its unit."
+            ))
+        }
+        if let bolus = context.recentBolus {
+            lines.append(String(
+                localized: "Bolus \(bolus.amount)\u{00A0}U given \(String(bolus.minutesAgo)) min ago",
+                comment: "Request notification: a bolus given a few minutes ago. The no-break space keeps the number with its unit."
+            ))
+        }
+
+        switch testKind {
+        case .dryRun:
+            lines.append(String(
+                localized: "Test only: nothing is logged or given",
+                comment: "Request notification: this request is a dry-run test"
+            ))
+        case .real:
+            lines.append(String(
+                localized: "Real dose. Decline unless you're eating this.",
+                comment: "Request notification: this request is a test that gives Trio's real dose"
+            ))
+        case nil:
+            break
+        }
+
+        // Approving from the notification gives the bolus, unless there is no bolus or it is a dry run.
+        if style == .oneGesture, !givesNoBolus, testKind != .dryRun {
+            lines.append(String(
+                localized: "Approve gives the bolus now",
+                comment: "Request notification, last line when approving from the notification gives the bolus"
+            ))
+        }
+        return cappedBody(lines.joined(separator: "\n"))
+    }
+
+    /// A number as text without trailing zeros: "35.00" is "35", "12.50" is "12.5".
+    private static func trimmed(_ amount: String) -> String {
+        Decimal(string: amount)?.description ?? amount
+    }
+
+    /// The amount without trailing zeros when it is above 0, otherwise `nil`.
+    private static func positive(_ amount: String) -> String? {
+        guard let value = Decimal(string: amount), value > 0 else { return nil }
+        return value.description
+    }
+
+    private static func nonEmpty(_ text: String?) -> String? {
+        text.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// Text over `maxLength` is cut short, at a whole character, and ends with "…".
@@ -92,6 +194,61 @@ enum AIRequestDisplayText {
             length += character.utf16.count
         }
         return result + "…"
+    }
+
+    /// Like `capped`, but the cut never falls inside a number and its unit ("2.10 U", "35 g", "6 min"): a cut amount
+    /// would read as a different one. The cut moves back to the amount's start, and the text left ends clear of the
+    /// separator before it.
+    private static func cappedBody(_ text: String) -> String {
+        guard text.utf16.count > maxLength else { return text }
+        let characters = Array(text)
+        var count = 0
+        var length = 0
+        for character in characters {
+            // "…" is one UTF-16 unit.
+            guard length + character.utf16.count <= maxLength - 1 else { break }
+            length += character.utf16.count
+            count += 1
+        }
+        if let amount = amountRanges(in: characters).first(where: { $0.lowerBound < count && count < $0.upperBound }) {
+            count = amount.lowerBound
+        }
+        var kept = characters[..<count]
+        while let last = kept.last, last.isWhitespace || last == "·" {
+            kept = kept.dropLast()
+        }
+        return String(kept) + "…"
+    }
+
+    /// Where the numbers are, each with the unit word after it when there is one: "2.10 U", "35 g", "142 mg/dL".
+    private static func amountRanges(in characters: [Character]) -> [Range<Int>] {
+        func isDigit(_ character: Character) -> Bool { ("0" ... "9").contains(character) }
+        var ranges: [Range<Int>] = []
+        var index = 0
+        while index < characters.count {
+            guard isDigit(characters[index]) else {
+                index += 1
+                continue
+            }
+            var end = index
+            while end < characters.count, isDigit(characters[end]) || characters[end] == "." {
+                end += 1
+            }
+            // A full stop after the number ends a sentence, it isn't part of the number.
+            while end > index + 1, characters[end - 1] == "." {
+                end -= 1
+            }
+            var unitEnd = end
+            if end + 1 < characters.count, characters[end] == " " || characters[end] == "\u{00A0}", characters[end + 1].isLetter {
+                unitEnd = end + 1
+                while unitEnd < characters.count, characters[unitEnd].isLetter || characters[unitEnd] == "/" {
+                    unitEnd += 1
+                }
+            }
+            ranges.append(index ..< unitEnd)
+            index = unitEnd
+        }
+        return ranges
     }
 
     /// The arrow for a `BloodGlucose.Direction` raw value, or "" when there's no trend.
@@ -122,17 +279,24 @@ enum AIRequestDisplayText {
     }
 
     /// "142 mg/dL ↗", or "7.9 mmol/L ↗" to one decimal.
-    private static func reading(_ glucose: StatusSnapshot.LatestGlucose, displayUnits: String) -> String {
-        let mmol = NSDecimalNumber(decimal: glucose.mgdl.asMmolL).doubleValue
-        let value = displayUnits == GlucoseUnits.mmolL.rawValue
-            ? "\(String(format: "%.1f", mmol)) \(GlucoseUnits.mmolL.rawValue)"
-            : "\(glucose.mgdl) \(GlucoseUnits.mgdL.rawValue)"
-        return [value, arrow(glucose.direction)].filter { !$0.isEmpty }.joined(separator: " ")
+    static func reading(_ glucose: StatusSnapshot.LatestGlucose, displayUnits: String) -> String {
+        [value(mgdl: glucose.mgdl, displayUnits: displayUnits), arrow(glucose.direction)]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// "142 mg/dL", or "7.9 mmol/L" to one decimal. `displayUnits` is a `GlucoseUnits` raw value.
+    static func value(mgdl: Int, displayUnits: String) -> String {
+        if displayUnits == GlucoseUnits.mmolL.rawValue {
+            let mmol = NSDecimalNumber(decimal: mgdl.asMmolL).doubleValue
+            return "\(String(format: "%.1f", mmol)) \(GlucoseUnits.mmolL.rawValue)"
+        }
+        return "\(mgdl) \(GlucoseUnits.mgdL.rawValue)"
     }
 
     /// Up to two decimals, rounded down so a dose never reads higher than what's delivered, with trailing zeros
     /// trimmed and a "." whatever the locale, like the rest of this English text.
-    private static func amount(_ value: Decimal) -> String {
+    static func amount(_ value: Decimal) -> String {
         rounded(value, scale: 2, roundingMode: .down).description
     }
 }
