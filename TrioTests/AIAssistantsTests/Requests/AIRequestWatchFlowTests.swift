@@ -170,7 +170,7 @@ import Testing
         var late = flow
         late.receiptArrived()
         #expect(!late.isNoReply(at: after.addingTimeInterval(60)))
-        #expect(late.text(at: after.addingTimeInterval(60), units: "2.10", source: "ChatGPT").headline == "Approved")
+        #expect(late.text(at: after.addingTimeInterval(60), units: "2.10", source: "ChatGPT").headline == "Sent to Trio")
 
         // Nothing is no-reply before an answer.
         #expect(!Self.flow().isNoReply(at: Self.shownAt.addingTimeInterval(600)))
@@ -319,8 +319,8 @@ import Testing
         var approved = Self.sending(.approve)
         approved.receiptArrived()
         let approvedText = text(approved)
-        #expect(approvedText.headline == "Approved")
-        #expect(approvedText.detail == "Trio is starting the bolus.")
+        #expect(approvedText.headline == "Sent to Trio")
+        #expect(approvedText.detail == "Waiting for the result.")
 
         var declined = Self.sending(.decline)
         declined.receiptArrived()

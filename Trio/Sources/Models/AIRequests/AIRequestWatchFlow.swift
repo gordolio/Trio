@@ -2,11 +2,14 @@ import Foundation
 
 /// What `AIRequestWatchCenter` did with an answer, for the approval screen to show.
 enum AIRequestSendResult: Equatable {
-    /// The phone was reachable, and the answer went to it live.
+    /// The answer went out: to the service, or live to the phone because it was reachable. Whether it got there isn't
+    /// known until the phone's receipt.
     case sent
-    /// The phone wasn't reachable, so the answer is queued for it. Nothing says when it will get there.
+    /// The phone wasn't reachable and the service isn't used, so the answer waits in WatchConnectivity's queue for the
+    /// phone. Nothing says when it will get there.
     case queued
-    /// The answer wasn't sent at all: the watch has no key to sign it with yet.
+    /// The answer wasn't sent at all: the watch has no key to sign it with yet, or the request had expired or been
+    /// withdrawn.
     case notSent
 }
 
@@ -17,7 +20,8 @@ enum AIRequestWatchPhase: Equatable {
     case asking
     /// The wearer answered at `since`. `queued` means the phone wasn't reachable.
     case sending(AIRequestDecision, since: Date, queued: Bool)
-    /// The phone has the answer, and is carrying it out.
+    /// The phone withdrew the request after the wearer answered. It has the answer, or the request ended another way
+    /// (it expired, was replaced or was canceled), so only its result says which.
     case received(AIRequestDecision)
     /// The answer couldn't be sent, so the wearer answers on the iPhone.
     case notSent
@@ -124,9 +128,17 @@ struct AIRequestWatchFlow: Equatable {
         case let .received(decision):
             switch decision {
             case .approve:
+                // Not "Approved": the phone also withdraws a request that expired, was replaced or was canceled, so
+                // only the result says the approval was taken.
                 return (
-                    String(localized: "Approved", comment: "Watch approval: the iPhone has the approval"),
-                    String(localized: "Trio is starting the bolus.", comment: "Watch approval: after an approval")
+                    String(
+                        localized: "Sent to Trio",
+                        comment: "Watch approval: the iPhone withdrew the request after the approval"
+                    ),
+                    String(
+                        localized: "Waiting for the result.",
+                        comment: "Watch approval: after an approval, until the iPhone's result"
+                    )
                 )
             case .decline:
                 return (

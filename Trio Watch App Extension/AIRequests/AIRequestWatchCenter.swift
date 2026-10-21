@@ -40,7 +40,8 @@ import WatchKit
     /// How long a change to the request notification's slot waits for the notification center.
     private static let slotTimeout: TimeInterval = 5
 
-    /// The request the approval screen shows.
+    /// The request the approval screen shows. Trio opens and closes the screen with `present` and `closeScreen`; the
+    /// screen's cover sets it to `nil` when the system dismisses it.
     var presented: AIRequestPrompt?
     /// Requests the wearer answered here that the phone has since withdrawn: the phone has taken the answer, or the
     /// request ended another way. Its result follows.
@@ -64,6 +65,9 @@ import WatchKit
     @ObservationIgnored private var approvedFromNotificationIDs: Set<String> = []
     /// The requests the watch has seen, by ID, so the iPhone's backup can open one. Only unexpired ones are kept.
     @ObservationIgnored private var knownPrompts: [String: AIRequestPrompt] = [:]
+    /// Requests whose screen Trio closed or replaced itself, rather than the wearer or the system dismissing it. The
+    /// screen's safety net reads this as it goes, so only a dismissal it didn't expect counts as a decline. Main queue only.
+    @ObservationIgnored private var closingIDs: Set<String> = []
     /// Whether the session has been activated. Before that, WatchConnectivity drops anything sent.
     @ObservationIgnored private var isSessionActive = false
     /// Messages sent before the session was activated.
@@ -184,8 +188,8 @@ import WatchKit
                 if !self.receipts.contains(id) {
                     self.receipts.insert(id)
                 }
-            } else if self.presented?.id == id {
-                self.presented = nil
+            } else {
+                self.closeScreen(id)
             }
         }
         Task { await WatchLogger.shared.log("AI requests: \(id) was withdrawn") }
@@ -521,7 +525,7 @@ import WatchKit
     }
 
     /// Whether a request can still be shown and answered: it hasn't expired and the phone hasn't withdrawn it.
-    private func isOpen(_ prompt: AIRequestPrompt) -> Bool {
+    func isOpen(_ prompt: AIRequestPrompt) -> Bool {
         Date() < prompt.expiresAt && !isWithdrawn(prompt.id)
     }
 
@@ -640,7 +644,7 @@ import WatchKit
             }
             remember(prompt)
             DispatchQueue.main.async {
-                self.presented = prompt
+                self.present(prompt)
             }
         default:
             Task { await WatchLogger.shared.log("AI requests: unknown action \(response.actionIdentifier) for \(prompt.id)") }
@@ -648,8 +652,8 @@ import WatchKit
     }
 
     /// The iPhone's backup, forwarded to the wrist, opens the watch's own approval screen for its request while that
-    /// request is still open. A request the service pushed while the app wasn't in front never reached the app, so
-    /// it's looked for among the delivered notifications too.
+    /// request is still open and the watch hasn't answered it. A request the service pushed while the app wasn't in
+    /// front never reached the app, so it's looked for among the delivered notifications too.
     private func openFromPhoneBackup(_ response: UNNotificationResponse, completionHandler: @escaping () -> Void) {
         guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
               let id = response.notification.request.content.userInfo[AIRequestIdentifiers.backupRequestIDKey] as? String
@@ -686,12 +690,50 @@ import WatchKit
             return
         }
         DispatchQueue.main.async {
-            self.presented = prompt
+            self.present(prompt)
         }
     }
 
     private static func logNotOpening(_ id: String, because reason: String) {
         Task { await WatchLogger.shared.log("AI requests: not opening \(id) from the iPhone's notification: \(reason)") }
+    }
+
+    // MARK: The approval screen
+
+    /// Opens the approval screen for `prompt`, unless the wearer already answered it on the watch or the phone has said
+    /// how it ended: the screen never asks twice. A screen it takes the place of was closed by Trio, not dismissed.
+    /// Main queue only.
+    private func present(_ prompt: AIRequestPrompt) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let id = prompt.id
+        guard !isAnswered(id) else {
+            Task { await WatchLogger.shared.log("AI requests: not opening \(id): the watch already answered it") }
+            return
+        }
+        guard results[id] == nil else {
+            Task { await WatchLogger.shared.log("AI requests: not opening \(id): it has ended") }
+            return
+        }
+        if let shown = presented, shown.id != prompt.id {
+            closingIDs.insert(shown.id)
+        }
+        closingIDs.remove(id)
+        presented = prompt
+    }
+
+    /// Closes the approval screen if it shows `id`, and notes that Trio closed it, so the screen doesn't count it as
+    /// dismissed. Main queue only.
+    func closeScreen(_ id: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard presented?.id == id else { return }
+        closingIDs.insert(id)
+        presented = nil
+    }
+
+    /// Whether Trio closed or replaced the screen for `id` itself. It's asked once, as the screen goes. Main queue only.
+    func screenWasClosedByTrio(_ id: String) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return closingIDs.remove(id) != nil
     }
 
     // MARK: WCSessionDelegate
