@@ -55,8 +55,8 @@ enum AIRequestDisplayText {
     }
 
     /// The title and body of a request, and the context the service gets. Each line of the body appears only when it
-    /// applies: the dose first, then the fat, protein and glucose, the facts about recent carbs and insulin, why the
-    /// dose is 0 U, what a test is, and, when approving from the notification gives the bolus, that it does.
+    /// applies: the dose first, then the fat, protein and glucose, why the dose is 0 U, the facts about recent carbs and
+    /// insulin, what a test is, and, when approving from the notification gives the bolus, that it does.
     static func display(
         source: String,
         description: String,
@@ -72,16 +72,16 @@ enum AIRequestDisplayText {
         )
     }
 
-    /// A glucose reading is shown with its age from this many minutes old; a younger one is current.
-    private static let glucoseAgeShownFrom = 2
-
     private static func body(
         shown: AIRequestShown,
         context: AIRequestContext,
         style: AIRequestApprovalStyle,
         testKind: AIRequestTestKind?
     ) -> String {
-        let givesNoBolus = (Decimal(string: shown.units) ?? 1) <= 0
+        let givesNoBolus = AIRequestContextRows.givesNoBolus(shown)
+        // Trio's context rows, shared with the watch's approval screen so the two can't drift apart. The glucose joins
+        // the fat and protein on the second line; the rest follow in their own order.
+        let rows = AIRequestContextRows.rows(context: context, shown: shown, testKind: testKind)
         let carbs = trimmed(shown.carbs)
         var lines: [String] = []
 
@@ -110,58 +110,13 @@ enum AIRequestDisplayText {
                 comment: "Request notification: the protein in grams. The no-break space keeps the number with its unit."
             ))
         }
-        if let glucose = nonEmpty(context.glucose) {
-            details.append(glucose)
-            if let age = context.glucoseAgeMinutes, age >= glucoseAgeShownFrom {
-                details.append(String(
-                    localized: "\(String(age)) min ago",
-                    comment: "Request notification: how old the glucose reading is, in minutes"
-                ))
-            }
+        if let glucose = rows.first(where: { $0.kind == .glucose }) {
+            details.append(glucose.text)
         }
         if !details.isEmpty {
             lines.append(details.joined(separator: " · "))
         }
-
-        if let reason = nonEmpty(context.noDoseReason) {
-            lines.append(String(
-                localized: "Trio suggests no insulin now: \(reason)",
-                comment: "Request notification: why Trio's dose is 0 U. The placeholder is the reason, for example 'glucose is low (52 mg/dL)'."
-            ))
-        } else if givesNoBolus {
-            // Trio only says a reason it knows is true.
-            lines.append(String(
-                localized: "Trio suggests no insulin now",
-                comment: "Request notification: Trio's dose is 0 U and there's no reason to give"
-            ))
-        }
-        if let carbs = context.recentCarbs {
-            lines.append(String(
-                localized: "Carbs \(carbs.amount)\u{00A0}g logged \(String(carbs.minutesAgo)) min ago",
-                comment: "Request notification: carbs logged a few minutes ago. The no-break space keeps the number with its unit."
-            ))
-        }
-        if let bolus = context.recentBolus {
-            lines.append(String(
-                localized: "Bolus \(bolus.amount)\u{00A0}U given \(String(bolus.minutesAgo)) min ago",
-                comment: "Request notification: a bolus given a few minutes ago. The no-break space keeps the number with its unit."
-            ))
-        }
-
-        switch testKind {
-        case .dryRun:
-            lines.append(String(
-                localized: "Test only: nothing is logged or given",
-                comment: "Request notification: this request is a dry-run test"
-            ))
-        case .real:
-            lines.append(String(
-                localized: "Real dose. Decline unless you're eating this.",
-                comment: "Request notification: this request is a test that gives Trio's real dose"
-            ))
-        case nil:
-            break
-        }
+        lines += rows.filter { $0.kind != .glucose }.map(\.text)
 
         // Approving from the notification gives the bolus, unless there is no bolus or it is a dry run.
         if style == .oneGesture, !givesNoBolus, testKind != .dryRun {
@@ -182,10 +137,6 @@ enum AIRequestDisplayText {
     private static func positive(_ amount: String) -> String? {
         guard let value = Decimal(string: amount), value > 0 else { return nil }
         return value.description
-    }
-
-    private static func nonEmpty(_ text: String?) -> String? {
-        text.flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// Text over `maxLength` is cut short, at a whole character, and ends with "…".

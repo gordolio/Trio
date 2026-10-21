@@ -175,7 +175,8 @@ import WatchKit
     }
 
     /// The phone has stopped asking for the request. If the wearer answered it here, that's the phone's receipt, and
-    /// the screen stays for the result. Otherwise the screen closes, if it shows this request.
+    /// the screen stays for the result. Otherwise the screen closes, if it shows this request, unless the request has
+    /// expired: then the screen shows "Expired" until the wearer closes it.
     private func withdraw(_ id: String) {
         lock.withLock {
             _ = withdrawnIDs.insert(id)
@@ -188,6 +189,8 @@ import WatchKit
                 if !self.receipts.contains(id) {
                     self.receipts.insert(id)
                 }
+            } else if let shown = self.presented, shown.id == id, shown.expiresAt <= Date() {
+                // The phone's own expiry: the screen says "Expired" itself, and waits for Close.
             } else {
                 self.closeScreen(id)
             }

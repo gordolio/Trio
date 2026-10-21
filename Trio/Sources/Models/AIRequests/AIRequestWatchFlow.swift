@@ -31,6 +31,24 @@ enum AIRequestWatchPhase: Equatable {
     case expired
 }
 
+/// How the approval screen leaves a phase.
+enum AIRequestWatchEnding: Equatable {
+    /// Nothing to press: the phone's receipt or result moves it on. The asking screen has its own buttons.
+    case waits
+    /// Closes by itself when its ring runs out, or with Done.
+    case closesBySelf(AIRequestWatchRing)
+    /// Stays until the wearer presses Close.
+    case close
+}
+
+/// The closing ring's look.
+enum AIRequestWatchRing: Equatable {
+    /// The request was carried out: the bolus started, the carbs were logged, or a test passed.
+    case success
+    /// Nothing happened, as the wearer asked.
+    case neutral
+}
+
 /// The watch approval screen's phases, and its words for each. A plain value with no clock of its own: the view
 /// passes the time in, so every rule here is testable.
 struct AIRequestWatchFlow: Equatable {
@@ -39,10 +57,14 @@ struct AIRequestWatchFlow: Equatable {
     static let armingDelay: TimeInterval = 1
     /// How long an answer can wait for the phone's receipt before the screen says there's been no reply.
     static let noReplyAfter: TimeInterval = 15
+    /// With less than this left to answer, the screen counts down.
+    static let countdownFrom: TimeInterval = 60
 
     let shownAt: Date
     let expiresAt: Date
     private(set) var phase: AIRequestWatchPhase = .asking
+    /// The wearer's answer on this screen, sent or not. It decides whether a neutral result can close by itself.
+    private(set) var decision: AIRequestDecision?
 
     init(shownAt: Date, expiresAt: Date) {
         self.shownAt = shownAt
@@ -53,6 +75,7 @@ struct AIRequestWatchFlow: Equatable {
     /// answer; the first one stands. The caller checks `acceptsApprove(at:)` before it sends an Approve.
     mutating func answered(_ decision: AIRequestDecision, _ result: AIRequestSendResult, at now: Date) {
         guard phase == .asking else { return }
+        self.decision = decision
         switch result {
         case .sent:
             phase = .sending(decision, since: now, queued: false)
@@ -95,6 +118,46 @@ struct AIRequestWatchFlow: Equatable {
     func isNoReply(at now: Date) -> Bool {
         guard case let .sending(_, since, _) = phase else { return false }
         return now >= since.addingTimeInterval(Self.noReplyAfter)
+    }
+
+    /// How the screen leaves the phase now. Only an outcome the wearer can take as read closes by itself: a success,
+    /// or nothing happening after a decline. Anything else after an Approve, a warning or failure, no reply, a request
+    /// that wasn't sent and an expiry wait for Close, so the screen never shows a success it doesn't know about. A
+    /// neutral result for a request not answered here waits too: the screen can't tell whether the wearer declined it.
+    func ending(at now: Date) -> AIRequestWatchEnding {
+        switch phase {
+        case .asking:
+            return .waits
+        case .sending:
+            return isNoReply(at: now) ? .close : .waits
+        case .received(.approve):
+            // "Sent to Trio" isn't a result: the wearer can close it, and a failure still reaches them as a notification.
+            return .close
+        case .received(.decline):
+            return .closesBySelf(.neutral)
+        case .expired,
+             .notSent:
+            return .close
+        case let .result(message):
+            switch message.tone {
+            case .success:
+                return .closesBySelf(.success)
+            case .neutral:
+                return decision == .decline ? .closesBySelf(.neutral) : .close
+            case .failure,
+                 .warning:
+                return .close
+            }
+        }
+    }
+
+    /// The time left to answer as "m:ss", rounded up to whole seconds, once that's under `countdownFrom`: from "0:59"
+    /// down to "0:00". `nil` before then, and once the request isn't being asked any more.
+    func countdown(at now: Date) -> String? {
+        guard phase == .asking else { return nil }
+        let seconds = max(0, Int(expiresAt.timeIntervalSince(now).rounded(.up)))
+        guard TimeInterval(seconds) < Self.countdownFrom else { return nil }
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     /// The headline and detail for the phase. `units` is `AIRequestShown.units`, and `source` is the assistant's name.

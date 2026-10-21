@@ -4,15 +4,16 @@ import WatchKit
 
 /// The screen an AI assistant's request opens on the watch: what it asks for, the wearer's answer, and what became of
 /// it. The wearer approves by turning the crown, or on watchOS 11 and later with Approve or a double tap, and declines
-/// with the button. The screen has no X. Once it's answered, it closes itself after a good or neutral result, and
-/// otherwise waits for Close. If the system still closes it while it's asking, that counts as a dismissal.
+/// with the button. The screen has no X. Once it's answered, it closes itself only after an outcome the wearer can take
+/// as read, and otherwise waits for Close. If the system still closes it while it's asking, that counts as a dismissal.
 ///
 /// The carbs and dose come from `prompt.shown`, which is what the answer is signed against and what the phone checks
-/// it for. The context rows are Trio's own, and show only when Trio's signature over them checks out.
+/// it for. The context rows are Trio's own (`AIRequestContextRows`, as in the notification), and show only when Trio's
+/// signature over them checks out.
 ///
-/// `AIRequestWatchFlow` holds the phases. The phone's receipt and result move it on, and the clock only expires a
-/// request nobody has answered. Nothing sleeps: `TimelineView`s tell the time, and the closing ring is an animation
-/// whose completion closes the screen.
+/// `AIRequestWatchFlow` holds the phases and the rules for each: how it ends, and when the countdown shows. The phone's
+/// receipt and result move it on, and the clock only expires a request nobody has answered. Nothing sleeps:
+/// `TimelineView`s tell the time, and the closing ring is an animation whose completion closes the screen.
 struct AIRequestApprovalView: View {
     let prompt: AIRequestPrompt
 
@@ -26,18 +27,13 @@ struct AIRequestApprovalView: View {
 
     /// Whether Trio signed what the screen shows, so it can show the context rows. Worked out once: it reads the key.
     private let isDisplayVerified: Bool
-    private let contextLines: [ContextLine]
+    private let contextRows: [AIRequestContextRow]
 
     private let trioBackgroundColor = LinearGradient(
         gradient: Gradient(colors: [Color.bgDarkBlue, Color.bgDarkerDarkBlue]),
         startPoint: .top,
         endPoint: .bottom
     )
-
-    /// A reading is shown with its age from this many minutes old, as in the notification.
-    private static let glucoseAgeShownFrom = 2
-    /// The hint becomes a countdown with less than this many seconds left.
-    private static let countdownFrom = 60
 
     init(prompt: AIRequestPrompt) {
         let center = AIRequestWatchCenter.shared
@@ -56,7 +52,7 @@ struct AIRequestApprovalView: View {
         self.prompt = prompt
         _flow = State(initialValue: flow)
         self.isDisplayVerified = isDisplayVerified
-        contextLines = Self.contextLines(for: prompt)
+        contextRows = AIRequestContextRows.rows(context: prompt.context, shown: prompt.shown, testKind: prompt.testKind)
     }
 
     private var center: AIRequestWatchCenter { .shared }
@@ -124,30 +120,27 @@ struct AIRequestApprovalView: View {
 
     // MARK: Asking
 
+    /// How much of the asking screen fits. Each step down sheds one more thing.
+    private struct Fit {
+        var titleLines = 2
+        var showsFatAndProtein = true
+        var showsHint = true
+        var smallControls = false
+        /// The last resort: the context rows take whatever room is left, and their text shrinks to fit it.
+        var squeezesContext = false
+    }
+
     private var request: some View {
-        VStack(spacing: 4) {
-            // On a small screen the title's second line goes first, then the fat and protein. The amounts, Trio's
-            // context rows, the bar, the hint and the buttons always stay.
-            ViewThatFits(in: .vertical) {
-                summary(titleLines: 2, showsFatAndProtein: true)
-                summary(titleLines: 1, showsFatAndProtein: true)
-                summary(titleLines: 1, showsFatAndProtein: false)
-            }
-
-            ProgressView(value: confirmationProgress, total: 1.0)
-                .tint(confirmationProgress > 0 ? Color.loopGreen : Color.gray)
-                .padding(.horizontal)
-
-            hint
-
-            HStack {
-                Button("Decline") {
-                    answer(.decline, declinedBy: .button)
-                }
-                .buttonStyle(.bordered)
-
-                approveButton
-            }
+        // On a small screen it sheds, in order: the title's second line, the fat and protein, the hint, the controls'
+        // size, and last the context rows' text size. The title, the amounts and Decline always stay, every context row
+        // stays, and an amount is never scaled or cut.
+        ViewThatFits(in: .vertical) {
+            asking(Fit())
+            asking(Fit(titleLines: 1))
+            asking(Fit(titleLines: 1, showsFatAndProtein: false))
+            asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false))
+            asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false, smallControls: true))
+            asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false, smallControls: true, squeezesContext: true))
         }
         .focusable(true)
         .focused($isCrownFocused)
@@ -172,33 +165,60 @@ struct AIRequestApprovalView: View {
         }
     }
 
-    /// What the request asks for: the dose and the carbs first, then Trio's context.
-    private func summary(titleLines: Int, showsFatAndProtein: Bool) -> some View {
-        VStack(spacing: 2) {
+    /// The request, in the brief's order: the title, the dose, the carbs, Trio's context, the fat and protein, then the
+    /// bar, the hint and the buttons. Everything but the context rows has layout priority, so in the last resort the
+    /// rows are the part that gives.
+    private func asking(_ fit: Fit) -> some View {
+        VStack(spacing: 4) {
             Text(prompt.title)
                 .font(.footnote.bold())
                 .multilineTextAlignment(.center)
-                .lineLimit(titleLines)
+                .lineLimit(fit.titleLines)
                 .padding(.top, 6)
+                .layoutPriority(1)
 
             VStack(alignment: .leading, spacing: 2) {
                 amountRow("Bolus", value: units, color: Color.insulin)
+                    .layoutPriority(1)
                 amountRow("Carbs:", value: carbs, color: .orange)
+                    .layoutPriority(1)
 
-                if showsFatAndProtein, let fatAndProtein {
+                contextRowsView(squeezed: fit.squeezesContext)
+
+                if fit.showsFatAndProtein, let fatAndProtein {
                     Text(fatAndProtein)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                 }
-
-                contextRows
             }
             .padding(.horizontal)
+
+            ProgressView(value: confirmationProgress, total: 1.0)
+                .tint(confirmationProgress > 0 ? Color.loopGreen : Color.gray)
+                .padding(.horizontal)
+                .layoutPriority(1)
+
+            if fit.showsHint {
+                hint
+                    .layoutPriority(1)
+            }
+
+            HStack {
+                Button("Decline") {
+                    answer(.decline, declinedBy: .button)
+                }
+                .buttonStyle(.bordered)
+
+                approveButton
+            }
+            .controlSize(fit.smallControls ? .small : .regular)
+            .layoutPriority(1)
         }
     }
 
+    /// A label and its amount. The amount is never scaled or cut: the label gives way first.
     private func amountRow(_ label: LocalizedStringKey, value: String, color: Color) -> some View {
         HStack {
             Text(label)
@@ -206,40 +226,45 @@ struct AIRequestApprovalView: View {
             Text(value)
                 .bold()
                 .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize()
+                .layoutPriority(1)
         }
     }
 
-    /// Trio's context, never cut short. Without Trio's signature over it, one row says it couldn't be checked.
-    @ViewBuilder private var contextRows: some View {
+    /// Trio's context, never dropped. It wraps rather than being cut, except in the last resort, where it shrinks to the
+    /// room left. Without Trio's signature over it, one row says it couldn't be checked.
+    @ViewBuilder private func contextRowsView(squeezed: Bool) -> some View {
         if isDisplayVerified {
-            ForEach(Array(contextLines.enumerated()), id: \.offset) { _, line in
+            ForEach(Array(contextRows.enumerated()), id: \.offset) { _, row in
                 Group {
-                    if line.isWarning {
-                        Label(line.text, systemImage: "exclamationmark.triangle.fill")
+                    if row.isWarning {
+                        Label(row.text, systemImage: "exclamationmark.triangle.fill")
                             .foregroundStyle(.yellow)
                     } else {
-                        Text(line.text)
+                        Text(row.text)
                     }
                 }
                 .font(.footnote)
-                .fixedSize(horizontal: false, vertical: true)
+                .minimumScaleFactor(squeezed ? 0.6 : 1)
+                .fixedSize(horizontal: false, vertical: !squeezed)
             }
         } else {
             Text("Couldn't check Trio's details for this request.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .minimumScaleFactor(squeezed ? 0.6 : 1)
+                .fixedSize(horizontal: false, vertical: !squeezed)
         }
     }
 
     /// How to approve, or how long is left once that's under a minute.
     private var hint: some View {
         TimelineView(.periodic(from: flow.shownAt, by: 1)) { context in
-            let secondsLeft = max(0, Int(prompt.expiresAt.timeIntervalSince(context.date).rounded(.up)))
             Group {
-                if secondsLeft < Self.countdownFrom {
+                if let countdown = flow.countdown(at: context.date) {
                     Text(String(
-                        localized: "Expires in \(Self.countdown(secondsLeft))",
+                        localized: "Expires in \(countdown)",
                         comment: "Watch approval: the time left to answer, as m:ss"
                     ))
                         .foregroundStyle(.orange)
@@ -266,11 +291,6 @@ struct AIRequestApprovalView: View {
         return String(localized: "Turn the crown to approve", comment: "Watch approval: how to approve, on watchOS 10")
     }
 
-    /// "0:45".
-    private static func countdown(_ seconds: Int) -> String {
-        String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-
     /// The double tap presses this button. There's none on watchOS 10, which approves with the crown only.
     @ViewBuilder private var approveButton: some View {
         if #available(watchOS 11, *) {
@@ -285,12 +305,12 @@ struct AIRequestApprovalView: View {
 
     // MARK: Answered, expired or ended
 
-    /// One icon over the flow's headline and detail, then Done or Close when the phase has one.
+    /// One icon over the flow's headline and detail, then Done or Close as the flow's ending says.
     private func outcome(at now: Date) -> some View {
-        let look = appearance(at: now)
+        let ending = flow.ending(at: now)
         let text = flow.text(at: now, units: prompt.shown.units, source: prompt.source)
         let content = VStack(spacing: 6) {
-            icon(look)
+            icon(appearance(at: now), ring: ending.ring)
 
             Text(text.headline)
                 .font(.headline)
@@ -303,7 +323,7 @@ struct AIRequestApprovalView: View {
                     .multilineTextAlignment(.center)
             }
 
-            endButton(look.ending)
+            endButton(ending)
                 .padding(.top, 4)
         }
         .padding(.horizontal)
@@ -315,13 +335,13 @@ struct AIRequestApprovalView: View {
         }
     }
 
-    @ViewBuilder private func icon(_ look: Look) -> some View {
+    @ViewBuilder private func icon(_ look: Look, ring: AIRequestWatchRing?) -> some View {
         if let symbol = look.symbol {
             ZStack {
-                if look.ending == .done {
+                if let ring {
                     Circle()
                         .trim(from: 0, to: ringLeft)
-                        .stroke(look.color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .stroke(Self.color(of: ring), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
                 Image(systemName: symbol)
@@ -334,11 +354,20 @@ struct AIRequestApprovalView: View {
         }
     }
 
-    @ViewBuilder private func endButton(_ ending: Ending) -> some View {
+    private static func color(of ring: AIRequestWatchRing) -> Color {
+        switch ring {
+        case .success:
+            return .loopGreen
+        case .neutral:
+            return .secondary
+        }
+    }
+
+    @ViewBuilder private func endButton(_ ending: AIRequestWatchEnding) -> some View {
         switch ending {
         case .waits:
             EmptyView()
-        case .done:
+        case .closesBySelf:
             Button("Done") {
                 close()
             }
@@ -351,58 +380,49 @@ struct AIRequestApprovalView: View {
         }
     }
 
-    /// How a phase ends: on its own, with Done and the ring, or with Close.
-    private enum Ending {
-        /// No button: the phone's receipt or result moves it on.
-        case waits
-        /// Closes itself when the ring runs out, or with Done.
-        case done
-        /// Stays until the wearer closes it.
-        case close
-    }
-
     private struct Look {
         /// The SF Symbol, or `nil` for a spinner.
         let symbol: String?
         let color: Color
-        let ending: Ending
     }
 
+    /// The phase's icon. Only a success the phone reported is a green check: "Sent to Trio" is a paper plane, as the
+    /// answer is on its way and nothing is known yet.
     private func appearance(at now: Date) -> Look {
         let warning = "exclamationmark.triangle.fill"
         switch flow.phase {
         case .asking:
-            return Look(symbol: nil, color: .secondary, ending: .waits)
+            return Look(symbol: nil, color: .secondary)
         case let .sending(_, _, queued):
             if flow.isNoReply(at: now) {
-                return Look(symbol: warning, color: .orange, ending: .close)
+                return Look(symbol: warning, color: .orange)
             }
-            return Look(symbol: queued ? "clock.arrow.circlepath" : nil, color: .secondary, ending: .waits)
+            return Look(symbol: queued ? "clock.arrow.circlepath" : nil, color: .secondary)
         case .received(.approve):
-            return Look(symbol: "checkmark.circle.fill", color: .loopGreen, ending: .waits)
+            return Look(symbol: "paperplane.circle", color: .secondary)
         case .received(.decline):
-            return Look(symbol: "xmark.circle", color: .secondary, ending: .done)
+            return Look(symbol: "xmark.circle", color: .secondary)
         case .notSent:
-            return Look(symbol: warning, color: .loopRed, ending: .close)
+            return Look(symbol: warning, color: .loopRed)
         case .expired:
-            return Look(symbol: "clock.badge.xmark", color: .secondary, ending: .close)
+            return Look(symbol: "clock.badge.xmark", color: .secondary)
         case let .result(message):
             switch message.tone {
             case .success:
-                return Look(symbol: "checkmark.circle.fill", color: .loopGreen, ending: .done)
+                return Look(symbol: "checkmark.circle.fill", color: .loopGreen)
             case .neutral:
-                return Look(symbol: "xmark.circle", color: .secondary, ending: .done)
+                return Look(symbol: "xmark.circle", color: .secondary)
             case .warning:
-                return Look(symbol: warning, color: .orange, ending: .close)
+                return Look(symbol: warning, color: .orange)
             case .failure:
-                return Look(symbol: warning, color: .loopRed, ending: .close)
+                return Look(symbol: warning, color: .loopRed)
             }
         }
     }
 
-    /// Whether the phase closes the screen by itself: a success, a neutral result or a decline the phone has.
+    /// Whether the phase closes the screen by itself, as the flow says.
     private var closesBySelf: Bool {
-        appearance(at: Date()).ending == .done
+        flow.ending(at: Date()).ring != nil
     }
 
     /// Drains the ring, then closes the screen, unless the phase has since moved on to one that waits for Close.
@@ -461,86 +481,7 @@ struct AIRequestApprovalView: View {
         _ = center.answer(prompt, .decline, declinedBy: .dismissed)
     }
 
-    // MARK: Amounts and context
-
-    /// A row of Trio's context. A warning is about insulin or carbs given a moment ago, or a test that gives the real
-    /// dose.
-    private struct ContextLine {
-        let text: String
-        let isWarning: Bool
-    }
-
-    /// Trio's context rows, in order: carbs and insulin given a moment ago, the glucose, why the dose is 0 U, and what
-    /// a test does. No context and an empty one show the same.
-    private static func contextLines(for prompt: AIRequestPrompt) -> [ContextLine] {
-        let context = prompt.context ?? AIRequestContext()
-        var lines: [ContextLine] = []
-
-        if let carbs = context.recentCarbs {
-            lines.append(ContextLine(
-                text: String(
-                    localized: "Carbs \(carbs.amount)\u{00A0}g logged \(String(carbs.minutesAgo)) min ago",
-                    comment: "Watch approval: carbs logged a few minutes ago. The no-break space keeps the number with its unit."
-                ),
-                isWarning: true
-            ))
-        }
-        if let bolus = context.recentBolus {
-            lines.append(ContextLine(
-                text: String(
-                    localized: "Bolus \(bolus.amount)\u{00A0}U given \(String(bolus.minutesAgo)) min ago",
-                    comment: "Watch approval: a bolus given a few minutes ago. The no-break space keeps the number with its unit."
-                ),
-                isWarning: true
-            ))
-        }
-        if let glucose = context.glucose, !glucose.isEmpty {
-            var parts = [glucose]
-            if let age = context.glucoseAgeMinutes, age >= glucoseAgeShownFrom {
-                parts.append(String(
-                    localized: "\(String(age)) min ago",
-                    comment: "Watch approval: how old the glucose reading is, in minutes"
-                ))
-            }
-            lines.append(ContextLine(text: parts.joined(separator: " · "), isWarning: false))
-        }
-        if let reason = context.noDoseReason, !reason.isEmpty {
-            lines.append(ContextLine(
-                text: String(
-                    localized: "Trio suggests no insulin now: \(reason)",
-                    comment: "Watch approval: why Trio's dose is 0 U. The placeholder is the reason, for example 'glucose is low (52 mg/dL)'."
-                ),
-                isWarning: false
-            ))
-        } else if givesNoBolus(prompt.shown) {
-            // Trio only says a reason it knows is true.
-            lines.append(ContextLine(
-                text: String(
-                    localized: "Trio suggests no insulin now",
-                    comment: "Watch approval: Trio's dose is 0 U and there's no reason to give"
-                ),
-                isWarning: false
-            ))
-        }
-        switch prompt.testKind {
-        case .dryRun:
-            lines.append(ContextLine(
-                text: String(localized: "Test only: nothing is given", comment: "Watch approval: this request is a dry-run test"),
-                isWarning: false
-            ))
-        case .real:
-            lines.append(ContextLine(
-                text: String(
-                    localized: "Real dose. Decline unless you're eating this.",
-                    comment: "Watch approval: this request is a test that gives Trio's real dose"
-                ),
-                isWarning: true
-            ))
-        case nil:
-            break
-        }
-        return lines
-    }
+    // MARK: Amounts
 
     /// "2.10 U": the shown dose as it is, with two decimals and a `.`, as in the notification.
     private var units: String {
@@ -591,9 +532,15 @@ struct AIRequestApprovalView: View {
         guard let value = amount(shown), value > 0 else { return nil }
         return value.description
     }
+}
 
-    private static func givesNoBolus(_ shown: AIRequestShown) -> Bool {
-        (amount(shown.units) ?? 1) <= 0
+private extension AIRequestWatchEnding {
+    /// The ring of a phase that closes by itself, or `nil`.
+    var ring: AIRequestWatchRing? {
+        if case let .closesBySelf(ring) = self {
+            return ring
+        }
+        return nil
     }
 }
 
@@ -650,14 +597,16 @@ private extension AIRequestPrompt {
 }
 
 private extension AIRequestResultMessage {
-    static func preview(headline: String, detail: String, tone: Tone) -> AIRequestResultMessage {
+    static func preview(headline: String, detail: String, tone: Tone, answeredOn: AIRequestAnswerSide? = .watch)
+        -> AIRequestResultMessage
+    {
         AIRequestResultMessage(
             id: "preview-request",
             title: "ChatGPT: slice of pizza",
             headline: headline,
             detail: detail,
             tone: tone,
-            answeredOn: .watch
+            answeredOn: answeredOn
         )
     }
 }
@@ -675,6 +624,22 @@ private func previewScreen(
 
 #Preview("Asking") {
     previewScreen()
+}
+
+#Preview("Asking: every context row, long title, fat and protein") {
+    // The worst case for a 41 mm watch: every row Trio can add at once.
+    previewScreen(.preview(
+        title: "Claude: lasagne with a side salad and garlic bread",
+        shown: AIRequestShown(carbs: "82.50", fat: "28.00", protein: "31.25", units: "0.00"),
+        context: AIRequestContext(
+            glucose: "61 mg/dL ↘",
+            glucoseAgeMinutes: 4,
+            recentCarbs: AIRequestContext.Recent(amount: "20", minutesAgo: 6),
+            recentBolus: AIRequestContext.Recent(amount: "3.00", minutesAgo: 8),
+            noDoseReason: "glucose is forecast to go low"
+        ),
+        testKind: .real
+    ))
 }
 
 #Preview("Asking: fat, protein and a long title") {
@@ -729,6 +694,18 @@ private func previewScreen(
     previewScreen {
         $0.answered(.approve, .sent, at: Date())
         $0.resultArrived(.preview(headline: "Bolus started: 2.10\u{00A0}U", detail: "45\u{00A0}g carbs logged.", tone: .success))
+    }
+}
+
+#Preview("Replaced after Approve") {
+    previewScreen {
+        $0.answered(.approve, .sent, at: Date())
+        $0.resultArrived(.preview(
+            headline: "Replaced",
+            detail: "A newer request from ChatGPT is waiting.",
+            tone: .neutral,
+            answeredOn: nil
+        ))
     }
 }
 

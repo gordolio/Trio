@@ -290,6 +290,112 @@ import Testing
         #expect(refused.phase == .result(refusal))
     }
 
+    @Test(
+        "Only a success, or nothing happening after a decline, closes by itself; everything else waits for Close"
+    ) func endingForEveryPhaseAndDecision() {
+        let now = Self.shownAt.addingTimeInterval(5)
+        let success = Self.message()
+        let neutral = Self.message(headline: "Expired", detail: "Nothing was logged.", tone: .neutral, answeredOn: nil)
+        let warning = Self.message(headline: "Carbs logged, no bolus", detail: "Check Trio.", tone: .warning)
+        let failure = Self.message(headline: "Not given", detail: "Nothing was logged.", tone: .failure)
+
+        // Asking has its own buttons.
+        #expect(Self.flow().ending(at: now) == .waits)
+
+        for decision in [AIRequestDecision.approve, .decline] {
+            // Sending, live or queued, waits for the receipt, then turns to No reply with Close at 15 s.
+            for queued in [false, true] {
+                let sending = Self.sending(decision, queued: queued)
+                #expect(sending.ending(at: Self.shownAt.addingTimeInterval(1 + 14.9)) == .waits)
+                #expect(sending.ending(at: Self.shownAt.addingTimeInterval(1 + 15)) == .close)
+            }
+
+            var notSent = Self.flow()
+            notSent.answered(decision, .notSent, at: now)
+            #expect(notSent.ending(at: now) == .close)
+
+            // A success closes by itself, and a warning or failure never does, whatever the answer was.
+            for (result, ending) in [
+                (success, AIRequestWatchEnding.closesBySelf(.success)),
+                (warning, .close),
+                (failure, .close)
+            ] {
+                var resulted = Self.sending(decision)
+                resulted.resultArrived(result)
+                #expect(resulted.ending(at: now) == ending)
+            }
+        }
+
+        // "Sent to Trio" isn't a result: it waits for one, with Close. A decline the phone has closes by itself.
+        var receivedApprove = Self.sending(.approve)
+        receivedApprove.receiptArrived()
+        #expect(receivedApprove.ending(at: now) == .close)
+        var receivedDecline = Self.sending(.decline)
+        receivedDecline.receiptArrived()
+        #expect(receivedDecline.ending(at: now) == .closesBySelf(.neutral))
+
+        // A neutral result closes by itself only after a decline: after an Approve it means the dose wasn't given.
+        var neutralAfterDecline = Self.sending(.decline)
+        neutralAfterDecline.resultArrived(neutral)
+        #expect(neutralAfterDecline.ending(at: now) == .closesBySelf(.neutral))
+        var neutralAfterApprove = Self.sending(.approve)
+        neutralAfterApprove.resultArrived(neutral)
+        #expect(neutralAfterApprove.ending(at: now) == .close)
+        var neutralAfterUnsentDecline = Self.flow()
+        neutralAfterUnsentDecline.answered(.decline, .notSent, at: now)
+        neutralAfterUnsentDecline.resultArrived(neutral)
+        #expect(neutralAfterUnsentDecline.ending(at: now) == .closesBySelf(.neutral))
+
+        // A result for a request not answered here: a success closes, a neutral one waits.
+        var unansweredSuccess = Self.flow()
+        unansweredSuccess.resultArrived(Self.message(answeredOn: .phone))
+        #expect(unansweredSuccess.ending(at: now) == .closesBySelf(.success))
+        var unansweredNeutral = Self.flow()
+        unansweredNeutral
+            .resultArrived(Self.message(headline: "Declined", detail: "Nothing was logged.", tone: .neutral, answeredOn: .phone))
+        #expect(unansweredNeutral.ending(at: now) == .close)
+
+        var expired = Self.flow()
+        expired.expireIfDue(at: Self.expiresAt)
+        #expect(expired.ending(at: Self.expiresAt) == .close)
+    }
+
+    @Test("The first answer is the one kept") func decisionIsTheFirstAnswer() {
+        var flow = Self.flow()
+        #expect(flow.decision == nil)
+        flow.answered(.approve, .sent, at: Self.shownAt.addingTimeInterval(2))
+        flow.answered(.decline, .sent, at: Self.shownAt.addingTimeInterval(3))
+        #expect(flow.decision == .approve)
+
+        var expired = Self.flow()
+        expired.expireIfDue(at: Self.expiresAt)
+        expired.answered(.decline, .sent, at: Self.expiresAt.addingTimeInterval(1))
+        #expect(expired.decision == nil)
+    }
+
+    @Test("The last minute counts down as m:ss, rounded up, only while asking") func countdownInTheLastMinute() {
+        let flow = Self.flow()
+        #expect(AIRequestWatchFlow.countdownFrom == 60)
+        #expect(flow.countdown(at: Self.shownAt) == nil)
+        #expect(flow.countdown(at: Self.expiresAt.addingTimeInterval(-60)) == nil)
+        #expect(flow.countdown(at: Self.expiresAt.addingTimeInterval(-59.5)) == nil)
+        #expect(flow.countdown(at: Self.expiresAt.addingTimeInterval(-59)) == "0:59")
+        #expect(flow.countdown(at: Self.expiresAt.addingTimeInterval(-45)) == "0:45")
+        #expect(flow.countdown(at: Self.expiresAt.addingTimeInterval(-9.2)) == "0:10")
+        #expect(flow.countdown(at: Self.expiresAt.addingTimeInterval(-0.2)) == "0:01")
+        #expect(flow.countdown(at: Self.expiresAt) == "0:00")
+        #expect(flow.countdown(at: Self.expiresAt.addingTimeInterval(5)) == "0:00")
+
+        // An answered or expired request doesn't count down.
+        let lastMinute = Self.expiresAt.addingTimeInterval(-30)
+        var answered = Self.flow()
+        answered.answered(.approve, .sent, at: lastMinute)
+        #expect(answered.countdown(at: lastMinute) == nil)
+        var expired = Self.flow()
+        expired.expireIfDue(at: Self.expiresAt)
+        #expect(expired.countdown(at: Self.expiresAt) == nil)
+    }
+
     @Test("The screen's words, for every phase, exactly") func textForEveryPhase() {
         let now = Self.shownAt.addingTimeInterval(5)
         func text(_ flow: AIRequestWatchFlow, at: Date = now) -> (headline: String, detail: String?) {
