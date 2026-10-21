@@ -54,7 +54,12 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
 
     var limits: AIRequestLimits {
         let settings = settingsManager.settings
-        return AIRequestLimits(maxCarbs: settings.maxCarbs, maxFat: settings.maxFat, maxProtein: settings.maxProtein)
+        return AIRequestLimits(
+            maxCarbs: settings.maxCarbs,
+            maxFat: settings.maxFat,
+            maxProtein: settings.maxProtein,
+            maxBolus: settingsManager.pumpSettings.maxBolus
+        )
     }
 
     /// Trio's bolus calculator's dose for the carbs, as the watch's bolus recommendation gets it, made deliverable
@@ -309,14 +314,15 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         }
     }
 
-    /// Stores the meal as Trio's remote meal command does, eaten now, with the description in the note, then checks
-    /// the meal entry was saved: `CarbsStorage` doesn't report a failed save.
-    func storeCarbs(for request: AIMealRequest) async throws {
+    /// Stores the meal as Trio's remote meal command does, eaten now, with the assistant and the description in the
+    /// note, then checks the meal entry was saved: `CarbsStorage` doesn't report a failed save. `carbs` replaces the
+    /// request's own carbs when set.
+    func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws {
         let id = UUID()
         let entry = CarbsEntry(
             id: id.uuidString, createdAt: Date(), actualDate: nil,
-            carbs: request.carbs, fat: request.fat, protein: request.protein,
-            note: "AI: \(request.description)", enteredBy: CarbsEntry.local, isFPU: false,
+            carbs: carbs ?? request.carbs, fat: request.fat, protein: request.protein,
+            note: request.note, enteredBy: CarbsEntry.local, isFPU: false,
             fpuID: request.fat > 0 || request.protein > 0 ? UUID().uuidString : nil
         )
         do {

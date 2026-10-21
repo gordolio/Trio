@@ -13,6 +13,16 @@ struct AIMealRequest: Codable, Equatable {
     let expiresAt: Date
 }
 
+extension AIMealRequest {
+    /// The note its carbs entry is logged with: who asked, and the meal.
+    var note: String {
+        String(
+            localized: "AI: \(source) \u{2013} \(description)",
+            comment: "Note of a carbs entry an AI assistant asked for: the assistant's name, an en dash, and the meal"
+        )
+    }
+}
+
 /// Where a request came from, and so where its states are reported. The service is the only one; the pending request
 /// and the carry-out marker keep their channel on disk, so it stays an enum.
 enum AIRequestChannel: String, Codable {
@@ -120,11 +130,46 @@ struct AIRequestDisplay: Codable, Equatable {
     var mac: String? = nil
 }
 
-/// The wearer's max carbs, fat and protein, in grams.
+/// The wearer's max carbs, fat and protein, in grams, and max bolus, in units.
 struct AIRequestLimits: Equatable {
     let maxCarbs: Decimal
     let maxFat: Decimal
     let maxProtein: Decimal
+    let maxBolus: Decimal
+}
+
+/// Why the pending request left pending. Each device with the request open hears it, so it can close its screen.
+enum AIRequestLeft: Equatable {
+    /// A device took it to carry out: the first to confirm.
+    case claimed(AIRequestAnswerSide)
+    case declined(AIRequestDeclinedOn)
+    case expired
+    /// Its assistant canceled it.
+    case withdrawn
+    /// A newer request took its place.
+    case replaced
+}
+
+/// What became of the bolus on the Treatments sheet a request opened.
+enum AIRequestPhoneBolus: Equatable {
+    /// No bolus was asked for: the carbs only.
+    case none
+    /// The pump started the bolus.
+    case started
+    case failed(reason: String)
+    /// A bolus was asked for, but neither started nor failed before the sheet closed, as when Face ID was canceled.
+    case notStarted
+    /// The units were logged as insulin given outside Trio.
+    case external
+}
+
+/// What the Treatments sheet a request opened logged and gave.
+struct AIRequestPhoneResult: Equatable {
+    let carbs: Decimal
+    let fat: Decimal
+    let protein: Decimal
+    let units: Decimal
+    let bolus: AIRequestPhoneBolus
 }
 
 /// What Trio reports about a request: the contract's state report.
@@ -194,7 +239,9 @@ protocol AIRequestTreatments: AnyObject {
     func checkBolus(_ units: Decimal, since: Date) async -> String?
     /// Whether a meal entry, not a fat and protein equivalent, is dated after `date` and not in the future.
     func carbsLogged(after date: Date) async -> Bool
-    func storeCarbs(for request: AIMealRequest) async throws
+    /// Stores the request's meal, eaten now, with the note `AI: <source> – <description>`. `carbs` replaces the
+    /// request's own carbs when set; the fat and protein are always the request's.
+    func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws
     /// Returns `nil` if the pump accepted the bolus, otherwise the reason it didn't.
     func enactBolus(_ units: Decimal) async -> String?
 }

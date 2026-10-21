@@ -49,14 +49,14 @@ import Testing
     }
 
     @Test func overMaxCarbsFailsWithoutAsking() async {
-        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 50, maxProtein: 50))
+        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 50, maxProtein: 50, maxBolus: 10))
         await h.coordinator.receive(meal(id: "r1", carbs: 80), via: .service)
         #expect(h.reporter.reports.map(\.report) == [.failed(reason: "Over your max carbs (50 g)", carbsLogged: false)])
         #expect(h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
     }
 
     @Test func overMaxFatOrProteinFailsWithItsOwnWording() async {
-        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 30, maxProtein: 40))
+        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 30, maxProtein: 40, maxBolus: 10))
         await h.coordinator.receive(meal(id: "r1", fat: 31), via: .service)
         await h.coordinator.receive(meal(id: "r2", protein: 41), via: .service)
         await h.coordinator.receive(meal(id: "r3", carbs: 50, fat: 30, protein: 40), via: .service)
@@ -168,7 +168,7 @@ import Testing
     }
 
     @Test func finalReportSurvivesRelaunch() async {
-        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 50, maxProtein: 50))
+        let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 50, maxProtein: 50, maxBolus: 10))
         await h.coordinator.receive(meal(id: "r1", carbs: 80), via: .service)
         let failed = AIRequestReport.failed(reason: "Over your max carbs (50 g)", carbsLogged: false)
         #expect(h.reporter.reports.map(\.report) == [failed])

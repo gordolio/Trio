@@ -21,12 +21,21 @@ func meal(id: String, carbs: Decimal = 20, fat: Decimal = 10, protein: Decimal =
     )
 }
 
+/// The meal a `storeCarbs` call stored: the carbs override, or the request's own carbs, with its fat and protein.
+struct StoredCarbs: Equatable {
+    let id: String
+    let carbs: Decimal
+    let fat: Decimal
+    let protein: Decimal
+}
+
 final class FakeTreatments: AIRequestTreatments {
     private let lock = NSLock()
     private var checkedUnits: [Decimal] = []
     private var checkedSinceDates: [Date] = []
     private var carbsCheckedAfter: [Date] = []
     private var storedRequests: [AIMealRequest] = []
+    private var storedMeals: [StoredCarbs] = []
     private var enactedUnits: [Decimal] = []
     private var recordedEvents: [String] = []
     private var contextUnits: [Decimal] = []
@@ -34,7 +43,7 @@ final class FakeTreatments: AIRequestTreatments {
     private var storeHook: (() async -> Void)?
     private var enactHook: (() async -> Void)?
 
-    var limits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250)
+    var limits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250, maxBolus: 10)
     /// What `dose(forCarbs:)` returns: 1.2 U, worked out on a loop run a minute before the tests start.
     var doseResult = AIRequestDose(units: 1.2, iobAsOf: coordinatorTestStart - 60)
     /// What `context(for:units:)` returns.
@@ -73,6 +82,8 @@ final class FakeTreatments: AIRequestTreatments {
     /// The `after` of each `carbsLogged(after:)` call.
     var carbsLoggedAfter: [Date] { lock.withLock { carbsCheckedAfter } }
     var stored: [AIMealRequest] { lock.withLock { storedRequests } }
+    /// What each `storeCarbs` stored, with its carbs override applied.
+    var storedCarbs: [StoredCarbs] { lock.withLock { storedMeals } }
     var enacted: [Decimal] { lock.withLock { enactedUnits } }
     /// Every call in order: `check <units>`, `store <id>`, `enact <units>` and, when it returns, `enacted <units>`.
     var events: [String] { lock.withLock { recordedEvents } }
@@ -103,7 +114,7 @@ final class FakeTreatments: AIRequestTreatments {
         return carbsLoggedResult
     }
 
-    func storeCarbs(for request: AIMealRequest) async throws {
+    func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws {
         let hook = lock.withLock {
             defer { storeHook = nil }
             return storeHook
@@ -112,6 +123,12 @@ final class FakeTreatments: AIRequestTreatments {
         if let storeError { throw storeError }
         lock.withLock {
             storedRequests.append(request)
+            storedMeals.append(StoredCarbs(
+                id: request.id,
+                carbs: carbs ?? request.carbs,
+                fat: request.fat,
+                protein: request.protein
+            ))
             recordedEvents.append("store \(request.id)")
         }
     }
@@ -203,7 +220,14 @@ struct CoordinatorFiles {
     }
 }
 
-/// A coordinator over fakes, its clock, and the prompts it asked with.
+/// One `left` the coordinator sent.
+struct LeftEvent: Equatable {
+    let id: String
+    let left: AIRequestLeft
+    let source: String
+}
+
+/// A coordinator over fakes, its clock, the prompts it asked with, and each `left` it sent.
 final class CoordinatorHarness {
     let coordinator: AIRequestCoordinator
     /// Gets every report, unless a service reporter was given; then it gets none.
@@ -217,7 +241,12 @@ final class CoordinatorHarness {
     private let clock: TestBox<Date>
     private let lock = NSLock()
     private var promptsByID: [String: AIRequestPrompt] = [:]
+    private var leftEvents: [LeftEvent] = []
     private var subscription: AnyCancellable?
+    private var leftSubscription: AnyCancellable?
+
+    /// Each `left` the coordinator sent, in order.
+    var left: [LeftEvent] { lock.withLock { leftEvents } }
 
     /// What the coordinator's `now()` returns.
     var now: Date {
@@ -267,6 +296,11 @@ final class CoordinatorHarness {
                 guard let self else { return }
                 lock.withLock { self.promptsByID[prompt.id] = prompt }
             }
+        leftSubscription = coordinator.left
+            .sink { [weak self] event in
+                guard let self else { return }
+                lock.withLock { self.leftEvents.append(LeftEvent(id: event.id, left: event.left, source: event.source)) }
+            }
     }
 
     /// The prompt the coordinator asked with for `id`. It stays available after the request leaves pending.
@@ -293,7 +327,7 @@ final class CoordinatorHarness {
 func makeCoordinator(
     dose: Decimal = 1.2,
     watchAvailable: Bool = true,
-    limits: AIRequestLimits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250),
+    limits: AIRequestLimits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250, maxBolus: 10),
     preferences: AIAssistantsPreferences = AIAssistantsPreferences(allowsMealRequests: true),
     files: CoordinatorFiles = .temporary(),
     now: Date = coordinatorTestStart,

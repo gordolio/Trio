@@ -101,7 +101,7 @@ import Testing
     }
 
     @Test func requestRefusedForItsAmountsAndTheSwitchSendsOutcomes() async {
-        let limited = makeCoordinator(limits: AIRequestLimits(maxCarbs: 10, maxFat: 250, maxProtein: 250))
+        let limited = makeCoordinator(limits: AIRequestLimits(maxCarbs: 10, maxFat: 250, maxProtein: 250, maxBolus: 10))
         let limitedOutcomes = OutcomeRecorder(limited.coordinator.outcomes)
         await limited.coordinator.receive(meal(id: "a", carbs: 20), via: .service)
         #expect(limitedOutcomes.all.map(\.report) == [.failed(reason: "Over your max carbs (10 g)", carbsLogged: false)])

@@ -271,7 +271,7 @@ import Testing
     @Test func limitsAreCheckedAgainOnApproval() async {
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1", carbs: 20), via: .service)
-        h.treatments.limits = AIRequestLimits(maxCarbs: 10, maxFat: 250, maxProtein: 250)
+        h.treatments.limits = AIRequestLimits(maxCarbs: 10, maxFat: 250, maxProtein: 250, maxBolus: 10)
         #expect(await h.coordinator.answer(.phone(.approve, id: "r1")) == .acted)
         #expect(h.reporter.reports.last?.report == .failed(reason: "Over your max carbs (10 g)", carbsLogged: false))
         #expect(h.treatments.checked == [1.2]) // on arrival, not at approval
