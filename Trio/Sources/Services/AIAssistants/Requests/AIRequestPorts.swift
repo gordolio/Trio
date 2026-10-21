@@ -20,6 +20,12 @@ enum AIRequestChannel: String, Codable {
     case service
     /// The debug request, made on the phone.
     case local
+
+    /// Whether Trio itself shows the channel's requests on the watch, over WatchConnectivity, wherever they're asked.
+    /// The service's requests reach the watch by the service's push instead.
+    var isDeliveredToWatchByTrio: Bool {
+        self == .local
+    }
 }
 
 enum AIRequestAskedOn: String, Codable {
@@ -54,6 +60,13 @@ struct AIRequestOutcome: Equatable {
     /// Trio stopped while starting the bolus, so it may have been given. Only a carry-out marker found at `.enacting`
     /// says so.
     var bolusUnconfirmed = false
+    /// Trio showed the request on the watch itself, as it does every test request, even one asked on the iPhone.
+    var deliveredToWatch = false
+
+    /// Whether the watch hears how the request ended: it was asked there, or Trio showed it there.
+    var reachesWatch: Bool {
+        askedOn == .watch || deliveredToWatch
+    }
 }
 
 extension AIRequestOutcome {
@@ -86,7 +99,8 @@ extension AIRequestOutcome {
             report: report,
             askedOn: pending.askedOn,
             approvedOn: approvedOn,
-            declinedOn: declinedOn
+            declinedOn: declinedOn,
+            deliveredToWatch: pending.channel.isDeliveredToWatchByTrio
         )
     }
 
@@ -101,7 +115,8 @@ extension AIRequestOutcome {
             askedOn: marker.askedOn,
             approvedOn: marker.approvedOn,
             declinedOn: nil,
-            bolusUnconfirmed: marker.stage == .enacting
+            bolusUnconfirmed: marker.stage == .enacting,
+            deliveredToWatch: marker.channel.isDeliveredToWatchByTrio
         )
     }
 }
@@ -112,8 +127,9 @@ struct AIRequestDisplay: Codable, Equatable {
     let body: String
     /// What Trio itself adds to the request, sent to the service so it can relay it to the watch.
     var context: AIRequestContext? = nil
-    /// Trio's MAC over the title, the body, the approval style and the context, which the service relays to the watch
-    /// as `displayMac`. `nil` when Trio had no key to sign with.
+    /// Trio's MAC over the request's ID, the approval style, the shown amounts, the title, the context and the body
+    /// (`AIRequestSigner.displayMAC`), which the service relays to the watch as `displayMac`. `nil` when Trio had no
+    /// key to sign with, or for a display the watch never trusts.
     var mac: String? = nil
 }
 

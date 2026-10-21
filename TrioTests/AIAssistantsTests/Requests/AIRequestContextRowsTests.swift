@@ -85,4 +85,28 @@ import Testing
         ])
         #expect(Self.rows(nil, testKind: nil).isEmpty)
     }
+
+    @Test(
+        "Warnings first moves the warnings above the other rows, each kept in the one order"
+    ) func warningsFirst() {
+        let context = AIRequestContext(
+            glucose: "61 mg/dL ↘",
+            glucoseAgeMinutes: 4,
+            recentCarbs: .init(amount: "20", minutesAgo: 6),
+            recentBolus: .init(amount: "3.00", minutesAgo: 8),
+            noDoseReason: "glucose is forecast to go low"
+        )
+        let rows = Self.rows(context, shown: Self.noDose, testKind: .real)
+        let reordered = AIRequestContextRows.warningsFirst(rows)
+        #expect(reordered.map(\.kind) == [.recentCarbs, .recentBolus, .test, .glucose, .noDose])
+        #expect(Set(reordered.map(\.text)) == Set(rows.map(\.text)))
+        #expect(reordered.count == rows.count)
+
+        // With no warnings, or only warnings, nothing moves.
+        let calm = Self.rows(context, shown: Self.noDose, testKind: .dryRun).filter { !$0.isWarning }
+        #expect(AIRequestContextRows.warningsFirst(calm) == calm)
+        let alarming = rows.filter(\.isWarning)
+        #expect(AIRequestContextRows.warningsFirst(alarming) == alarming)
+        #expect(AIRequestContextRows.warningsFirst([]).isEmpty)
+    }
 }

@@ -359,6 +359,116 @@ final class FakeAIAssistantsService: AIAssistantsService {
         #expect(state.testCount == 0)
     }
 
+    // MARK: - A test request's result
+
+    /// A state model whose test requests go to `receive`, which hears the outcomes sent on `outcomes`, and whose
+    /// VoiceOver announcements land in `announced`.
+    func makeTestingState(
+        outcomes: PassthroughSubject<AIRequestOutcome, Never>,
+        announced: TestBox<[String]>,
+        receive: @escaping @MainActor(AIMealRequest) async -> Void
+    ) -> AIAssistantsConfig.StateModel {
+        let state = makeState()
+        state.requestOutcomes = outcomes.eraseToAnyPublisher()
+        state.announce = { announced.value.append($0) }
+        state.receiveRequest = { request, _ in await receive(request) }
+        state.subscribe()
+        return state
+    }
+
+    static func testOutcome(_ report: AIRequestReport, id: String) -> AIRequestOutcome {
+        AIRequestOutcome(
+            id: id,
+            title: "Trio test: 10 g carbs",
+            source: "Trio test",
+            shown: nil,
+            report: report,
+            askedOn: nil,
+            approvedOn: nil,
+            declinedOn: nil
+        )
+    }
+
+    @Test(
+        "A test request refused on arrival shows why in place of \"Sent\", and VoiceOver hears that instead"
+    ) func refusedTestRequestShowsWhy() async {
+        let outcomes = PassthroughSubject<AIRequestOutcome, Never>()
+        let announced = TestBox<[String]>([])
+        let box = TestBox<AIAssistantsConfig.StateModel?>(nil)
+        let state = makeTestingState(outcomes: outcomes, announced: announced) { request in
+            // Trio refuses it while taking it in, before the send returns.
+            outcomes.send(Self.testOutcome(.failed(reason: "Over your max IOB", carbsLogged: false), id: request.id))
+            _ = await eventuallyTrue { box.value?.testResult != nil }
+        }
+        box.value = state
+
+        await state.sendTestRequest(.dryRun)
+
+        #expect(state.testResult?.headline == "Not given")
+        #expect(state.testResult?.detail == "Over your max IOB. Nothing was logged.")
+        #expect(state.testCount == 1)
+        #expect(announced.value == ["Not given. Over your max IOB. Nothing was logged."])
+    }
+
+    @Test(
+        "A test request's final result shows in place of \"Sent\" when it comes back, and VoiceOver hears both"
+    ) func testRequestResultReplacesSent() async throws {
+        let outcomes = PassthroughSubject<AIRequestOutcome, Never>()
+        let announced = TestBox<[String]>([])
+        let sentIDs = TestBox<[String]>([])
+        let state = makeTestingState(outcomes: outcomes, announced: announced) { sentIDs.value.append($0.id) }
+
+        await state.sendTestRequest(.dryRun)
+        #expect(state.testResult == nil)
+        #expect(announced.value == ["Sent. Check your watch."])
+
+        let id = try #require(sentIDs.value.first)
+        let shown = AIRequestShown(carbs: "10.00", fat: "0.00", protein: "0.00", units: "0.50")
+        outcomes.send(Self.testOutcome(.dryRun(shown: shown), id: id))
+        #expect(await eventuallyTrue { state.testResult != nil })
+        #expect(state.testResult?.headline == "Test: would give 0.50\u{00A0}U")
+        #expect(state.testResult?.detail == "Nothing was logged or given.")
+        #expect(announced.value == [
+            "Sent. Check your watch.",
+            "Test: would give 0.50\u{00A0}U. Nothing was logged or given."
+        ])
+    }
+
+    @Test(
+        "Only the latest test request's result shows: another request's, or an older test's, is ignored"
+    ) func onlyTheLatestTestRequestsResultShows() async throws {
+        let outcomes = PassthroughSubject<AIRequestOutcome, Never>()
+        let announced = TestBox<[String]>([])
+        let sentIDs = TestBox<[String]>([])
+        let state = makeTestingState(outcomes: outcomes, announced: announced) { sentIDs.value.append($0.id) }
+
+        await state.sendTestRequest(.dryRun)
+        await state.sendTestRequest(.real)
+        let older = try #require(sentIDs.value.first)
+        let latest = try #require(sentIDs.value.last)
+
+        outcomes.send(Self.testOutcome(.replaced, id: older))
+        outcomes.send(Self.testOutcome(.expired, id: "an-assistants-request"))
+        outcomes.send(Self.testOutcome(.declined(on: .watch), id: latest))
+        #expect(await eventuallyTrue { state.testResult != nil })
+        #expect(state.testResult?.headline == "Declined")
+        #expect(announced.value == ["Sent. Check your watch.", "Sent. Check your watch.", "Declined. Nothing was logged."])
+
+        // The next test request starts again from "Sent".
+        await state.sendTestRequest(.dryRun)
+        #expect(state.testResult == nil)
+        #expect(announced.value.last == "Sent. Check your watch.")
+    }
+
+    @Test("Without the request runtime no result is listened for") func testResultNeedsTheRuntime() async {
+        let state = makeState()
+        state.requestOutcomes = nil
+        state.subscribe()
+        state.receiveRequest = { _, _ in }
+        await state.sendTestRequest(.dryRun)
+        #expect(state.testResult == nil)
+    }
+
     // MARK: - Approving from the notification
 
     @Test("Choosing to approve from the notification asks first and changes nothing") func oneGestureNeedsConfirmation() {

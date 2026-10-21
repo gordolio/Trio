@@ -24,7 +24,8 @@ struct AIRequestContextRow: Equatable {
 
 /// Trio's context rows for a request, in the one order the notification body and the watch's approval screen both
 /// show: the glucose, why the dose is 0 U, carbs and insulin given a moment ago, and what a test does. A row appears
-/// only when it applies. Every number sits next to its unit with a no-break space (U+00A0).
+/// only when it applies. Grams and units sit next to their number with a no-break space (U+00A0); the glucose and the
+/// minutes use plain spaces.
 enum AIRequestContextRows {
     /// A reading is shown with its age from this many minutes old. A younger one is current.
     static let glucoseAgeShownFrom = 2
@@ -111,6 +112,12 @@ enum AIRequestContextRows {
             break
         }
         return rows
+    }
+
+    /// The same rows with the warnings first, each group in the order it had. The watch shows them so where the crown
+    /// fills a pinned bar while the rows scroll.
+    static func warningsFirst(_ rows: [AIRequestContextRow]) -> [AIRequestContextRow] {
+        rows.filter(\.isWarning) + rows.filter { !$0.isWarning }
     }
 
     /// Whether Trio's dose is 0 U. An amount that can't be read counts as a dose, so nothing says there's none.

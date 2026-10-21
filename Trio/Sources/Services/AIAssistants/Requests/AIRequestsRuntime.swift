@@ -112,14 +112,14 @@ extension AIRequestsRuntime {
         AIRequestResultNotifier(center: center, isShowing: { id in isAppActive() && presentedID() == id })
     }
 
-    /// Tells the watch and the iPhone how a request ended. The watch hears the result of a request it was asked, and
-    /// the notifier decides whether the iPhone needs a notification.
+    /// Tells the watch and the iPhone how a request ended. The watch hears the result of a request it was asked or that
+    /// Trio showed it, and the notifier decides whether the iPhone needs a notification.
     static func publish(
         _ outcome: AIRequestOutcome,
         to watchLink: AIRequestWatchLink,
         notifier: AIRequestResultNotifier
     ) {
-        if outcome.askedOn == .watch {
+        if outcome.reachesWatch {
             watchLink.sendResult(AIRequestResultText.message(for: outcome))
         }
         notifier.notify(outcome)

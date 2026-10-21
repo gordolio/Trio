@@ -7,7 +7,8 @@ import Foundation
 ///     Carbs 20 g logged 6 min ago
 ///     Bolus 3.00 U given 8 min ago
 ///
-/// Every number sits next to its unit with a no-break space (U+00A0), so a line never wraps between them.
+/// Each amount in grams or units sits next to its unit with a no-break space (U+00A0), so a line never wraps between
+/// them. The glucose ("142 mg/dL") and the minutes ("3 min ago") use plain spaces.
 enum AIRequestDisplayText {
     /// The service refuses notification text longer than this many UTF-16 code units, which is what its
     /// JavaScript string length counts, so an emoji takes two.

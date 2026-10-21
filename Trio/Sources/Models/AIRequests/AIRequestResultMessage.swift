@@ -10,7 +10,8 @@ enum AIRequestAnswerSide: String, Codable {
 /// the notifications show the same words.
 struct AIRequestResultMessage: Codable, Equatable {
     enum Tone: String, Codable {
-        /// The request was carried out.
+        /// The request went as the wearer asked: the bolus started or the carbs were logged, or a dry-run test passed
+        /// every check, which logs and gives nothing.
         case success
         /// Nothing happened, and nothing needs checking: it was declined, expired, replaced or canceled.
         case neutral

@@ -35,7 +35,8 @@ struct AIRequestApprovalView: View {
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    /// Whether Trio signed what the screen shows, so it can show the context rows. Worked out once: it reads the key.
+    /// Whether Trio signed what the screen shows, so it can show the context rows. Worked out, from the key, each time
+    /// SwiftUI makes the view, which it does again whenever the cover's content is rebuilt.
     private let isDisplayVerified: Bool
     private let contextRows: [AIRequestContextRow]
 
@@ -74,9 +75,14 @@ struct AIRequestApprovalView: View {
                     .transition(phaseTransition)
             } else {
                 // One view for every phase after the answer, so its icon is replaced rather than rebuilt. Every second,
-                // so the wording turns to "No reply" 15 s after the answer.
+                // so the wording turns to "No reply" 15 s after the answer, with a failure the wearer can feel.
                 TimelineView(.periodic(from: flow.shownAt, by: 1)) { context in
                     outcome(at: context.date)
+                        .onChange(of: context.date) { earlier, now in
+                            if let haptic = flow.noReplyHaptic(from: earlier, to: now) {
+                                WKInterfaceDevice.current().play(haptic.type)
+                            }
+                        }
                 }
                 .transition(phaseTransition)
             }
@@ -96,6 +102,8 @@ struct AIRequestApprovalView: View {
             }
         }
         .onAppear {
+            // The arming delay starts now that the screen can be seen, not when it was made.
+            flow.appeared(at: Date())
             if flow.phase == .asking {
                 center.screenDidOpen(prompt.id)
             }
@@ -116,9 +124,9 @@ struct AIRequestApprovalView: View {
             }
         }
         // The one haptic map. It reads the phase after the answer was sent, so a success is never felt for an answer that
-        // couldn't be sent.
+        // couldn't be sent, and the answer, so an approval the phone didn't take is felt as a failure.
         .onChange(of: flow.phase) { old, new in
-            if let haptic = AIRequestWatchFlow.haptic(from: old, to: new) {
+            if let haptic = AIRequestWatchFlow.haptic(from: old, to: new, decision: flow.decision) {
                 WKInterfaceDevice.current().play(haptic.type)
             }
         }
@@ -165,9 +173,14 @@ struct AIRequestApprovalView: View {
         /// Whether the crown bar is part of this layout. At accessibility text sizes it isn't: the screen scrolls, so the
         /// bar is pinned below the scroll view instead, where it can't be scrolled out of sight.
         var showsBar = true
+        /// Whether the warning rows come first among the context rows, just below the amounts. Only where the crown
+        /// fills a pinned bar while the rows scroll, so a warning can't be off screen as the crown approves.
+        var warningsFirst = false
 
         /// Accessibility text sizes: nothing is shed, and the screen scrolls instead.
         static let largeText = Fit(titleLines: nil, showsBar: false)
+        /// Accessibility text sizes where the crown confirms (watchOS 10): the bar is pinned, so the warnings come first.
+        static let largeTextWithPinnedBar = Fit(titleLines: nil, showsBar: false, warningsFirst: true)
     }
 
     /// Whether the crown confirms an approval, by `AIRequestWatchFlow.crownConfirms`: always before watchOS 11, where
@@ -190,13 +203,14 @@ struct AIRequestApprovalView: View {
         // size, and last the context rows' text size. The title, the amounts and Decline always stay, every context row
         // stays, and an amount is never scaled or cut. At accessibility text sizes nothing is shed; the screen scrolls.
         // Whenever the crown confirms, its bar stays in view: pinned below the scroll view, so the crown, which is also
-        // how one scrolls, can never fill a bar that has been scrolled out of sight.
+        // how one scrolls, can never fill a bar that has been scrolled out of sight. There the warning rows come first,
+        // just below the amounts, so they're the rows least likely to be out of sight as the crown approves.
         crownApproval(
             Group {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(spacing: 4) {
                         ScrollView {
-                            asking(.largeText)
+                            asking(crownConfirms ? .largeTextWithPinnedBar : .largeText)
                         }
                         if crownConfirms {
                             confirmationBar(showsGlyph: true)
@@ -274,7 +288,7 @@ struct AIRequestApprovalView: View {
                 amountRow("Carbs:", value: carbs, color: .orange, spoken: spokenCarbsRow)
                     .layoutPriority(1)
 
-                contextRowsView(squeezed: fit.squeezesContext)
+                contextRowsView(squeezed: fit.squeezesContext, warningsFirst: fit.warningsFirst)
 
                 if fit.showsFatAndProtein, let fatAndProtein {
                     Text(fatAndProtein)
@@ -342,10 +356,12 @@ struct AIRequestApprovalView: View {
     }
 
     /// Trio's context, never dropped. It wraps rather than being cut, except in the last resort, where it shrinks to the
-    /// room left. Without Trio's signature over it, one row says it couldn't be checked.
-    @ViewBuilder private func contextRowsView(squeezed: Bool) -> some View {
+    /// room left. `warningsFirst` puts the warning rows above the others. Without Trio's signature over it, one row says
+    /// it couldn't be checked.
+    @ViewBuilder private func contextRowsView(squeezed: Bool, warningsFirst: Bool) -> some View {
         if isDisplayVerified {
-            ForEach(Array(contextRows.enumerated()), id: \.offset) { _, row in
+            let rows = warningsFirst ? AIRequestContextRows.warningsFirst(contextRows) : contextRows
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 Group {
                     if row.isWarning {
                         Label(row.text, systemImage: "exclamationmark.triangle.fill")

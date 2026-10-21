@@ -225,8 +225,9 @@ actor AIRequestCoordinator {
         savePending(pending)
         scheduleExpiryCheck(at: request.expiresAt)
         phoneBackup.schedule(prompt, after: phoneDelay, askedOn: askedOn)
-        if channel == .local {
-            // The service's requests reach the watch by the service's push.
+        if channel.isDeliveredToWatchByTrio {
+            // The service's requests reach the watch by the service's push. The outcome says Trio showed it there, so the
+            // watch hears how it ended.
             watch.deliver(prompt)
         }
         debug(.service, "AI requests: \(request.id) is pending, asked on the \(askedOn.rawValue)")

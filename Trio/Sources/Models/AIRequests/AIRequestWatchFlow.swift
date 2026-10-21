@@ -64,7 +64,8 @@ enum AIRequestWatchRing: Equatable {
 enum AIRequestWatchHaptic: Equatable {
     /// The wearer committed to an approval, or the request was carried out.
     case success
-    /// The answer wasn't sent, the request failed or ran out, or the dose wasn't given.
+    /// The answer wasn't sent or got no reply, the request failed or ran out, the dose wasn't given, or the phone didn't
+    /// take an approval.
     case failure
     /// The wearer declined.
     case directionDown
@@ -81,15 +82,28 @@ struct AIRequestWatchFlow: Equatable {
     /// With less than this left to answer, the screen counts down.
     static let countdownFrom: TimeInterval = 60
 
-    let shownAt: Date
+    /// When the screen came into view, which the arming delay counts from. It's when the flow was made until the screen
+    /// first appears.
+    private(set) var shownAt: Date
     let expiresAt: Date
     private(set) var phase: AIRequestWatchPhase = .asking
-    /// The wearer's answer on this screen, sent or not. It decides whether a neutral result can close by itself.
+    /// The wearer's answer on this screen, sent or not. It decides whether a neutral result can close by itself, and
+    /// whether it's felt as a failure.
     private(set) var decision: AIRequestDecision?
+    private var hasAppeared = false
 
     init(shownAt: Date, expiresAt: Date) {
         self.shownAt = shownAt
         self.expiresAt = expiresAt
+    }
+
+    /// The screen came into view at `now`, so the arming delay starts again from there. On a cold launch from a
+    /// notification the screen is made a moment before it can be seen, and that moment mustn't use up the delay. Only
+    /// the first appearance counts: one after it doesn't take an Approve away.
+    mutating func appeared(at now: Date) {
+        guard !hasAppeared else { return }
+        hasAppeared = true
+        shownAt = now
     }
 
     /// The wearer answered, and `result` is what became of sending it. Only a request still being asked takes an
@@ -152,7 +166,9 @@ struct AIRequestWatchFlow: Equatable {
         case .sending:
             return isNoReply(at: now) ? .close : .waits
         case .received(.approve):
-            // "Sent to Trio" isn't a result: the wearer can close it, and a failure still reaches them as a notification.
+            // "Sent to Trio" isn't a result, but the wearer can close it: a success is what they already felt, and
+            // anything else still reaches them, here while the screen is up and in front, and as a notification once
+            // it isn't (`postsResultNotification`).
             return .close
         case .received(.decline):
             return .closesBySelf(.neutral)
@@ -184,17 +200,25 @@ struct AIRequestWatchFlow: Equatable {
         return !isAccessibilitySize && !isVoiceOverOn
     }
 
-    /// The haptic for the screen moving from phase `old` to phase `new`, or `nil` for none. It plays after the move, so it
-    /// follows what became of sending the answer and never runs ahead of it: committing to an approve is felt only once
-    /// the answer was sent or queued, and an answer that couldn't be sent is a failure, never a success.
+    /// The haptic for the screen moving from phase `old` to phase `new`, or `nil` for none. `decision` is the wearer's
+    /// answer on this screen, if any. It plays after the move, so it follows what became of sending the answer and never
+    /// runs ahead of it: committing to an approve is felt only once the answer was sent or queued, and an answer that
+    /// couldn't be sent is a failure, never a success.
     ///
     /// - Committing to an approve, by the crown, Approve or a double tap alike: success, once.
     /// - Declining: direction down.
     /// - An answer that wasn't sent, a request that expired on the screen, and a failure or warning from the phone (the
     ///   bolus the wearer approved wasn't given, or was only partly): failure.
+    /// - A neutral result after an Approve here: failure. The phone didn't take the approval (it came too late, or the
+    ///   request was replaced or canceled first), and the last thing the wearer felt was the approval's success.
     /// - A success from the phone: success.
-    /// - Everything else, including the phone's receipt, a queued answer waiting and a neutral result: none.
-    static func haptic(from old: AIRequestWatchPhase, to new: AIRequestWatchPhase) -> AIRequestWatchHaptic? {
+    /// - Everything else, including the phone's receipt, a queued answer waiting, and a neutral result after a decline or
+    ///   for a request not answered here: none. The clock's move into no reply is `noReplyHaptic(from:to:)`.
+    static func haptic(
+        from old: AIRequestWatchPhase,
+        to new: AIRequestWatchPhase,
+        decision: AIRequestDecision?
+    ) -> AIRequestWatchHaptic? {
         guard old != new else { return nil }
         switch new {
         case .asking,
@@ -215,8 +239,43 @@ struct AIRequestWatchFlow: Equatable {
                  .warning:
                 return .failure
             case .neutral:
-                return nil
+                return decision == .approve ? .failure : nil
             }
+        }
+    }
+
+    /// The haptic for the screen's clock moving from `earlier` to `now`: a failure as the answer's wait for the phone's
+    /// receipt turns into "No reply", and `nil` otherwise. It plays once, since only the phase moving on ends no reply,
+    /// and a tick that skips past the moment still plays it.
+    func noReplyHaptic(from earlier: Date, to now: Date) -> AIRequestWatchHaptic? {
+        !isNoReply(at: earlier) && isNoReply(at: now) ? .failure : nil
+    }
+
+    /// Whether the watch posts the phone's result as a notification. It's posted whenever the wearer isn't looking at
+    /// the approval screen for it (`showing`, with the app `active`), for:
+    ///
+    /// - anything but a success for a request the watch approved (`watchApproved`), from the screen or a notification:
+    ///   the approval didn't go through, or the dose wasn't given, and the wearer last felt the approval's success;
+    /// - any result for a request approved from a notification (`approvedFromNotification`), which has no screen to
+    ///   show it.
+    ///
+    /// A request the watch didn't approve (declined there, answered on the iPhone, or never answered) posts nothing: the
+    /// wearer either knows, or the iPhone tells them.
+    static func postsResultNotification(
+        tone: AIRequestResultMessage.Tone,
+        watchApproved: Bool,
+        approvedFromNotification: Bool,
+        showing: Bool,
+        active: Bool
+    ) -> Bool {
+        if showing, active { return false }
+        switch tone {
+        case .success:
+            return approvedFromNotification
+        case .failure,
+             .neutral,
+             .warning:
+            return watchApproved || approvedFromNotification
         }
     }
 

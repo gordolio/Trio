@@ -20,6 +20,9 @@ extension AIAssistantsConfig {
         @Published private(set) var copiedMessage = ""
         /// Goes up by one for each test request sent, to confirm it and give the haptic.
         @Published private(set) var testCount = 0
+        /// How the latest test request ended, once Trio says: refused as it arrived, or answered and carried out,
+        /// declined or expired. It's shown in place of "Sent. Check your watch.", and `nil` until then.
+        @Published private(set) var testResult: AIRequestResultMessage?
         /// Whether the screen is asking if "Approve from the notification" should really be turned on.
         @Published var isConfirmingOneGesture = false
 
@@ -30,6 +33,9 @@ extension AIAssistantsConfig {
         /// Hands a request to Trio, as the coordinator receives it. `nil` while the request runtime isn't running.
         var receiveRequest: ((AIMealRequest, AIRequestChannel) async -> Void)? = AIRequestsRuntime.shared
             .map { runtime in { request, channel in await runtime.coordinator.receive(request, via: channel) } }
+        /// How each request ended, as the coordinator says. `nil` while the request runtime isn't running.
+        var requestOutcomes: AnyPublisher<AIRequestOutcome, Never>? = AIRequestsRuntime.shared?.coordinator.outcomes
+            .eraseToAnyPublisher()
 
         var pasteboard: (String) -> Void = { UIPasteboard.general.string = $0 }
         /// Tells VoiceOver what was copied; the confirmation on screen is hidden from it.
@@ -38,6 +44,8 @@ extension AIAssistantsConfig {
         var authClient = AIAssistantsAuthClient()
         /// Generated for each Apple request; Apple gets its hash, the service gets the raw value.
         private var nonce: AppleNonce?
+        /// The ID of the latest test request, whose result the screen shows.
+        private var latestTestID: String?
 
         override func subscribe() {
             service.state
@@ -49,6 +57,7 @@ extension AIAssistantsConfig {
                 .sink { [weak self] in self?.account = $0 }
                 .store(in: &lifetime)
             subscribeToPreferences()
+            subscribeToTestResults()
         }
 
         /// Both ways, and neither echoes: each side writes only a value that differs from what it has. A change
@@ -190,6 +199,9 @@ extension AIAssistantsConfig {
         /// Asks Trio for 10 g of carbs as if an assistant had sent it, to try the approval on the watch and the
         /// iPhone. It lasts five minutes. A dry run goes through the approval and every check, then says what it
         /// would have given; a real one logs the carbs and gives Trio's dose for them, as any request does.
+        ///
+        /// VoiceOver hears "Sent", which the screen shows in a footer it doesn't read on its own, unless Trio has
+        /// already refused the request: then it hears why, from `testRequestEnded`.
         @MainActor func sendTestRequest(_ kind: AIRequestTestKind) async {
             guard let receiveRequest else { return }
             let now = Date()
@@ -204,8 +216,38 @@ extension AIAssistantsConfig {
                 expiresAt: now.addingTimeInterval(5 * 60),
                 testKind: kind
             )
+            // Before Trio takes it, which can refuse it at once.
+            latestTestID = request.id
+            testResult = nil
             await receiveRequest(request, .local)
             testCount += 1
+            if testResult == nil {
+                announce(String(
+                    localized: "Sent. Check your watch.",
+                    comment: "VoiceOver, and the settings footer: a test request was sent to Trio"
+                ))
+            }
+        }
+
+        /// Shows how the latest test request ended, and tells VoiceOver. Another request's outcome, or an older test's,
+        /// changes nothing.
+        @MainActor private func testRequestEnded(_ outcome: AIRequestOutcome) {
+            guard outcome.id == latestTestID, outcome.report.state != .pending else { return }
+            let message = AIRequestResultText.message(for: outcome)
+            testResult = message
+            announce(String(
+                localized: "\(message.headline). \(message.detail)",
+                comment: "VoiceOver: how a test request ended, its headline and then its detail"
+            ))
+        }
+
+        private func subscribeToTestResults() {
+            requestOutcomes?
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] outcome in
+                    MainActor.assumeIsolated { self?.testRequestEnded(outcome) }
+                }
+                .store(in: &lifetime)
         }
 
         // MARK: - Copying

@@ -14,10 +14,6 @@ extension AIAssistantsConfig {
                 }
                 .disabled(!state.canSendTestRequest)
                 .sensoryFeedback(.success, trigger: state.testCount)
-                // The footer under the real test button is a new line, which VoiceOver doesn't read on its own.
-                .onChange(of: state.testCount) {
-                    AccessibilityNotification.Announcement(String(localized: "Sent. Check your watch.")).post()
-                }
             } header: {
                 Text("Testing")
             } footer: {
@@ -45,9 +41,21 @@ extension AIAssistantsConfig {
                     )
                 }
             } footer: {
-                // It stays until the next send; a timer would only take it away while someone is reading.
-                if state.testCount > 0 {
-                    Text("Sent. Check your watch.")
+                // It stays until the next send; a timer would only take it away while someone is reading. Once Trio says
+                // how the latest test ended, that takes the place of "Sent". The state model tells VoiceOver either way.
+                if let result = state.testResult {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(result.headline)
+                            .fontWeight(.semibold)
+                        Text(result.detail)
+                    }
+                    .font(.footnote)
+                    .accessibilityElement(children: .combine)
+                } else if state.testCount > 0 {
+                    Text(String(
+                        localized: "Sent. Check your watch.",
+                        comment: "VoiceOver, and the settings footer: a test request was sent to Trio"
+                    ))
                         .font(.footnote)
                 }
             }

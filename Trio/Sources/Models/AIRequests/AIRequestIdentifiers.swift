@@ -38,7 +38,8 @@ enum AIRequestIdentifiers {
 
     // MARK: Notification slots
 
-    /// The identifier of a request's notification, so a newer request takes the place of an older one.
+    /// The identifier of the watch's request notification, so a newer request takes the place of an older one there. The
+    /// iPhone's backup is still one per request: its identifier adds the request's ID to this.
     static let notificationSlot = "ai-request"
     /// The identifier of a result's notification.
     static let resultNotificationSlot = "ai-request-result"

@@ -61,9 +61,10 @@ import WatchKit
     /// Requests the wearer answered on the watch, from the screen or a notification. A withdraw of one of these is the
     /// phone's receipt, and doesn't close the screen.
     @ObservationIgnored private var answeredIDs: Set<String> = []
-    /// Requests the wearer approved from a notification action, with no screen to show the result. The result is
-    /// posted as a notification.
-    @ObservationIgnored private var approvedFromNotificationIDs: Set<String> = []
+    /// Requests the wearer approved on the watch, from the screen or a notification action, kept in `UserDefaults` so a
+    /// relaunch keeps them. A result for one that isn't a success is posted as a notification, and so is any result for
+    /// one approved from a notification, whenever the screen isn't showing it.
+    @ObservationIgnored private var approvals = AIRequestWatchApprovals.load(from: .standard, at: Date())
     /// The requests the watch has seen, by ID, so the iPhone's backup can open one. Only unexpired ones are kept.
     @ObservationIgnored private var knownPrompts: [String: AIRequestPrompt] = [:]
     /// Requests whose screen Trio closed or replaced itself, rather than the wearer or the system dismissing it. The
@@ -210,27 +211,37 @@ import WatchKit
         }
     }
 
-    /// Keeps the result for the screen. A copy of a result already kept changes nothing, and posts nothing. A result
-    /// for a request that isn't on screen is posted as a notification when there's no other way for the wearer to hear
-    /// it: the request was approved from a notification, or the watch approved it and it failed.
+    /// Keeps the result for the screen. A copy of a result already kept changes nothing, and posts nothing. A result is
+    /// posted as a notification as `AIRequestWatchFlow.postsResultNotification` says: anything but a success for a
+    /// request the watch approved, and any result for one approved from a notification, unless the wearer is looking at
+    /// its approval screen. Main queue only.
     private func record(_ message: AIRequestResultMessage) {
         guard results[message.id] != message else { return }
         results[message.id] = message
         Task { await WatchLogger.shared.log("AI requests: \(message.id) ended: \(message.tone.rawValue)") }
 
-        guard presented?.id != message.id else { return }
-        let approvedFromNotification = lock.withLock { approvedFromNotificationIDs.contains(message.id) }
-        let failedAfterWatchApproval: Bool
+        let (approvedHere, approvedFromNotification) = lock.withLock {
+            (approvals.contains(message.id), approvals.isFromNotification(message.id))
+        }
+        let failedApproval: Bool
         switch message.tone {
         case .neutral,
              .success:
-            failedAfterWatchApproval = false
+            failedApproval = false
         case .failure,
              .warning:
-            // Only an approval can fail, so a failure answered on the watch is one the watch approved.
-            failedAfterWatchApproval = message.answeredOn == .watch
+            // Only an approval can fail, so a failure answered on the watch is one the watch approved, even one approved
+            // before the watch kept its approvals.
+            failedApproval = message.answeredOn == .watch
         }
-        if approvedFromNotification || failedAfterWatchApproval {
+        let posts = AIRequestWatchFlow.postsResultNotification(
+            tone: message.tone,
+            watchApproved: approvedHere || failedApproval,
+            approvedFromNotification: approvedFromNotification,
+            showing: presented?.id == message.id,
+            active: WKApplication.shared().applicationState == .active
+        )
+        if posts {
             notify(message)
         }
     }
@@ -442,11 +453,13 @@ import WatchKit
             completion()
             return .notSent
         }
-        // Recorded even if it can't be sent: the phone's withdraw then leaves the screen up for the result.
+        // Recorded even if it can't be sent: the phone's withdraw then leaves the screen up for the result, and an
+        // approval's result still reaches the wearer.
         lock.withLock {
             _ = answeredIDs.insert(prompt.id)
-            if inBackground, decision == .approve {
-                _ = approvedFromNotificationIDs.insert(prompt.id)
+            if decision == .approve {
+                approvals.add(prompt.id, expiresAt: prompt.expiresAt, fromNotification: inBackground, at: Date())
+                approvals.save(to: .standard)
             }
         }
         guard let key = keychain.data(for: Self.keyAccount) else {
@@ -585,7 +598,7 @@ import WatchKit
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        // A result is posted only when its request isn't on screen, so it shows over the app too.
+        // A result is posted only when the wearer isn't looking at its request's screen, so it shows over the app too.
         if notification.request.identifier == AIRequestIdentifiers.resultNotificationSlot {
             completionHandler([.banner, .sound])
             return

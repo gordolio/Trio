@@ -465,82 +465,246 @@ import Testing
         let asking = Self.flow().phase
 
         // The crown, Approve and a double tap all end in the same phase, so they feel the same.
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.approve).phase) == .success)
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.approve, queued: true).phase) == .success)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.approve).phase, decision: .approve) == .success)
+        #expect(
+            AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.approve, queued: true).phase, decision: .approve)
+                == .success
+        )
 
         // An answer that couldn't be sent is a failure, never a success, whichever the answer was.
         var notSentApprove = Self.flow()
         notSentApprove.answered(.approve, .notSent, at: Self.shownAt.addingTimeInterval(2))
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: notSentApprove.phase) == .failure)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: notSentApprove.phase, decision: .approve) == .failure)
 
         var notSentDecline = Self.flow()
         notSentDecline.answered(.decline, .notSent, at: Self.shownAt.addingTimeInterval(2))
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: notSentDecline.phase) == .failure)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: notSentDecline.phase, decision: .decline) == .failure)
     }
 
     @Test("Declining plays direction down, and the phone's receipt plays nothing") func hapticForDeclineAndReceipt() {
         let asking = Self.flow().phase
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.decline).phase) == .directionDown)
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.decline, queued: true).phase) == .directionDown)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.decline).phase, decision: .decline) == .directionDown)
+        #expect(
+            AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.decline, queued: true).phase, decision: .decline)
+                == .directionDown
+        )
 
         // The approve was felt when it was committed to; the receipt doesn't repeat it.
         var approved = Self.sending(.approve)
         let sending = approved.phase
         approved.receiptArrived()
-        #expect(AIRequestWatchFlow.haptic(from: sending, to: approved.phase) == nil)
+        #expect(AIRequestWatchFlow.haptic(from: sending, to: approved.phase, decision: .approve) == nil)
 
         var declined = Self.sending(.decline)
         let declining = declined.phase
         declined.receiptArrived()
-        #expect(AIRequestWatchFlow.haptic(from: declining, to: declined.phase) == nil)
+        #expect(AIRequestWatchFlow.haptic(from: declining, to: declined.phase, decision: .decline) == nil)
     }
 
     @Test("Expiring on the screen plays a failure") func hapticForExpiry() {
         let asking = Self.flow().phase
         var expired = Self.flow()
         expired.expireIfDue(at: Self.expiresAt)
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: expired.phase) == .failure)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: expired.phase, decision: nil) == .failure)
     }
 
     @Test(
-        "The phone's result plays success for a success, failure for a failure or warning, and nothing otherwise"
+        "The phone's result plays success for a success, and failure for a failure or warning"
     ) func hapticForResults() {
         let sending = Self.sending().phase
         func haptic(_ tone: AIRequestResultMessage.Tone) -> AIRequestWatchHaptic? {
             var flow = Self.sending()
             flow.resultArrived(Self.message(tone: tone))
-            return AIRequestWatchFlow.haptic(from: sending, to: flow.phase)
+            return AIRequestWatchFlow.haptic(from: sending, to: flow.phase, decision: flow.decision)
         }
         #expect(haptic(.success) == .success)
         #expect(haptic(.failure) == .failure)
         #expect(haptic(.warning) == .failure)
-        #expect(haptic(.neutral) == nil)
 
         // A result for a request nobody answered on the watch is felt the same way.
         var unanswered = Self.flow()
         unanswered.resultArrived(Self.message(answeredOn: .phone))
-        #expect(AIRequestWatchFlow.haptic(from: Self.flow().phase, to: unanswered.phase) == .success)
+        #expect(AIRequestWatchFlow.haptic(from: Self.flow().phase, to: unanswered.phase, decision: nil) == .success)
 
         // A result that arrives after the screen expired replaces it, and is felt too.
         var expired = Self.flow()
         expired.expireIfDue(at: Self.expiresAt)
         let expiredPhase = expired.phase
         expired.resultArrived(Self.message(answeredOn: .phone))
-        #expect(AIRequestWatchFlow.haptic(from: expiredPhase, to: expired.phase) == .success)
+        #expect(AIRequestWatchFlow.haptic(from: expiredPhase, to: expired.phase, decision: nil) == .success)
+    }
+
+    @Test(
+        "A neutral result after an Approve plays a failure: the phone didn't take the approval"
+    ) func hapticForNeutralResultAfterApprove() {
+        let endings = [
+            Self.message(headline: "Expired", detail: "Nothing was logged.", tone: .neutral, answeredOn: nil),
+            Self.message(headline: "Replaced", detail: "A newer request is waiting.", tone: .neutral, answeredOn: nil),
+            Self.message(headline: "Canceled", detail: "ChatGPT canceled it.", tone: .neutral, answeredOn: nil),
+            // The wearer declined on the iPhone first, so the watch's Approve was too late.
+            Self.message(headline: "Declined", detail: "Nothing was logged.", tone: .neutral, answeredOn: .phone)
+        ]
+        for ending in endings {
+            // From waiting for the receipt, whether the answer went out or was queued.
+            for queued in [false, true] {
+                var flow = Self.sending(.approve, queued: queued)
+                let before = flow.phase
+                flow.resultArrived(ending)
+                #expect(AIRequestWatchFlow.haptic(from: before, to: flow.phase, decision: flow.decision) == .failure)
+            }
+
+            // From "Sent to Trio".
+            var received = Self.sending(.approve)
+            received.receiptArrived()
+            let sentToTrio = received.phase
+            received.resultArrived(ending)
+            #expect(AIRequestWatchFlow.haptic(from: sentToTrio, to: received.phase, decision: received.decision) == .failure)
+
+            // From an approval that couldn't be sent.
+            var notSent = Self.flow()
+            notSent.answered(.approve, .notSent, at: Self.shownAt.addingTimeInterval(2))
+            notSent.resultArrived(ending)
+            #expect(AIRequestWatchFlow.haptic(from: .notSent, to: notSent.phase, decision: notSent.decision) == .failure)
+        }
+    }
+
+    @Test(
+        "A neutral result after a decline, or for a request not answered on this screen, plays nothing"
+    ) func hapticForNeutralResultWithoutApprove() {
+        let declined = Self.message(headline: "Declined", detail: "Nothing was logged.", tone: .neutral, answeredOn: .watch)
+
+        var declining = Self.sending(.decline)
+        let before = declining.phase
+        declining.resultArrived(declined)
+        #expect(AIRequestWatchFlow.haptic(from: before, to: declining.phase, decision: declining.decision) == nil)
+
+        var received = Self.sending(.decline)
+        received.receiptArrived()
+        let sentToTrio = received.phase
+        received.resultArrived(declined)
+        #expect(AIRequestWatchFlow.haptic(from: sentToTrio, to: received.phase, decision: received.decision) == nil)
+
+        // Nobody answered on this screen: it can't tell an approval that didn't go through from a decline.
+        var unanswered = Self.flow()
+        unanswered.resultArrived(Self.message(
+            headline: "Declined",
+            detail: "Nothing was logged.",
+            tone: .neutral,
+            answeredOn: .phone
+        ))
+        #expect(AIRequestWatchFlow.haptic(from: Self.flow().phase, to: unanswered.phase, decision: unanswered.decision) == nil)
+    }
+
+    @Test("Crossing into No reply plays a failure, once, and nothing else on the clock does") func hapticForNoReply() {
+        let answeredAt = Self.shownAt.addingTimeInterval(1)
+        func at(_ seconds: TimeInterval) -> Date { answeredAt.addingTimeInterval(seconds) }
+
+        for flow in [Self.sending(.approve), Self.sending(.approve, queued: true), Self.sending(.decline)] {
+            #expect(flow.noReplyHaptic(from: at(13), to: at(14)) == nil)
+            #expect(flow.noReplyHaptic(from: at(14), to: at(15)) == .failure)
+            // Once it says No reply, the next ticks are quiet.
+            #expect(flow.noReplyHaptic(from: at(15), to: at(16)) == nil)
+            #expect(flow.noReplyHaptic(from: at(16), to: at(60)) == nil)
+            // A tick that skips past the crossing, as with the screen dimmed, still plays it.
+            #expect(flow.noReplyHaptic(from: at(10), to: at(70)) == .failure)
+        }
+
+        // A receipt ends the wait, so the clock plays nothing after it.
+        var received = Self.sending(.approve)
+        received.receiptArrived()
+        #expect(received.noReplyHaptic(from: at(14), to: at(15)) == nil)
+
+        // Nor does it before an answer, or for one that wasn't sent.
+        #expect(Self.flow().noReplyHaptic(from: at(14), to: at(15)) == nil)
+        var notSent = Self.flow()
+        notSent.answered(.approve, .notSent, at: answeredAt)
+        #expect(notSent.noReplyHaptic(from: at(14), to: at(15)) == nil)
     }
 
     @Test("A phase that doesn't change plays nothing, and asking never does") func hapticNeedsAChange() {
         let asking = Self.flow().phase
-        #expect(AIRequestWatchFlow.haptic(from: asking, to: asking) == nil)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: asking, decision: nil) == nil)
 
         let sending = Self.sending().phase
-        #expect(AIRequestWatchFlow.haptic(from: sending, to: sending) == nil)
+        #expect(AIRequestWatchFlow.haptic(from: sending, to: sending, decision: .approve) == nil)
 
         var resulted = Self.sending()
         resulted.resultArrived(Self.message())
-        #expect(AIRequestWatchFlow.haptic(from: resulted.phase, to: resulted.phase) == nil)
+        #expect(AIRequestWatchFlow.haptic(from: resulted.phase, to: resulted.phase, decision: .approve) == nil)
 
-        #expect(AIRequestWatchFlow.haptic(from: sending, to: asking) == nil)
+        #expect(AIRequestWatchFlow.haptic(from: sending, to: asking, decision: .approve) == nil)
+    }
+
+    @Test(
+        "The arming delay counts from the screen's first appearance, not from when it was made"
+    ) func armingStartsOnFirstAppear() {
+        // Made at `shownAt`, but on a cold launch the screen shows up a few seconds later.
+        var flow = Self.flow()
+        let appearedAt = Self.shownAt.addingTimeInterval(3)
+        flow.appeared(at: appearedAt)
+        #expect(flow.shownAt == appearedAt)
+        #expect(!flow.acceptsApprove(at: Self.shownAt.addingTimeInterval(1.5)))
+        #expect(!flow.acceptsApprove(at: appearedAt.addingTimeInterval(0.99)))
+        #expect(flow.acceptsApprove(at: appearedAt.addingTimeInterval(1)))
+
+        // Only the first appearance counts: appearing again doesn't take the Approve away.
+        flow.appeared(at: appearedAt.addingTimeInterval(10))
+        #expect(flow.shownAt == appearedAt)
+        #expect(flow.acceptsApprove(at: appearedAt.addingTimeInterval(10.5)))
+    }
+
+    @Test(
+        "The result is posted whenever it isn't on show: an approval that didn't go through, or one approved from a notification"
+    ) func resultNotificationIsPostedUnlessOnShow() {
+        let tones: [AIRequestResultMessage.Tone] = [.success, .neutral, .warning, .failure]
+        func posts(
+            _ tone: AIRequestResultMessage.Tone,
+            watchApproved: Bool,
+            fromNotification: Bool = false,
+            showing: Bool,
+            active: Bool
+        ) -> Bool {
+            AIRequestWatchFlow.postsResultNotification(
+                tone: tone,
+                watchApproved: watchApproved,
+                approvedFromNotification: fromNotification,
+                showing: showing,
+                active: active
+            )
+        }
+
+        for tone in tones {
+            for watchApproved in [false, true] {
+                for fromNotification in [false, true] {
+                    // The approval screen shows the result itself, and the wearer is looking at it.
+                    #expect(!posts(
+                        tone,
+                        watchApproved: watchApproved,
+                        fromNotification: fromNotification,
+                        showing: true,
+                        active: true
+                    ))
+                }
+            }
+        }
+
+        // Anything but a success, for a request the watch approved: wherever the wearer isn't looking at it. On screen
+        // with the app in the background counts as not looking.
+        for tone in [AIRequestResultMessage.Tone.neutral, .warning, .failure] {
+            for (showing, active) in [(false, false), (false, true), (true, false)] {
+                #expect(posts(tone, watchApproved: true, showing: showing, active: active))
+                #expect(posts(tone, watchApproved: true, fromNotification: true, showing: showing, active: active))
+                // A request the watch didn't approve: declined here, or answered on the iPhone, or never answered.
+                #expect(!posts(tone, watchApproved: false, showing: showing, active: active))
+            }
+        }
+
+        // A success only for a one-gesture approval from the notification, which has no screen to show it.
+        for (showing, active) in [(false, false), (false, true), (true, false)] {
+            #expect(posts(.success, watchApproved: true, fromNotification: true, showing: showing, active: active))
+            #expect(!posts(.success, watchApproved: true, showing: showing, active: active))
+            #expect(!posts(.success, watchApproved: false, showing: showing, active: active))
+        }
     }
 
     @Test("A success is held a little longer than a decline before the screen closes") func ringDrainDurations() {
