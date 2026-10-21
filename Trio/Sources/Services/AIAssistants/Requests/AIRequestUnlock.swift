@@ -109,6 +109,29 @@ extension AIRequestShown {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    /// What VoiceOver says for the dose, with the unit spelled out: "Insulin, 2.10 units".
+    var spokenInsulin: String {
+        String(
+            localized: "Insulin, \(units) units",
+            comment: "VoiceOver: the dose on the iPhone approval sheet, with the dose as shown, for example '2.10'."
+        )
+    }
+
+    /// What VoiceOver says for the carbs, without trailing zeros: "Carbs, 35 grams".
+    var spokenCarbs: String {
+        let grams = Self.trimmed(carbs)
+        if Self.amount(carbs) == 1 {
+            return String(
+                localized: "Carbs, \(grams) gram",
+                comment: "VoiceOver: one gram of carbs on the iPhone approval sheet."
+            )
+        }
+        return String(
+            localized: "Carbs, \(grams) grams",
+            comment: "VoiceOver: the carbs on the iPhone approval sheet, for example '35' grams."
+        )
+    }
+
     /// The amounts are strings with a `.` separator, whatever the wearer's locale.
     private static func amount(_ shown: String) -> Decimal? {
         Decimal(string: shown, locale: Locale(identifier: "en_US_POSIX"))

@@ -14,6 +14,10 @@ extension AIAssistantsConfig {
                 }
                 .disabled(!state.canSendTestRequest)
                 .sensoryFeedback(.success, trigger: state.testCount)
+                // The footer under the real test button is a new line, which VoiceOver doesn't read on its own.
+                .onChange(of: state.testCount) {
+                    AccessibilityNotification.Announcement(String(localized: "Sent. Check your watch.")).post()
+                }
             } header: {
                 Text("Testing")
             } footer: {

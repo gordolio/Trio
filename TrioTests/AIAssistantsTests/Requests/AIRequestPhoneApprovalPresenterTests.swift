@@ -397,4 +397,97 @@ private func sampleOutcome(
             }
         }
     }
+
+    // MARK: The sheet's haptics
+
+    /// The sheet's result for how a request ended.
+    private func result(_ report: AIRequestReport, approvedOn: AIRequestAnswerSide? = nil, declinedOn: AIRequestDeclinedOn? = nil)
+        -> AIRequestResultMessage
+    {
+        AIRequestResultText.message(for: sampleOutcome(report, approvedOn: approvedOn, declinedOn: declinedOn))
+    }
+
+    @Test func aSuccessPlaysSuccess() {
+        #expect(AIRequestPhoneHaptic(result: result(.delivering(shown: sampleShown), approvedOn: .phone)) == .success)
+        #expect(AIRequestPhoneHaptic(result: result(.logged(shown: sampleShown), approvedOn: .phone)) == .success)
+        #expect(AIRequestPhoneHaptic(result: result(.dryRun(shown: sampleShown), approvedOn: .phone)) == .success)
+    }
+
+    @Test func aRefusalPlaysError() {
+        #expect(AIRequestPhoneHaptic(result: result(.failed(reason: "Glucose is low", carbsLogged: false))) == .error)
+    }
+
+    @Test func carbsLoggedWithoutTheBolusPlaysWarning() {
+        let message = result(.failed(reason: "The pump didn't answer", carbsLogged: true), approvedOn: .phone)
+        #expect(message.tone == .warning)
+        #expect(AIRequestPhoneHaptic(result: message) == .warning)
+    }
+
+    @Test func expiryPlaysWarning() {
+        #expect(AIRequestPhoneHaptic(result: result(.expired)) == .warning)
+    }
+
+    @Test func anEndNobodyAnsweredPlaysWarning() {
+        // Replaced and canceled carry no word of their own for a haptic, so they warn as expiry does.
+        #expect(AIRequestPhoneHaptic(result: result(.replaced)) == .warning)
+        #expect(AIRequestPhoneHaptic(result: result(.withdrawn)) == .warning)
+    }
+
+    @Test func aDeclinePlaysALightImpact() {
+        #expect(AIRequestPhoneHaptic(result: result(.declined(on: .phone), declinedOn: .phone)) == .lightImpact)
+        #expect(AIRequestPhoneHaptic(result: result(.declined(on: .watch), declinedOn: .watch)) == .lightImpact)
+        #expect(AIRequestPhoneHaptic(result: result(.declined(on: .dismissed), declinedOn: .dismissed)) == .lightImpact)
+    }
+
+    @Test func aResultPlaysItsHapticOnArrival() {
+        let success = AIRequestPhoneApprovalPhase.result(result(.delivering(shown: sampleShown), approvedOn: .phone))
+        #expect(success.haptic(after: .asking) == .success)
+        // The watch answered while Face ID was up.
+        #expect(success.haptic(after: .checking) == .success)
+        let declined = AIRequestPhoneApprovalPhase.result(result(.declined(on: .phone), declinedOn: .phone))
+        #expect(declined.haptic(after: .checking) == .lightImpact)
+    }
+
+    @Test func askingAndCheckingPlayNothing() {
+        // Face ID has its own haptics, and a Face ID that didn't pass changes nothing.
+        #expect(AIRequestPhoneApprovalPhase.checking.haptic(after: .asking) == nil)
+        #expect(AIRequestPhoneApprovalPhase.asking.haptic(after: .checking) == nil)
+        #expect(AIRequestPhoneApprovalPhase.asking.haptic(after: .asking) == nil)
+    }
+
+    @Test func aResultPlaysItsHapticOnlyOnce() {
+        let phase = AIRequestPhoneApprovalPhase.result(result(.expired))
+        #expect(phase.haptic(after: phase) == nil)
+    }
+
+    @Test func eachHapticMapsToItsSensoryFeedback() {
+        #expect(AIRequestPhoneHaptic.success.feedback == .success)
+        #expect(AIRequestPhoneHaptic.error.feedback == .error)
+        #expect(AIRequestPhoneHaptic.warning.feedback == .warning)
+        #expect(AIRequestPhoneHaptic.lightImpact.feedback == .impact(weight: .light))
+    }
+
+    // MARK: The countdown
+
+    @Test func secondsLeftRoundUpAndStopAtZero() {
+        let end = Date(timeIntervalSinceReferenceDate: 1000)
+        #expect(AIRequestPhoneApprovalView.secondsLeft(until: end, now: end - 300) == 300)
+        #expect(AIRequestPhoneApprovalView.secondsLeft(until: end, now: end - 59.4) == 60)
+        #expect(AIRequestPhoneApprovalView.secondsLeft(until: end, now: end - 0.2) == 1)
+        #expect(AIRequestPhoneApprovalView.secondsLeft(until: end, now: end + 30) == 0)
+    }
+
+    @Test func theCountdownTurnsUrgentInTheLastMinute() {
+        #expect(AIRequestPhoneApprovalView.isUrgent(secondsLeft: 61) == false)
+        #expect(AIRequestPhoneApprovalView.isUrgent(secondsLeft: 60))
+        #expect(AIRequestPhoneApprovalView.isUrgent(secondsLeft: 1))
+        #expect(AIRequestPhoneApprovalView.isUrgent(secondsLeft: 0))
+    }
+
+    // MARK: VoiceOver
+
+    @Test func theResultIsSpokenAsItsHeadlineThenItsDetail() {
+        let message = result(.declined(on: .phone), declinedOn: .phone)
+        #expect(AIRequestPhoneApprovalView.spoken(result: message) == "Declined. Nothing was logged.")
+    }
 }

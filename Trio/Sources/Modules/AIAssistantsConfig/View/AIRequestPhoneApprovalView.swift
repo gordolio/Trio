@@ -177,6 +177,47 @@ struct AIRequestPhoneApprovalFlow {
     }
 }
 
+/// The haptic the approval sheet plays when its request ends, as a plain value so the map from a result to a haptic can be
+/// tested. `feedback` is what `.sensoryFeedback` plays.
+enum AIRequestPhoneHaptic: Equatable {
+    /// The request was carried out.
+    case success
+    /// The request was refused and nothing was logged.
+    case error
+    /// The carbs were logged but the bolus wasn't, or may not have been, or the request ended with nobody answering.
+    case warning
+    /// The wearer declined, here or on the watch.
+    case lightImpact
+
+    /// A result's haptic follows its tone. A neutral result is either a decline, which somebody answered, or a request
+    /// that ended with nobody answering (expired, replaced or canceled), which warns.
+    init(result message: AIRequestResultMessage) {
+        switch message.tone {
+        case .success:
+            self = .success
+        case .failure:
+            self = .error
+        case .warning:
+            self = .warning
+        case .neutral:
+            self = message.answeredOn == nil ? .warning : .lightImpact
+        }
+    }
+
+    var feedback: SensoryFeedback {
+        switch self {
+        case .success:
+            return .success
+        case .error:
+            return .error
+        case .warning:
+            return .warning
+        case .lightImpact:
+            return .impact(weight: .light)
+        }
+    }
+}
+
 /// Where the approval sheet is.
 enum AIRequestPhoneApprovalPhase: Equatable {
     /// The request waits for the wearer's answer.
@@ -201,6 +242,13 @@ enum AIRequestPhoneApprovalPhase: Equatable {
     var allowsSwipeToDismiss: Bool {
         if case .result = self { return true }
         return false
+    }
+
+    /// The haptic for moving to this phase from `old`. Only a result has one, and only on arrival: asking, checking and
+    /// going back to asking after a Face ID that didn't pass are silent, because Face ID has its own.
+    func haptic(after old: AIRequestPhoneApprovalPhase) -> AIRequestPhoneHaptic? {
+        guard case let .result(message) = self, old != self else { return nil }
+        return AIRequestPhoneHaptic(result: message)
     }
 
     /// The heights the sheet may take. While it asks, it's the full height whenever a double-dose warning is among
@@ -239,9 +287,13 @@ struct AIRequestPhoneApprovalView: View {
     /// The answer that is under way, if one is: Face ID and the answer for Approve, the answer alone for Decline. A
     /// second tap doesn't start another.
     @State private var working: Answer?
+    /// Whether the result's icon has moved on from the meal icon the request began with. It flips as the result appears,
+    /// so the icon is replaced (P6, P7, P9) and then bounces.
+    @State private var iconShowsResult = false
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AppState.self) private var appState
 
     private enum Answer {
@@ -255,14 +307,21 @@ struct AIRequestPhoneApprovalView: View {
 
     private var shown: AIRequestShown { pending.prompt.shown }
 
+    /// How the request gives way to its result, and the result to the buttons' Done. Under Reduce Motion it only fades.
+    private var phaseTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.94))
+    }
+
     var body: some View {
         Group {
             switch phase {
             case .asking,
                  .checking:
                 requestForm
+                    .transition(phaseTransition)
             case let .result(message):
                 resultScroll(message)
+                    .transition(phaseTransition)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -270,7 +329,18 @@ struct AIRequestPhoneApprovalView: View {
         }
         .background(appState.trioBackgroundColor(for: colorScheme).ignoresSafeArea())
         .tint(Color.tabBar)
-        .animation(.default, value: phase)
+        // P6 to P10: the request gives way to its result, and a result to the next, in 0.35 s without a bounce.
+        .animation(.smooth(duration: 0.35), value: phase)
+        // The one haptic map. A result plays its haptic once, when it arrives, whoever answered.
+        .sensoryFeedback(trigger: phase) { old, new in
+            new.haptic(after: old)?.feedback
+        }
+        // The buttons the wearer was on are gone when the result shows, so VoiceOver says what happened.
+        .onChange(of: phase) { _, new in
+            if case let .result(message) = new {
+                AccessibilityNotification.Announcement(Self.spoken(result: message)).post()
+            }
+        }
         .interactiveDismissDisabled(!phase.allowsSwipeToDismiss)
         .presentationDetents(phase.detents(
             hasWarning: contextRowList.contains(where: \.isWarning),
@@ -294,9 +364,17 @@ struct AIRequestPhoneApprovalView: View {
                     .accessibilityAddTraits(.isHeader)
                 contextRows
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("Expires in \(Self.countdown(until: pending.prompt.expiresAt, now: context.date))")
+                    let secondsLeft = Self.secondsLeft(until: pending.prompt.expiresAt, now: context.date)
+                    // P3: the digits roll down each second, and the line turns orange for the last minute. Under
+                    // Reduce Motion they change without rolling.
+                    Text("Expires in \(Self.countdown(secondsLeft: secondsLeft))")
                         .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(
+                            Self.isUrgent(secondsLeft: secondsLeft) ? AnyShapeStyle(Color.orange) :
+                                AnyShapeStyle(HierarchicalShapeStyle.secondary)
+                        )
+                        .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+                        .animation(.snappy(duration: 0.3), value: secondsLeft)
                         .accessibilityAddTraits(.updatesFrequently)
                 }
             } footer: {
@@ -339,7 +417,8 @@ struct AIRequestPhoneApprovalView: View {
         amountColumn(
             Text("Insulin", comment: "iPhone approval: label over Trio's dose"),
             value: shown.unitsText,
-            color: Color.insulin
+            color: Color.insulin,
+            spoken: shown.spokenInsulin
         )
     }
 
@@ -347,11 +426,14 @@ struct AIRequestPhoneApprovalView: View {
         amountColumn(
             Text("Carbs", comment: "iPhone approval: label over the carbs"),
             value: shown.carbsText,
-            color: .orange
+            color: .orange,
+            spoken: shown.spokenCarbs
         )
     }
 
-    private func amountColumn(_ label: Text, value: String, color: Color) -> some View {
+    /// A label over its amount. VoiceOver reads the pair as one element, as `spoken`: "Insulin, 2.10 units", with the
+    /// unit spelled out where the screen has its letter.
+    private func amountColumn(_ label: Text, value: String, color: Color, spoken: String) -> some View {
         VStack(spacing: 2) {
             label
                 .font(.caption)
@@ -362,6 +444,7 @@ struct AIRequestPhoneApprovalView: View {
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(spoken)
     }
 
     /// Trio's rows for the request, the same as on the watch and in the notification.
@@ -419,8 +502,10 @@ struct AIRequestPhoneApprovalView: View {
             case .asking,
                  .checking:
                 answerButtons
+                    .transition(.opacity)
             case .result:
                 doneButton
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 24)
@@ -470,6 +555,8 @@ struct AIRequestPhoneApprovalView: View {
             .disabled(working == .approve)
         }
         .controlSize(.large)
+        // P4 and P5: the working button swaps its icon for the spinner, and back after a Face ID that didn't pass.
+        .animation(.smooth(duration: 0.2), value: working)
     }
 
     private var doneButton: some View {
@@ -507,10 +594,7 @@ struct AIRequestPhoneApprovalView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            Image(systemName: look.symbol)
-                .font(.largeTitle)
-                .foregroundStyle(look.color)
-                .accessibilityHidden(true)
+            resultIcon(look)
             Text(message.headline)
                 .font(.title2.weight(.semibold))
                 .multilineTextAlignment(.center)
@@ -521,24 +605,66 @@ struct AIRequestPhoneApprovalView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// The icon of a result, the same as on the watch: only a success is a green check.
-    private static func look(for tone: AIRequestResultMessage.Tone) -> (symbol: String, color: Color) {
+    /// The meal icon a request starts as, which a result's icon replaces.
+    private static let requestSymbol = "fork.knife"
+
+    /// The result's icon. It begins as the meal icon and is replaced by the result's symbol as the result appears (P6,
+    /// P7, P9), which then bounces, unless the result is a decline or an end nobody answered. Under Reduce Motion it is
+    /// the result's symbol from the start, and fades in with the rest.
+    private func resultIcon(_ look: Look) -> some View {
+        let showsResult = iconShowsResult || reduceMotion
+        return Image(systemName: showsResult ? look.symbol : Self.requestSymbol)
+            .font(.largeTitle)
+            .foregroundStyle(showsResult ? look.color : Color.secondary)
+            .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
+            .symbolEffect(.bounce, value: look.bounces && !reduceMotion && iconShowsResult)
+            .onAppear {
+                withAnimation(.smooth(duration: 0.35)) {
+                    iconShowsResult = true
+                }
+            }
+            .accessibilityHidden(true)
+    }
+
+    private typealias Look = (symbol: String, color: Color, bounces: Bool)
+
+    /// The icon of a result, the same as on the watch: only a success is a green check. A decline or an end nobody
+    /// answered is quiet; a success, a warning and a failure bounce.
+    private static func look(for tone: AIRequestResultMessage.Tone) -> Look {
         switch tone {
         case .success:
-            return ("checkmark.circle.fill", .loopGreen)
+            return ("checkmark.circle.fill", .loopGreen, true)
         case .neutral:
-            return ("xmark.circle", .secondary)
+            return ("xmark.circle", .secondary, false)
         case .warning:
-            return ("exclamationmark.triangle.fill", .orange)
+            return ("exclamationmark.triangle.fill", .orange, true)
         case .failure:
-            return ("exclamationmark.triangle.fill", .loopRed)
+            return ("exclamationmark.triangle.fill", .loopRed, true)
         }
+    }
+
+    /// The whole seconds left, rounded up, never below 0.
+    static func secondsLeft(until expiresAt: Date, now: Date) -> Int {
+        max(0, Int(expiresAt.timeIntervalSince(now).rounded(.up)))
     }
 
     /// The time left as `m:ss`, never below `0:00`.
     static func countdown(until expiresAt: Date, now: Date) -> String {
-        let seconds = max(0, Int(expiresAt.timeIntervalSince(now).rounded(.up)))
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+        countdown(secondsLeft: secondsLeft(until: expiresAt, now: now))
+    }
+
+    static func countdown(secondsLeft seconds: Int) -> String {
+        String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    /// Whether the countdown turns orange: the last minute.
+    static func isUrgent(secondsLeft: Int) -> Bool {
+        secondsLeft <= 60
+    }
+
+    /// What VoiceOver says when the request ends: the headline, then what it means.
+    static func spoken(result message: AIRequestResultMessage) -> String {
+        "\(message.headline). \(message.detail)"
     }
 
     // MARK: Answering

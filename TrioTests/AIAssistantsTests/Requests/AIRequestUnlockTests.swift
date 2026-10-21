@@ -65,4 +65,17 @@ import Testing
         let proteinOnly = AIRequestShown(carbs: "35.00", fat: "0.00", protein: "8.00", units: "2.10")
         #expect(proteinOnly.fatAndProteinText == "8\u{00A0}g protein")
     }
+
+    // MARK: VoiceOver
+
+    @Test("The dose is spoken with its unit spelled out") func spokenInsulin() {
+        #expect(Self.dose.spokenInsulin == "Insulin, 2.10 units")
+        #expect(Self.noDose.spokenInsulin == "Insulin, 0.00 units")
+    }
+
+    @Test("The carbs are spoken in grams, without trailing zeros") func spokenCarbs() {
+        #expect(Self.dose.spokenCarbs == "Carbs, 35 grams")
+        #expect(AIRequestShown(carbs: "12.50", fat: "0.00", protein: "0.00", units: "1.00").spokenCarbs == "Carbs, 12.5 grams")
+        #expect(AIRequestShown(carbs: "1.00", fat: "0.00", protein: "0.00", units: "1.00").spokenCarbs == "Carbs, 1 gram")
+    }
 }
