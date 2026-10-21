@@ -2,8 +2,8 @@ import Foundation
 
 /// The requests the wearer approved on the watch, from the approval screen or from a notification, each with its
 /// request's `expiresAt`. The watch keeps them in `UserDefaults`, so that after a relaunch it still knows a result is
-/// for an approval of its own and posts one that didn't go through. Each is dropped `keptAfterExpiry` after its request
-/// expired: the phone's result comes at the expiry at the latest, and a watch that was out of reach gets it later.
+/// for an approval of its own and posts it. Each is dropped `keptAfterExpiry` after its request expired: the phone's
+/// result comes at the expiry at the latest, and a watch that was out of reach gets it later.
 struct AIRequestWatchApprovals: Codable, Equatable {
     struct Approval: Codable, Equatable {
         let expiresAt: Date

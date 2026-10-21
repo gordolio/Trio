@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UserNotifications
 
 @testable import Trio
 
@@ -595,18 +596,22 @@ import Testing
         #expect(AIRequestWatchFlow.haptic(from: Self.flow().phase, to: unanswered.phase, decision: unanswered.decision) == nil)
     }
 
-    @Test("Crossing into No reply plays a failure, once, and nothing else on the clock does") func hapticForNoReply() {
+    @Test(
+        "Crossing into No reply plays an attention tap, not a failure, once, and nothing else on the clock does"
+    ) func hapticForNoReply() {
         let answeredAt = Self.shownAt.addingTimeInterval(1)
         func at(_ seconds: TimeInterval) -> Date { answeredAt.addingTimeInterval(seconds) }
 
         for flow in [Self.sending(.approve), Self.sending(.approve, queued: true), Self.sending(.decline)] {
             #expect(flow.noReplyHaptic(from: at(13), to: at(14)) == nil)
-            #expect(flow.noReplyHaptic(from: at(14), to: at(15)) == .failure)
+            // The bolus may still be given: a late receipt, the service's route, or a queued answer.
+            #expect(flow.noReplyHaptic(from: at(14), to: at(15)) == .notification)
+            #expect(flow.noReplyHaptic(from: at(14), to: at(15)) != .failure)
             // Once it says No reply, the next ticks are quiet.
             #expect(flow.noReplyHaptic(from: at(15), to: at(16)) == nil)
             #expect(flow.noReplyHaptic(from: at(16), to: at(60)) == nil)
             // A tick that skips past the crossing, as with the screen dimmed, still plays it.
-            #expect(flow.noReplyHaptic(from: at(10), to: at(70)) == .failure)
+            #expect(flow.noReplyHaptic(from: at(10), to: at(70)) == .notification)
         }
 
         // A receipt ends the wait, so the clock plays nothing after it.
@@ -654,18 +659,10 @@ import Testing
     }
 
     @Test(
-        "The result is posted whenever it isn't on show: an approval that didn't go through, or one approved from a notification"
+        "Every result of a watch approval is posted, success included, unless the wearer is looking at its screen"
     ) func resultNotificationIsPostedUnlessOnShow() {
-        let tones: [AIRequestResultMessage.Tone] = [.success, .neutral, .warning, .failure]
-        func posts(
-            _ tone: AIRequestResultMessage.Tone,
-            watchApproved: Bool,
-            fromNotification: Bool = false,
-            showing: Bool,
-            active: Bool
-        ) -> Bool {
+        func posts(watchApproved: Bool, fromNotification: Bool = false, showing: Bool, active: Bool) -> Bool {
             AIRequestWatchFlow.postsResultNotification(
-                tone: tone,
                 watchApproved: watchApproved,
                 approvedFromNotification: fromNotification,
                 showing: showing,
@@ -673,38 +670,35 @@ import Testing
             )
         }
 
-        for tone in tones {
-            for watchApproved in [false, true] {
-                for fromNotification in [false, true] {
-                    // The approval screen shows the result itself, and the wearer is looking at it.
-                    #expect(!posts(
-                        tone,
-                        watchApproved: watchApproved,
-                        fromNotification: fromNotification,
-                        showing: true,
-                        active: true
-                    ))
-                }
+        // The approval screen shows the result itself, and the wearer is looking at it.
+        for watchApproved in [false, true] {
+            for fromNotification in [false, true] {
+                #expect(!posts(watchApproved: watchApproved, fromNotification: fromNotification, showing: true, active: true))
             }
         }
 
-        // Anything but a success, for a request the watch approved: wherever the wearer isn't looking at it. On screen
-        // with the app in the background counts as not looking.
-        for tone in [AIRequestResultMessage.Tone.neutral, .warning, .failure] {
-            for (showing, active) in [(false, false), (false, true), (true, false)] {
-                #expect(posts(tone, watchApproved: true, showing: showing, active: active))
-                #expect(posts(tone, watchApproved: true, fromNotification: true, showing: showing, active: active))
-                // A request the watch didn't approve: declined here, or answered on the iPhone, or never answered.
-                #expect(!posts(tone, watchApproved: false, showing: showing, active: active))
-            }
-        }
-
-        // A success only for a one-gesture approval from the notification, which has no screen to show it.
+        // Anywhere else, every result of a watch approval is posted: a success too, since the wearer may have closed
+        // "Sent to Trio" or "No reply" and would otherwise not know the bolus was given. On screen with the app in the
+        // background counts as not looking.
         for (showing, active) in [(false, false), (false, true), (true, false)] {
-            #expect(posts(.success, watchApproved: true, fromNotification: true, showing: showing, active: active))
-            #expect(!posts(.success, watchApproved: true, showing: showing, active: active))
-            #expect(!posts(.success, watchApproved: false, showing: showing, active: active))
+            // Approved on the screen.
+            #expect(posts(watchApproved: true, showing: showing, active: active))
+            // Approved from a notification, which has no screen to show it.
+            #expect(posts(watchApproved: true, fromNotification: true, showing: showing, active: active))
+            #expect(posts(watchApproved: false, fromNotification: true, showing: showing, active: active))
+            // A request the watch didn't approve: declined here, or answered on the iPhone, or never answered.
+            #expect(!posts(watchApproved: false, showing: showing, active: active))
         }
+    }
+
+    @Test(
+        "A posted result breaks through a Focus unless it's a success"
+    ) func resultNotificationBreaksThroughFocusUnlessSuccess() {
+        #expect(AIRequestWatchFlow.resultInterruptionLevel(for: .success) == .active)
+        // Not given, partly given, or a watch Approve the phone didn't take: the request itself was time-sensitive.
+        #expect(AIRequestWatchFlow.resultInterruptionLevel(for: .neutral) == .timeSensitive)
+        #expect(AIRequestWatchFlow.resultInterruptionLevel(for: .warning) == .timeSensitive)
+        #expect(AIRequestWatchFlow.resultInterruptionLevel(for: .failure) == .timeSensitive)
     }
 
     @Test("A success is held a little longer than a decline before the screen closes") func ringDrainDurations() {

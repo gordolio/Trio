@@ -62,8 +62,8 @@ import WatchKit
     /// phone's receipt, and doesn't close the screen.
     @ObservationIgnored private var answeredIDs: Set<String> = []
     /// Requests the wearer approved on the watch, from the screen or a notification action, kept in `UserDefaults` so a
-    /// relaunch keeps them. A result for one that isn't a success is posted as a notification, and so is any result for
-    /// one approved from a notification, whenever the screen isn't showing it.
+    /// relaunch keeps them. Any result for one is posted as a notification whenever the wearer isn't looking at its
+    /// screen.
     @ObservationIgnored private var approvals = AIRequestWatchApprovals.load(from: .standard, at: Date())
     /// The requests the watch has seen, by ID, so the iPhone's backup can open one. Only unexpired ones are kept.
     @ObservationIgnored private var knownPrompts: [String: AIRequestPrompt] = [:]
@@ -212,9 +212,8 @@ import WatchKit
     }
 
     /// Keeps the result for the screen. A copy of a result already kept changes nothing, and posts nothing. A result is
-    /// posted as a notification as `AIRequestWatchFlow.postsResultNotification` says: anything but a success for a
-    /// request the watch approved, and any result for one approved from a notification, unless the wearer is looking at
-    /// its approval screen. Main queue only.
+    /// posted as a notification as `AIRequestWatchFlow.postsResultNotification` says: any result for a request the watch
+    /// approved, unless the wearer is looking at its approval screen. Main queue only.
     private func record(_ message: AIRequestResultMessage) {
         guard results[message.id] != message else { return }
         results[message.id] = message
@@ -223,20 +222,20 @@ import WatchKit
         let (approvedHere, approvedFromNotification) = lock.withLock {
             (approvals.contains(message.id), approvals.isFromNotification(message.id))
         }
-        let failedApproval: Bool
+        let approvedOnWatch: Bool
         switch message.tone {
-        case .neutral,
-             .success:
-            failedApproval = false
+        case .neutral:
+            // Answered on the watch, it was declined or dismissed there.
+            approvedOnWatch = false
         case .failure,
+             .success,
              .warning:
-            // Only an approval can fail, so a failure answered on the watch is one the watch approved, even one approved
-            // before the watch kept its approvals.
-            failedApproval = message.answeredOn == .watch
+            // Only an approval is carried out or fails, so one answered on the watch is one the watch approved, even one
+            // approved before the watch kept its approvals.
+            approvedOnWatch = message.answeredOn == .watch
         }
         let posts = AIRequestWatchFlow.postsResultNotification(
-            tone: message.tone,
-            watchApproved: approvedHere || failedApproval,
+            watchApproved: approvedHere || approvedOnWatch,
             approvedFromNotification: approvedFromNotification,
             showing: presented?.id == message.id,
             active: WKApplication.shared().applicationState == .active
@@ -246,7 +245,8 @@ import WatchKit
         }
     }
 
-    /// Posts a result in its own slot, in the requests' thread. A failure breaks through Focus, as the request did.
+    /// Posts a result in its own slot, in the requests' thread. Anything but a success breaks through a Focus, as the
+    /// request did (`AIRequestWatchFlow.resultInterruptionLevel`).
     private func notify(_ message: AIRequestResultMessage) {
         let content = UNMutableNotificationContent()
         content.title = message.headline
@@ -254,14 +254,7 @@ import WatchKit
         content.body = message.detail
         content.sound = .default
         content.threadIdentifier = AIRequestIdentifiers.threadID
-        switch message.tone {
-        case .neutral,
-             .success:
-            content.interruptionLevel = .active
-        case .failure,
-             .warning:
-            content.interruptionLevel = .timeSensitive
-        }
+        content.interruptionLevel = AIRequestWatchFlow.resultInterruptionLevel(for: message.tone)
 
         let request = UNNotificationRequest(
             identifier: AIRequestIdentifiers.resultNotificationSlot,

@@ -75,7 +75,7 @@ struct AIRequestApprovalView: View {
                     .transition(phaseTransition)
             } else {
                 // One view for every phase after the answer, so its icon is replaced rather than rebuilt. Every second,
-                // so the wording turns to "No reply" 15 s after the answer, with a failure the wearer can feel.
+                // so the wording turns to "No reply" 15 s after the answer, with a tap the wearer can feel.
                 TimelineView(.periodic(from: flow.shownAt, by: 1)) { context in
                     outcome(at: context.date)
                         .onChange(of: context.date) { earlier, now in
@@ -833,6 +833,8 @@ private extension AIRequestWatchHaptic {
             return .failure
         case .directionDown:
             return .directionDown
+        case .notification:
+            return .notification
         }
     }
 }
