@@ -61,11 +61,7 @@ func samplePrompt(id: String) -> AIRequestPrompt {
         shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: 1.2),
         title: "ChatGPT: slice of pizza",
         body: "20 g carbs · 1.2 U",
-        expiresAt: coordinatorTestStart + 5 * 60,
-        approvalStyle: .twoStep,
-        answerRoute: .both,
-        answerToken: nil,
-        answerURL: nil
+        expiresAt: coordinatorTestStart + 5 * 60
     )
 }
 

@@ -216,7 +216,6 @@ private final class SignedOutLog {
         #expect(body == nil)
         #expect(inbox.requests.map(\.id) == ["r1"])
         #expect(inbox.requests[0].meal?.carbs == 20)
-        #expect(inbox.answers.isEmpty)
     }
 
     @Test("GET inbox fails when the body isn't an inbox") func getInboxRejectsAnotherBody() async {

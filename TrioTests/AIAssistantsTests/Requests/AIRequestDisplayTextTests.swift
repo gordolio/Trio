@@ -11,15 +11,13 @@ import Testing
 
     private func display(
         shown: AIRequestShown = Self.shown,
-        context: AIRequestContext = AIRequestContext(glucose: "142 mg/dL ↗"),
-        style: AIRequestApprovalStyle = .twoStep
+        context: AIRequestContext = AIRequestContext(glucose: "142 mg/dL ↗")
     ) -> AIRequestDisplay {
         AIRequestDisplayText.display(
             source: "ChatGPT",
             description: "slice of pizza",
             shown: shown,
-            context: context,
-            style: style
+            context: context
         )
     }
 
@@ -68,16 +66,6 @@ import Testing
         #expect(display(context: AIRequestContext(recentCarbs: .init(amount: "12.5", minutesAgo: 0))).body.hasSuffix(
             "\nCarbs 12.5\u{00A0}g logged 0 min ago"
         ))
-    }
-
-    @Test func oneGestureBodyEndsWithTheAction() {
-        let context = AIRequestContext(
-            glucose: "142 mg/dL ↗",
-            recentBolus: .init(amount: "3.00", minutesAgo: 8)
-        )
-        let body = display(context: context, style: .oneGesture).body
-        #expect(body.components(separatedBy: "\n").last == "Approve gives the bolus now")
-        #expect(body == display(context: context, style: .twoStep).body + "\nApprove gives the bolus now")
     }
 
     @Test func zeroDoseBodySaysWhy() {
@@ -130,12 +118,12 @@ import Testing
         #expect(!display(context: AIRequestContext()).body.contains("no insulin"))
     }
 
-    @Test func approveNeverPromisesABolusThatIsNotComing() {
-        // A 0 U request gives no bolus, so its one-gesture notification doesn't say it does.
+    @Test func bodyHasNoLineAboutApproving() {
+        // The wearer approves on the screens the request opens, not from the notification, so the body never says what
+        // approving does.
         let none = AIRequestShown(carbs: 35, fat: 0, protein: 0, units: 0)
-        #expect(!display(shown: none, context: AIRequestContext(), style: .oneGesture).body.contains("Approve gives"))
-        // A request with a dose gives it.
-        #expect(display(context: AIRequestContext(), style: .oneGesture).body.hasSuffix("\nApprove gives the bolus now"))
+        #expect(!display(context: AIRequestContext()).body.contains("Approve"))
+        #expect(!display(shown: none, context: AIRequestContext()).body.contains("Approve"))
     }
 
     @Test func glucoseAgeShownFromTwoMinutes() {
@@ -173,7 +161,7 @@ import Testing
             recentBolus: .init(amount: "2.10", minutesAgo: 8),
             noDoseReason: String(repeating: "x", count: 120)
         )
-        let body = display(context: context, style: .oneGesture).body
+        let body = display(context: context).body
         #expect(body.utf16.count <= AIRequestDisplayText.maxLength)
         #expect(body.hasSuffix("…"))
         // The dose is first, so it is whole.

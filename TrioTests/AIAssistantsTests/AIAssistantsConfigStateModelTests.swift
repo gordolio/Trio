@@ -214,10 +214,10 @@ final class FakeAIAssistantsService: AIAssistantsService {
         let state = makeState()
         state.preferencesStore = store
         state.subscribe()
-        state.preferences.approvalStyle = .oneGesture
+        state.preferences.allowsMealRequests = true
         state.preferences.phoneBackupDelay = 30
         state.preferences.wakePushType = .timeSensitive
-        #expect(store.value.approvalStyle == .oneGesture)
+        #expect(store.value.allowsMealRequests)
         #expect(store.value.phoneBackupDelay == 30)
         #expect(store.value.wakePushType == .timeSensitive)
     }
@@ -227,16 +227,15 @@ final class FakeAIAssistantsService: AIAssistantsService {
         let state = makeState()
         state.preferencesStore = store
         state.subscribe()
-        store.value.answerRoute = .serviceOnly
-        #expect(await eventuallyTrue { state.preferences.answerRoute == .serviceOnly })
+        store.value.phoneBackupDelay = 60
+        #expect(await eventuallyTrue { state.preferences.phoneBackupDelay == 60 })
     }
 
     @Test("The screen starts with what the store holds") func screenStartsWithTheStoredPreferences() {
         let store = freshStore()
         store.value = AIAssistantsPreferences(
-            approvalStyle: .oneGesture,
+            allowsMealRequests: true,
             phoneBackupDelay: 60,
-            answerRoute: .watchOnly,
             wakePushType: .background
         )
         let state = makeState()
@@ -255,10 +254,10 @@ final class FakeAIAssistantsService: AIAssistantsService {
         state.subscribe()
         var writes = 0
         let subscription = store.changes.dropFirst().sink { _ in writes += 1 }
-        state.preferences.approvalStyle = .oneGesture
+        state.preferences.allowsMealRequests = true
         await letDebouncePass()
         #expect(writes == 1)
-        #expect(state.preferences.approvalStyle == .oneGesture)
+        #expect(state.preferences.allowsMealRequests)
         subscription.cancel()
     }
 
@@ -282,51 +281,8 @@ final class FakeAIAssistantsService: AIAssistantsService {
         let state = makeState()
         state.preferencesStore = nil
         state.subscribe()
-        state.preferences.answerRoute = .watchOnly
+        state.preferences.phoneBackupDelay = 60
         await letDebouncePass()
-        #expect(state.preferences.answerRoute == .watchOnly)
-    }
-
-    // MARK: - Approving from the notification
-
-    @Test("Choosing to approve from the notification asks first and changes nothing") func oneGestureNeedsConfirmation() {
-        let state = makeState()
-        #expect(state.preferences.approvalStyle == .twoStep)
-        state.requestApprovalStyle(.oneGesture)
-        #expect(state.isConfirmingOneGesture)
-        #expect(state.preferences.approvalStyle == .twoStep)
-        state.confirmOneGesture()
-        #expect(!state.isConfirmingOneGesture)
-        #expect(state.preferences.approvalStyle == .oneGesture)
-    }
-
-    @Test("Canceling the question leaves Review on watch first") func cancellingOneGestureKeepsTwoSteps() {
-        let state = makeState()
-        state.requestApprovalStyle(.oneGesture)
-        state.cancelOneGesture()
-        #expect(!state.isConfirmingOneGesture)
-        #expect(state.preferences.approvalStyle == .twoStep)
-        // A confirmation with nothing asked changes nothing either.
-        state.confirmOneGesture()
-        #expect(state.preferences.approvalStyle == .twoStep)
-    }
-
-    @Test("Going back to Review on watch first needs no question") func twoStepAppliesAtOnce() {
-        let state = makeState()
-        state.preferences.approvalStyle = .oneGesture
-        state.requestApprovalStyle(.twoStep)
-        #expect(!state.isConfirmingOneGesture)
-        #expect(state.preferences.approvalStyle == .twoStep)
-    }
-
-    @Test("Choosing the style already on asks nothing") func choosingTheCurrentStyleAsksNothing() {
-        let state = makeState()
-        state.preferences.approvalStyle = .oneGesture
-        state.requestApprovalStyle(.oneGesture)
-        #expect(!state.isConfirmingOneGesture)
-        #expect(state.preferences.approvalStyle == .oneGesture)
-        state.requestApprovalStyle(.twoStep)
-        state.requestApprovalStyle(.twoStep)
-        #expect(!state.isConfirmingOneGesture)
+        #expect(state.preferences.phoneBackupDelay == 60)
     }
 }

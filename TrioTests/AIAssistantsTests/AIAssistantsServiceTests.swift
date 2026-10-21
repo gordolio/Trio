@@ -13,7 +13,7 @@ final class FakeAIAssistantsAPI: AIAssistantsAPIClient {
     private var recordedCalls: [String] = []
     private var recordedStatuses: [StatusSnapshot] = []
     private var recordedRequestStates: [(id: String, body: AIRequestStateBody)] = []
-    private var storedInbox = AIInbox(requests: [], answers: [])
+    private var storedInbox = AIInbox(requests: [])
     /// Keyed by call name: "putDevice", "deleteDevice", "putStatus", "getInbox" or "putRequestState".
     var errors: [String: AIAssistantsAPIError] = [:]
     /// When set, `putStatus` waits for it to open.
@@ -754,15 +754,15 @@ func letDebouncePass() async {
         #expect(api.calls.isEmpty)
 
         // Another preference changed.
-        preferences.send(AIAssistantsPreferences(approvalStyle: .oneGesture))
+        preferences.send(AIAssistantsPreferences(allowsMealRequests: true))
         await letDebouncePass()
         #expect(api.calls.isEmpty)
 
-        preferences.send(AIAssistantsPreferences(approvalStyle: .oneGesture, wakePushType: .timeSensitive))
+        preferences.send(AIAssistantsPreferences(allowsMealRequests: true, wakePushType: .timeSensitive))
         #expect(await eventuallyTrue { api.calls == ["putDevice", "putStatus"] })
 
         // The same type again isn't a change.
-        preferences.send(AIAssistantsPreferences(approvalStyle: .twoStep, wakePushType: .timeSensitive))
+        preferences.send(AIAssistantsPreferences(allowsMealRequests: false, wakePushType: .timeSensitive))
         await letDebouncePass()
         #expect(api.calls == ["putDevice", "putStatus"])
     }

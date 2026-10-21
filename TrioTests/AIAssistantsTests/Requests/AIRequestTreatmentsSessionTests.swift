@@ -223,6 +223,17 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(h.reporter.states == ["r1:pending"])
     }
 
+    /// The watch confirms Trio's 1.2 U dose for the request, and carries it out. Returns whether it did.
+    private func watchConfirms() async -> Bool {
+        await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: 1.2, carbs: nil)) != nil
+    }
+
+    /// Gives the session time to report, then checks the only final report is the watch's own.
+    private func expectOnlyTheWatchsReport() async {
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(h.reporter.states == ["r1:pending", "r1:delivering"])
+    }
+
     // MARK: Opening
 
     @Test func opensTreatmentsForThePendingRequest() async {
@@ -757,20 +768,20 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         let state = Treatments.StateModel()
         state.maxCarbs = 250
         session.sheetAppeared(state: state, recalculate: {})
-        #expect(await h.coordinator.claim(id: "r1", on: .watch))
+        #expect(await watchConfirms())
         submit(state, amount: 2)
         await unlock(state)
         await storeOwnBolus(2)
         await closeSheet()
-        await expectNoFinalReport()
+        await expectOnlyTheWatchsReport()
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT")])
     }
 
     // MARK: Leaving
 
-    @Test func watchClaimClosesTheSheet() async throws {
+    @Test func watchConfirmClosesTheSheet() async throws {
         await openSheet()
-        #expect(await h.coordinator.claim(id: "r1", on: .watch))
+        #expect(await watchConfirms())
         await flushMainQueue()
         await flushMainQueue()
         #expect(router.sent == [.treatmentView, nil])
@@ -786,9 +797,9 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(notice.identifier == "ai-request-result-r1")
         #expect(notice.trigger == nil)
 
-        // The sheet goes, and reports nothing.
+        // The sheet goes, and reports nothing of its own.
         session.sheetDisappeared()
-        await expectNoFinalReport()
+        await expectOnlyTheWatchsReport()
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT")])
     }
 

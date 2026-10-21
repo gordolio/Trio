@@ -28,8 +28,6 @@ final class FakeWatchSession: AIRequestWatchSession {
 
 /// What the link told its owner, in order.
 private final class LinkEvents {
-    var answers: [AIRequestAnswer] = []
-    var viewed: [String] = []
     var opened: [String] = []
     var confirms: [AIRequestWatchConfirm] = []
     var closes: [AIRequestWatchClose] = []
@@ -38,16 +36,12 @@ private final class LinkEvents {
 
 private func makeLink(
     session: FakeWatchSession = FakeWatchSession(),
-    keys: AIRequestKeyStore = AIRequestKeyStore(keychain: InMemoryAIRequestKeychain()),
     defaults: UserDefaults = UserDefaults(suiteName: UUID().uuidString)!,
     events: LinkEvents = LinkEvents()
 ) -> AIRequestWatchLink {
     AIRequestWatchLink(
         session: session,
-        keys: keys,
         defaults: defaults,
-        onAnswer: { events.answers.append($0) },
-        onViewing: { events.viewed.append($0) },
         onOpen: { events.opened.append($0) },
         onConfirm: { events.confirms.append($0) },
         onClose: { events.closes.append($0) },
@@ -58,28 +52,6 @@ private func makeLink(
 /// Push tokens as the watch sends them: hex, 32 bytes.
 private let watchToken = String(repeating: "ab", count: 32)
 private let otherWatchToken = String(repeating: "cd", count: 32)
-
-private let samplePrompt = AIRequestPrompt(
-    id: "r1",
-    source: "ChatGPT",
-    description: "slice of pizza",
-    shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: 1.2),
-    title: "ChatGPT: slice of pizza",
-    body: "20 g carbs · 1.2 U",
-    expiresAt: Date(timeIntervalSince1970: 1_792_000_300),
-    approvalStyle: .twoStep,
-    answerRoute: .both,
-    answerToken: nil,
-    answerURL: nil
-)
-
-private let sampleAnswer = AIRequestSigner.sign(
-    prompt: samplePrompt,
-    decision: .approve,
-    declinedBy: nil,
-    at: Date(timeIntervalSince1970: 1_792_000_010),
-    key: Data(0 ..< 32)
-)
 
 private func d(_ text: String) -> Decimal {
     Decimal(string: text)!
@@ -105,7 +77,6 @@ private final class RelayRig {
         session.isReachable = reachable
         link = AIRequestsRuntime.makeWatchLink(
             session: session,
-            keys: harness.keys,
             defaults: UserDefaults(suiteName: UUID().uuidString)!,
             relay: relay,
             onWatchTokenChanged: {}
@@ -142,54 +113,6 @@ private final class RelayRig {
 }
 
 @Suite("AI request watch link") struct AIRequestWatchLinkTests {
-    @Test func keyRequestRotatesAndSendsTheKey() throws {
-        let session = FakeWatchSession()
-        let keys = AIRequestKeyStore(keychain: InMemoryAIRequestKeychain())
-        let link = makeLink(session: session, keys: keys)
-
-        #expect(link.receive([AIRequestIdentifiers.keyRequest: true]))
-        let first = try #require(session.userInfos.last?[AIRequestIdentifiers.keyMessage] as? String)
-        #expect(Data(base64Encoded: first) == keys.current)
-        #expect(session.messages.isEmpty)
-
-        // A reinstalled watch asks again, and the old key stops verifying.
-        #expect(link.receive([AIRequestIdentifiers.keyRequest: true]))
-        let second = try #require(session.userInfos.last?[AIRequestIdentifiers.keyMessage] as? String)
-        #expect(second != first)
-        #expect(Data(base64Encoded: second) == keys.current)
-        #expect(session.userInfos.count == 2)
-    }
-
-    @Test func keyRequestWithoutAStoredKeySendsNothing() {
-        let session = FakeWatchSession()
-        let keychain = InMemoryAIRequestKeychain()
-        keychain.failWrites = true
-        let keys = AIRequestKeyStore(keychain: keychain)
-        let link = makeLink(session: session, keys: keys)
-
-        #expect(link.receive([AIRequestIdentifiers.keyRequest: true]))
-        #expect(session.userInfos.isEmpty && session.messages.isEmpty)
-        #expect(keys.current == nil)
-    }
-
-    @Test func answerIsDecodedAndForwarded() throws {
-        let events = LinkEvents()
-        let link = makeLink(events: events)
-        let data = try JSONEncoder().encode(sampleAnswer)
-
-        #expect(link.receive([AIRequestIdentifiers.keyAnswer: data]))
-        #expect(events.answers == [sampleAnswer])
-    }
-
-    @Test func unreadableAnswerIsHandledButNotForwarded() {
-        let events = LinkEvents()
-        let link = makeLink(events: events)
-
-        #expect(link.receive([AIRequestIdentifiers.keyAnswer: Data("not json".utf8)]))
-        #expect(link.receive([AIRequestIdentifiers.keyAnswer: "not data"]))
-        #expect(events.answers.isEmpty)
-    }
-
     @Test func watchTokenStoredAndChangeReportedOnce() {
         let session = FakeWatchSession()
         let events = LinkEvents()
@@ -275,121 +198,46 @@ private final class RelayRig {
         #expect(!link.receive(["bolus": 1.0]))
         #expect(!link.receive([:]))
         #expect(session.userInfos.isEmpty && session.messages.isEmpty)
-        #expect(events.answers.isEmpty && events.tokenChanges == 0)
+        #expect(events.opened.isEmpty && events.confirms.isEmpty && events.closes.isEmpty && events.tokenChanges == 0)
     }
 
-    @Test func deliverUsesSendMessageWhenReachableElseUserInfo() throws {
-        let session = FakeWatchSession()
-        let link = makeLink(session: session)
-
-        session.isReachable = true
-        link.deliver(samplePrompt)
-        #expect(session.messages.count == 1 && session.userInfos.isEmpty)
-        let sent = try #require(session.messages.first?[AIRequestIdentifiers.keyPrompt] as? Data)
-        #expect(try JSONDecoder().decode(AIRequestPrompt.self, from: sent) == samplePrompt)
-
-        session.isReachable = false
-        link.deliver(samplePrompt)
-        #expect(session.messages.count == 1 && session.userInfos.count == 1)
-        let queued = try #require(session.userInfos.first?[AIRequestIdentifiers.keyPrompt] as? Data)
-        #expect(try JSONDecoder().decode(AIRequestPrompt.self, from: queued) == samplePrompt)
-    }
-
-    @Test func withdrawUsesSendMessageWhenReachableElseUserInfo() {
-        let session = FakeWatchSession()
-        let link = makeLink(session: session)
-
-        session.isReachable = true
-        link.withdraw(id: "r1")
-        #expect(session.messages.count == 1 && session.userInfos.isEmpty)
-        #expect(session.messages.first?[AIRequestIdentifiers.keyWithdraw] as? String == "r1")
-
-        session.isReachable = false
-        link.withdraw(id: "r2")
-        #expect(session.messages.count == 1 && session.userInfos.count == 1)
-        #expect(session.userInfos.first?[AIRequestIdentifiers.keyWithdraw] as? String == "r2")
-    }
-
-    @Test func sendResultQueuesAndSendsLive() throws {
-        let session = FakeWatchSession()
-        session.isReachable = true
-        let link = makeLink(session: session)
-        let message = AIRequestResultMessage(
-            id: "r1",
-            title: "ChatGPT: slice of pizza",
-            headline: "Bolus started: 2.10\u{00A0}U",
-            detail: "35\u{00A0}g carbs logged.",
-            tone: .success,
-            answeredOn: .watch
-        )
-
-        link.sendResult(message)
-
-        #expect(session.userInfos.count == 1 && session.messages.count == 1)
-        let queued = try #require(session.userInfos.first?[AIRequestIdentifiers.keyResult] as? Data)
-        let live = try #require(session.messages.first?[AIRequestIdentifiers.keyResult] as? Data)
-        #expect(try JSONDecoder().decode(AIRequestResultMessage.self, from: queued) == message)
-        #expect(try JSONDecoder().decode(AIRequestResultMessage.self, from: live) == message)
-        #expect(session.userInfos.first?.count == 1 && session.messages.first?.count == 1)
-    }
-
-    @Test func sendResultOnlyQueuesWhenTheWatchIsNotReachable() throws {
-        let session = FakeWatchSession()
-        session.isReachable = false
-        let link = makeLink(session: session)
-
-        link.sendResult(AIRequestResultMessage(
-            id: "r1",
-            title: "ChatGPT: slice of pizza",
-            headline: "Declined",
-            detail: "Nothing was logged.",
-            tone: .neutral,
-            answeredOn: .watch
-        ))
-
-        #expect(session.messages.isEmpty)
-        let queued = try #require(session.userInfos.first?[AIRequestIdentifiers.keyResult] as? Data)
-        #expect(try JSONDecoder().decode(AIRequestResultMessage.self, from: queued).id == "r1")
-    }
-
-    @Test func viewingMessageCallsOnViewing() {
-        let events = LinkEvents()
-        let session = FakeWatchSession()
-        let link = makeLink(session: session, events: events)
-
-        #expect(link.receive([AIRequestIdentifiers.keyViewing: "r1"]))
-        #expect(events.viewed == ["r1"])
-        // Nothing is sent back, and the other callbacks are left alone.
-        #expect(session.messages.isEmpty && session.userInfos.isEmpty)
-        #expect(events.answers.isEmpty && events.tokenChanges == 0)
-    }
-
-    @Test func viewingMessageWithoutAnIDIsHandledButNotForwarded() {
-        let events = LinkEvents()
-        let link = makeLink(events: events)
-
-        #expect(link.receive([AIRequestIdentifiers.keyViewing: 7]))
-        #expect(events.viewed.isEmpty)
+    @Test func theOldDesignsMessagesAreNeitherHandledNorHeld() {
+        // A watch from an earlier build may still send these. Nothing reads them any more, so they are left to the
+        // watch manager, which ignores what it doesn't know.
+        let old: [[String: Any]] = [
+            ["aiRequestKeyRequest": true],
+            ["aiRequestAnswer": Data("{}".utf8)],
+            ["aiRequestViewing": "r1"]
+        ]
+        let link = makeLink()
+        let holder = AIRequestMessageHolder()
+        for message in old {
+            #expect(!link.receive(message))
+            #expect(!holder.handle(message))
+        }
     }
 
     @Test func messagesHeldBeforeTheRuntimeAreReplayed() throws {
         let holder = AIRequestMessageHolder()
-        let answer: [String: Any] = [AIRequestIdentifiers.keyAnswer: try JSONEncoder().encode(sampleAnswer)]
+        let confirm = AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil)
+        let confirmed: [String: Any] = [AIRequestIdentifiers.keyConfirm: try JSONEncoder().encode(confirm)]
         let token: [String: Any] = [AIRequestIdentifiers.keyWatchPushToken: "abc123"]
-        let keyRequest: [String: Any] = [AIRequestIdentifiers.keyRequest: true]
+        let open: [String: Any] = [AIRequestIdentifiers.keyOpen: "r1"]
 
-        #expect(holder.handle(answer))
+        #expect(holder.handle(confirmed))
         #expect(holder.handle(token))
 
         var received: [[String: Any]] = []
         holder.install { received.append($0)
             return true }
         #expect(received.count == 2)
-        #expect(received[0][AIRequestIdentifiers.keyAnswer] as? Data == answer[AIRequestIdentifiers.keyAnswer] as? Data)
+        #expect(
+            received[0][AIRequestIdentifiers.keyConfirm] as? Data == confirmed[AIRequestIdentifiers.keyConfirm] as? Data
+        )
         #expect(received[1][AIRequestIdentifiers.keyWatchPushToken] as? String == "abc123")
 
         // Once the receiver is set, messages go straight to it and nothing is replayed twice.
-        #expect(holder.handle(keyRequest))
+        #expect(holder.handle(open))
         #expect(received.count == 3)
         holder.install { received.append($0)
             return true }
@@ -440,7 +288,7 @@ private final class RelayRig {
         #expect(events.opened == ["r1"])
         // The link only passes it on: whatever comes of it is sent by the relay.
         #expect(session.messages.isEmpty && session.userInfos.isEmpty)
-        #expect(events.answers.isEmpty && events.viewed.isEmpty && events.tokenChanges == 0)
+        #expect(events.confirms.isEmpty && events.closes.isEmpty && events.tokenChanges == 0)
     }
 
     @Test func openMessageWithoutAnIDIsHandledButNotForwarded() {
@@ -557,7 +405,7 @@ private final class RelayRig {
     @Test func openMessageRepliesWithDetails() async throws {
         let rig = RelayRig()
         await rig.harness.coordinator.receive(meal(id: "r1", carbs: d("82.5"), fat: 10, protein: 5), via: .service)
-        rig.harness.treatments.doseResult = AIRequestDose(units: d("2.157"), iobAsOf: coordinatorTestStart)
+        rig.harness.treatments.doseResult = AIRequestDose(units: d("2.157"))
 
         await rig.relay.open("r1")
 

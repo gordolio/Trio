@@ -1,14 +1,6 @@
 import Combine
 import Foundation
 
-/// Where the wearer answered the pending request.
-enum AIRequestAnswerSource: Equatable {
-    /// The watch's signed answer, sent to the phone directly or through the service.
-    case watch(AIRequestAnswer)
-    /// The phone backup, after Face ID or the passcode, for the request it showed.
-    case phone(AIRequestDecision, id: String)
-}
-
 /// The one owner of the request waiting for the wearer's answer. It asks on the watch or the phone,
 /// replaces, expires and withdraws requests, and carries out the answer, reporting each state to where the
 /// request came from.
@@ -19,25 +11,10 @@ enum AIRequestAnswerSource: Equatable {
 ///
 /// A request is reported final once: only the pending request, after it's taken out of pending, or a
 /// request seen for the first time gets a final report. A repeated ID gets that first final report, or
-/// its pending report, again. Each first final report also sends the request's `outcomes`.
+/// its pending report, again.
 actor AIRequestCoordinator {
-    enum AnswerOutcome: Equatable {
-        /// The answer was accepted, and the request carried out or declined.
-        case acted
-        /// No request is pending or it has expired, the answer is for another request, or the watch's answer
-        /// wasn't made while this one was pending.
-        case ignoredNotPending
-        /// The watch's answer isn't signed with the current key. The request stays pending.
-        case rejectedSignature
-        /// The watch's answer is signed for other amounts than the ones shown. The request stays pending.
-        case rejectedValues
-    }
-
     /// The request waiting for an answer, if any.
     nonisolated let current: CurrentValueSubject<PendingAIRequest?, Never>
-    /// How each request ended, sent once per request, when its first final report is saved. A repeated ID's report
-    /// sent again isn't an outcome, and a request Trio stopped carrying out has one when a launch reports it.
-    nonisolated let outcomes: PassthroughSubject<AIRequestOutcome, Never>
     /// Why the pending request left pending, with its ID and who asked. It's sent the moment the request leaves, for
     /// any reason, before anything awaits, so a device that has it open hears at once.
     nonisolated let left: PassthroughSubject<(id: String, left: AIRequestLeft, source: String), Never>
@@ -48,8 +25,6 @@ actor AIRequestCoordinator {
     private let finalReportsURL: URL
     /// The approval being carried out, kept next to the pending file until its final report.
     private let carryOutMarkerURL: URL
-    /// The key the watch signs its answers with, and Trio the text the watch shows.
-    private let keys: AIRequestKeyStore
     private let preferences: () -> AIAssistantsPreferences
     private let treatments: AIRequestTreatments
     private let watch: AIRequestWatchDelivery
@@ -59,8 +34,8 @@ actor AIRequestCoordinator {
 
     /// Expires the pending request at its `expiresAt`.
     private var expiryCheck: Task<Void, Never>?
-    /// The latest approval being carried out, and its final report. Each one waits for the one before it, so a bolus
-    /// is checked against every bolus approved before it, and one carry-out marker is on disk at a time.
+    /// The latest approval being carried out, and its final report. Each one waits for the one before it, so one
+    /// carry-out marker is on disk at a time.
     private var carryingOut: Task<AIRequestReport, Never>?
     /// The approval being carried out. It's also on disk at `carryOutMarkerURL` until its final report, unless a
     /// leftover marker that can't be read yet holds the file.
@@ -82,8 +57,6 @@ actor AIRequestCoordinator {
     private var finalReports: [FinalReport] = []
     /// As long as the seen store keeps an ID.
     private static let finalReportRetention: TimeInterval = 24 * 60 * 60
-    /// How far before `createdAt` a watch answer may be signed: the watch's clock against the service's.
-    private static let answerClockSkew: TimeInterval = 60
     /// The longest a request is asked for, whatever `expiresAt` the service sent.
     private static let maxLifetime: TimeInterval = 5 * 60
     /// How long from the watch opening its approval screen the iPhone's backup waits.
@@ -97,12 +70,6 @@ actor AIRequestCoordinator {
     )
     /// Sent when the wearer has turned meal requests off.
     private static let mealRequestsOffReason = "Meal requests are off in Trio"
-    /// Sent when a dose has no loop run from the last 30 minutes, so its insulin on board isn't known.
-    private static let noRecentLoopReason = "Trio hasn't looped in the last 30 minutes"
-    /// Sent when carbs were logged after the request arrived, so its dose didn't count them.
-    private static let carbsLoggedSinceArrivalReason = "Carbs were logged after this request arrived"
-    /// Sent when Trio's calculator gives 0 U at approval for a request shown with a dose.
-    private static let noLongerSuggestedReason = "Trio no longer suggests insulin for this meal"
     /// Sent at launch for an approval Trio stopped carrying out before it started the bolus.
     private static let stoppedReason = "Trio stopped before it finished"
     /// Sent at launch for an approval Trio stopped carrying out while it started the bolus.
@@ -123,7 +90,6 @@ actor AIRequestCoordinator {
     init(
         seen: AIRequestSeenStore,
         pendingFileURL: URL,
-        keys: AIRequestKeyStore,
         preferences: @escaping () -> AIAssistantsPreferences,
         treatments: AIRequestTreatments,
         watch: AIRequestWatchDelivery,
@@ -135,7 +101,6 @@ actor AIRequestCoordinator {
         self.pendingFileURL = pendingFileURL
         finalReportsURL = pendingFileURL.deletingLastPathComponent().appendingPathComponent("final-reports.json")
         carryOutMarkerURL = pendingFileURL.deletingLastPathComponent().appendingPathComponent("carrying-out.json")
-        self.keys = keys
         self.preferences = preferences
         self.treatments = treatments
         self.watch = watch
@@ -143,7 +108,6 @@ actor AIRequestCoordinator {
         self.reporters = reporters
         self.now = now
         current = CurrentValueSubject(nil)
-        outcomes = PassthroughSubject()
         left = PassthroughSubject()
     }
 
@@ -174,29 +138,22 @@ actor AIRequestCoordinator {
         let request = withLifetimeCapped(request)
         let receivedAt = now()
         if receivedAt >= request.expiresAt {
-            await reportFinal(AIRequestOutcome(.expired, request: request), via: channel)
+            await reportFinal(.expired, id: request.id, via: channel)
             return
         }
         if !preferences().allowsMealRequests {
             let refused = AIRequestReport.failed(reason: Self.mealRequestsOffReason, carbsLogged: false)
-            await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
+            await reportFinal(refused, id: request.id, via: channel)
             return
         }
         if let reason = limitFailure(for: request) {
             let refused = AIRequestReport.failed(reason: reason, carbsLogged: false)
-            await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
+            await reportFinal(refused, id: request.id, via: channel)
             return
         }
 
         let dose = await treatments.dose(forCarbs: request.carbs)
         let units = Self.shownUnits(dose.units)
-        // The bolus checks run now as well as at approval: a dose they'd refuse isn't asked about, and the assistant
-        // hears why.
-        if let reason = await bolusFailure(units: units, iobAsOf: dose.iobAsOf) {
-            let refused = AIRequestReport.failed(reason: reason, carbsLogged: false)
-            await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
-            return
-        }
         let context = await treatments.context(for: request, units: units)
 
         // Nothing suspends from here to the reports, so no other call sees the swap half done.
@@ -204,19 +161,11 @@ actor AIRequestCoordinator {
         let preferences = self.preferences()
         let askedOn: AIRequestAskedOn = watch.isWatchAvailable ? .watch : .phone
         let shown = AIRequestShown(carbs: request.carbs, fat: request.fat, protein: request.protein, units: units)
-        var display = AIRequestDisplayText.display(
+        let display = AIRequestDisplayText.display(
             source: request.source,
             description: request.description,
             shown: shown,
-            context: context,
-            style: preferences.approvalStyle
-        )
-        display.mac = Self.displayMAC(
-            id: request.id,
-            style: preferences.approvalStyle,
-            shown: shown,
-            display: display,
-            key: keys.current
+            context: context
         )
         let prompt = AIRequestPrompt(
             id: request.id,
@@ -226,12 +175,7 @@ actor AIRequestCoordinator {
             title: display.title,
             body: display.body,
             expiresAt: request.expiresAt,
-            approvalStyle: preferences.approvalStyle,
-            answerRoute: preferences.answerRoute,
-            answerToken: nil,
-            answerURL: nil,
-            context: context,
-            displayMac: display.mac
+            context: context
         )
         let phoneDelay = askedOn == .phone ? 0 : preferences.phoneBackupDelay
         let pending = PendingAIRequest(
@@ -241,7 +185,6 @@ actor AIRequestCoordinator {
             askedOn: askedOn,
             units: units,
             receivedAt: receivedAt,
-            iobAsOf: dose.iobAsOf,
             phoneAskAt: now().addingTimeInterval(phoneDelay)
         )
         current.send(pending)
@@ -251,18 +194,9 @@ actor AIRequestCoordinator {
         debug(.service, "AI requests: \(request.id) is pending, asked on the \(askedOn.rawValue)")
 
         if let replaced {
-            await reportFinal(AIRequestOutcome(.replaced, pending: replaced), via: replaced.channel)
+            await reportFinal(.replaced, id: replaced.request.id, via: replaced.channel)
         }
-        await reporters[channel]?.report(
-            .pending(
-                askedOn: askedOn,
-                approvalStyle: prompt.approvalStyle,
-                answerRoute: prompt.answerRoute,
-                shown: shown,
-                display: display
-            ),
-            for: request.id
-        )
+        await reporters[channel]?.report(.pending(askedOn: askedOn, shown: shown, display: display), for: request.id)
     }
 
     /// Withdraws a request its assistant cancelled. `request` is set when the inbox lists a withdrawn
@@ -270,7 +204,7 @@ actor AIRequestCoordinator {
     func withdraw(id: String, request: AIMealRequest?, via channel: AIRequestChannel) async {
         ensureLoaded()
         if let pending = takePending(.withdrawn, id: id) {
-            await reportFinal(AIRequestOutcome(.withdrawn, pending: pending), via: pending.channel)
+            await reportFinal(.withdrawn, id: pending.request.id, via: pending.channel)
             return
         }
         guard let request else {
@@ -283,7 +217,7 @@ actor AIRequestCoordinator {
         // A request Trio already handled keeps its outcome.
         switch await observe(id, via: channel) {
         case .new?:
-            await reportFinal(AIRequestOutcome(.withdrawn, request: request), via: channel)
+            await reportFinal(.withdrawn, id: request.id, via: channel)
         case let .seen(outcome)?:
             await reportRepeat(of: outcome, for: id, via: channel)
         case nil:
@@ -303,7 +237,7 @@ actor AIRequestCoordinator {
             return
         }
         _ = takePending(.expired)
-        await reportFinal(AIRequestOutcome(.expired, pending: pending), via: pending.channel)
+        await reportFinal(.expired, id: pending.request.id, via: pending.channel)
     }
 
     /// The watch opened the approval screen of the pending request, so the iPhone's backup waits: it's asked a minute
@@ -321,58 +255,6 @@ actor AIRequestCoordinator {
         phoneBackup.cancel(id: id)
         phoneBackup.schedule(pending.prompt, after: Self.backupPostponement, askedOn: pending.askedOn)
         debug(.service, "AI requests: the watch opened \(id), so the iPhone waits \(Int(Self.backupPostponement)) s")
-    }
-
-    /// Carries out the wearer's answer to the pending request. The first answer accepted takes the request
-    /// out of pending, so any later one is ignored. A rejected answer leaves the request pending.
-    func answer(_ source: AIRequestAnswerSource) async -> AnswerOutcome {
-        ensureLoaded()
-        guard let pending = current.value else {
-            debug(.service, "AI requests: ignored an answer, no request is pending")
-            return .ignoredNotPending
-        }
-        guard now() < pending.request.expiresAt else {
-            debug(.service, "AI requests: ignored an answer to \(pending.request.id), it has expired")
-            return .ignoredNotPending
-        }
-        let answeredID: String
-        let decision: AIRequestDecision
-        let side: AIRequestAnswerSide
-        let declinedOn: AIRequestDeclinedOn
-        switch source {
-        case let .watch(answer):
-            if let outcome = rejection(of: answer, for: pending) { return outcome }
-            answeredID = answer.requestId
-            decision = answer.decision
-            side = .watch
-            declinedOn = answer.declinedBy == .dismissed ? .dismissed : .watch
-        case let .phone(phoneDecision, id):
-            answeredID = id
-            decision = phoneDecision
-            side = .phone
-            declinedOn = .phone
-        }
-
-        // Taken before the first await, so an answer that arrives meanwhile finds nothing pending.
-        let reason: AIRequestLeft = decision == .approve ? .claimed(side) : .declined(declinedOn)
-        guard let answered = takePending(reason, id: answeredID) else {
-            debug(.service, "AI requests: ignored an answer to \(answeredID), \(pending.request.id) is pending")
-            return .ignoredNotPending
-        }
-        switch decision {
-        case .approve:
-            let previous = carryingOut
-            let task = Task {
-                _ = await previous?.value
-                return await self.carryOut(answered, approvedOn: side)
-            }
-            carryingOut = task
-            _ = await task.value
-        case .decline:
-            let declined = AIRequestOutcome(.declined(on: declinedOn), pending: answered, declinedOn: declinedOn)
-            await reportFinal(declined, via: answered.channel)
-        }
-        return .acted
     }
 
     // MARK: Screens
@@ -408,24 +290,33 @@ actor AIRequestCoordinator {
     }
 
     /// A device closed the request's screen without confirming it. If it's still pending, nobody claimed it, so it's
-    /// declined on that device, or dismissed when the wearer swiped the watch's notification away. Otherwise there's
-    /// nothing to do: the screens a request had open were let go when it left pending.
+    /// declined on that device, or dismissed when the wearer swiped the watch's notification away, which only the
+    /// watch has: `dismissed` is ignored for the iPhone. Otherwise there's nothing to do: the screens a request had
+    /// open were let go when it left pending.
     func close(id: String, on side: AIRequestAnswerSide, dismissed: Bool) async {
         ensureLoaded()
         await expireIfDue()
-        let declinedOn: AIRequestDeclinedOn = dismissed ? .dismissed : side == .phone ? .phone : .watch
+        let declinedOn: AIRequestDeclinedOn = switch side {
+        case .phone: .phone
+        case .watch: dismissed ? .dismissed : .watch
+        }
         guard let pending = takePending(.declined(declinedOn), id: id) else {
             debug(.service, "AI requests: the \(side.rawValue) closed \(id), which isn't pending")
             return
         }
-        let declined = AIRequestOutcome(.declined(on: declinedOn), pending: pending, declinedOn: declinedOn)
-        await reportFinal(declined, via: pending.channel)
+        await reportFinal(.declined(on: declinedOn), id: pending.request.id, via: pending.channel)
     }
 
-    /// The first device to confirm the request takes it out of pending to carry it out, so the other one can't.
-    /// Returns `false` unless `id` is pending. The iPhone reports what it did with `reportPhoneResult(id:_:)`.
+    /// The iPhone's Treatments sheet takes the request out of pending to carry it out, so the watch can't. Returns
+    /// `false` unless `id` is pending, and always for the watch, which carries a request out with
+    /// `carryOutWatchConfirm(_:)` and so never holds a claim. The iPhone reports what it did with
+    /// `reportPhoneResult(id:_:)`.
     func claim(id: String, on side: AIRequestAnswerSide) async -> Bool {
         ensureLoaded()
+        guard side == .phone else {
+            debug(.service, "AI requests: refused the watch's claim on \(id), it confirms with carryOutWatchConfirm")
+            return false
+        }
         guard let pending = await takeClaimed(id: id, on: side) else { return false }
         claims[id] = Claim(pending: pending, side: side)
         return true
@@ -456,7 +347,7 @@ actor AIRequestCoordinator {
             return
         }
         claims[id] = nil
-        await reportApproved(Self.report(for: result), claim.pending, approvedOn: .phone)
+        await reportFinal(Self.report(for: result), id: id, via: claim.pending.channel)
     }
 
     /// The report for what the Treatments sheet did. It says what was actually logged and given.
@@ -513,7 +404,7 @@ actor AIRequestCoordinator {
         ))
         // The watch's own carbs, if the wearer changed them, weren't checked when the request arrived.
         if let failure = limitFailure(carbs: carbs, fat: request.fat, protein: request.protein) {
-            return await reportApproved(.failed(reason: failure, carbsLogged: false), pending, approvedOn: .watch)
+            return await reportFinal(.failed(reason: failure, carbsLogged: false), id: request.id, via: pending.channel)
         }
 
         let carbsLogged = carbs > 0 || request.fat > 0 || request.protein > 0
@@ -522,123 +413,23 @@ actor AIRequestCoordinator {
             do {
                 try await treatments.storeCarbs(for: request, carbs: confirm.carbs)
             } catch {
-                return await reportApproved(
+                return await reportFinal(
                     .failed(reason: error.localizedDescription, carbsLogged: false),
-                    pending,
-                    approvedOn: .watch
+                    id: request.id,
+                    via: pending.channel
                 )
             }
         }
 
         let done = AIRequestShown(carbs: carbs, fat: request.fat, protein: request.protein, units: units)
         guard units > 0 else {
-            return await reportApproved(.logged(shown: done), pending, approvedOn: .watch)
+            return await reportFinal(.logged(shown: done), id: request.id, via: pending.channel)
         }
         mark(.enacting)
         if let reason = await treatments.enactBolus(units) {
-            return await reportApproved(.failed(reason: reason, carbsLogged: carbsLogged), pending, approvedOn: .watch)
+            return await reportFinal(.failed(reason: reason, carbsLogged: carbsLogged), id: request.id, via: pending.channel)
         }
-        return await reportApproved(.delivering(shown: done), pending, approvedOn: .watch)
-    }
-
-    // MARK: Answers
-
-    /// Why the watch's answer can't be accepted for the pending request, or `nil` if it can. Only the
-    /// request ID is logged, never the MAC.
-    private func rejection(of answer: AIRequestAnswer, for pending: PendingAIRequest) -> AnswerOutcome? {
-        let id = pending.request.id
-        guard answer.requestId == id else {
-            debug(.service, "AI requests: ignored an answer to \(answer.requestId), \(id) is pending")
-            return .ignoredNotPending
-        }
-        // The MAC doesn't cover `v`, so only the version it was made for is trusted.
-        guard answer.v == 1, let key = keys.current, AIRequestSigner.isValid(answer, key: key) else {
-            debug(.service, "AI requests: rejected an answer to \(id), its signature doesn't check out")
-            return .rejectedSignature
-        }
-        guard answer.shown == pending.prompt.shown else {
-            debug(.service, "AI requests: rejected an answer to \(id), it doesn't match the amounts shown")
-            return .rejectedValues
-        }
-        // `answeredAt` is the watch's clock and `createdAt` the service's, so the watch may be a little behind.
-        // The phone's own clock decides expiry.
-        let earliest = pending.request.createdAt.addingTimeInterval(-Self.answerClockSkew)
-        guard let answeredAt = try? Date(answer.answeredAt, strategy: Date.ISO8601FormatStyle()),
-              answeredAt >= earliest, answeredAt <= pending.request.expiresAt
-        else {
-            debug(.service, "AI requests: ignored an answer to \(id), it wasn't answered while pending")
-            return .ignoredNotPending
-        }
-        return nil
-    }
-
-    /// Carries out an approved request. A marker on disk says how far it got until the final report. Every check runs
-    /// again before anything is stored, then the carbs are stored, then exactly the units shown are enacted. A failed
-    /// bolus keeps the carbs, because the food was eaten. Returns the final report.
-    private func carryOut(_ pending: PendingAIRequest, approvedOn: AIRequestAnswerSide) async -> AIRequestReport {
-        // Before this approval's marker replaces it on disk.
-        await reportStoppedCarryOut()
-        let units = pending.units
-        mark(AIRequestCarryOutMarker(
-            id: pending.request.id,
-            channel: pending.channel,
-            title: pending.prompt.title,
-            source: pending.request.source,
-            shown: pending.prompt.shown,
-            askedOn: pending.askedOn,
-            approvedOn: approvedOn,
-            stage: .checking
-        ))
-
-        if let failure = await approvalFailure(for: pending) {
-            return await reportApproved(.failed(reason: failure, carbsLogged: false), pending, approvedOn: approvedOn)
-        }
-
-        mark(.storingCarbs)
-        do {
-            try await treatments.storeCarbs(for: pending.request, carbs: nil)
-        } catch {
-            return await reportApproved(
-                .failed(reason: error.localizedDescription, carbsLogged: false),
-                pending,
-                approvedOn: approvedOn
-            )
-        }
-
-        guard units > 0 else {
-            return await reportApproved(.logged(shown: pending.prompt.shown), pending, approvedOn: approvedOn)
-        }
-        mark(.enacting)
-        if let reason = await treatments.enactBolus(units) {
-            return await reportApproved(.failed(reason: reason, carbsLogged: true), pending, approvedOn: approvedOn)
-        }
-        return await reportApproved(.delivering(shown: pending.prompt.shown), pending, approvedOn: approvedOn)
-    }
-
-    /// Why the approved request can't be carried out now, or `nil` if it can: its amounts are over the limits, carbs
-    /// were logged after it arrived, Trio's calculator now gives 0 U for a dose it showed, or the bolus checks refuse
-    /// the units shown. A lower dose than shown still gives the units shown, which the wearer approved.
-    private func approvalFailure(for pending: PendingAIRequest) async -> String? {
-        if let reason = limitFailure(for: pending.request) { return reason }
-        // A pending file from before Trio recorded `receivedAt` has the service's `createdAt` instead.
-        if await treatments.carbsLogged(after: pending.receivedAt ?? pending.request.createdAt) {
-            return Self.carbsLoggedSinceArrivalReason
-        }
-        if pending.units > 0 {
-            let dose = await treatments.dose(forCarbs: pending.request.carbs)
-            if Self.shownUnits(dose.units) <= 0 { return Self.noLongerSuggestedReason }
-        }
-        // The units shown were worked out on the arrival's loop run, so insulin is counted from that run.
-        return await bolusFailure(units: pending.units, iobAsOf: pending.iobAsOf)
-    }
-
-    /// Why Trio can't give `units` now, or `nil` if it can. Only insulin given after the loop run the dose was worked
-    /// out on counts as recent: the dose already took the rest into account. A dose without a recent loop run assumed
-    /// no insulin on board, so it's refused. A 0 U dose has no bolus to check.
-    private func bolusFailure(units: Decimal, iobAsOf: Date?) async -> String? {
-        guard units > 0 else { return nil }
-        guard let iobAsOf else { return Self.noRecentLoopReason }
-        return await treatments.checkBolus(units, since: iobAsOf)
+        return await reportFinal(.delivering(shown: done), id: request.id, via: pending.channel)
     }
 
     /// The dose floored to the hundredths that `shown` has, so what's delivered is the number shown.
@@ -698,7 +489,7 @@ actor AIRequestCoordinator {
         let reason = stopped.stage == .enacting ? Self.stoppedWhileEnactingReason : Self.stoppedReason
         debug(.service, "AI requests: Trio stopped while carrying out \(stopped.id), at \(stopped.stage.rawValue)")
         let failed = AIRequestReport.failed(reason: reason, carbsLogged: stopped.stage != .checking)
-        await reportFinal(AIRequestOutcome(failed, stopped: stopped), via: stopped.channel)
+        await reportFinal(failed, id: stopped.id, via: stopped.channel)
     }
 
     // MARK: Requests
@@ -757,7 +548,7 @@ actor AIRequestCoordinator {
         )
     }
 
-    /// Takes the pending request out of pending, so nothing else can replace, expire, withdraw, answer or claim it,
+    /// Takes the pending request out of pending, so nothing else can replace, expire, withdraw, decline or claim it,
     /// and sends `left` with `reason`. Nothing in it awaits, so `left` goes out before the caller's first await.
     private func takePending(_ reason: AIRequestLeft) -> PendingAIRequest? {
         guard let pending = current.value else { return nil }
@@ -767,12 +558,11 @@ actor AIRequestCoordinator {
         current.send(nil)
         deletePendingFile()
         phoneBackup.cancel(id: pending.request.id)
-        watch.withdraw(id: pending.request.id)
         left.send((id: pending.request.id, left: reason, source: pending.request.source))
         return pending
     }
 
-    /// Takes the pending request out of pending only if it has this ID, so another request is never answered,
+    /// Takes the pending request out of pending only if it has this ID, so another request is never declined,
     /// claimed or withdrawn in its place.
     private func takePending(_ reason: AIRequestLeft, id: String) -> PendingAIRequest? {
         guard current.value?.request.id == id else { return nil }
@@ -794,27 +584,18 @@ actor AIRequestCoordinator {
 
     // MARK: Reports
 
-    /// Saves the request's first final report, sends its `outcomes`, and reports it to where the request came from.
-    private func reportFinal(_ outcome: AIRequestOutcome, via channel: AIRequestChannel) async {
-        let id = outcome.id
-        let report = outcome.report
+    /// Saves the request's first final report and reports it to where the request came from. Returns the report.
+    @discardableResult private func reportFinal(
+        _ report: AIRequestReport,
+        id: String,
+        via channel: AIRequestChannel
+    ) async -> AIRequestReport {
         seen.setOutcome(report.state, for: id)
         saveFinalReport(report, for: id)
         // After the final report is saved, so a launch that finds the marker can tell it was reported.
         removeCarryOutMarker(for: id)
         debug(.service, "AI requests: \(id) is \(report.state.rawValue)")
-        // Before the report goes out, which can wait on the network, so the watch and the iPhone hear it at once.
-        outcomes.send(outcome)
         await reporters[channel]?.report(report, for: id)
-    }
-
-    /// The final report of an approved request: its outcome says where it was approved. Returns the report.
-    @discardableResult private func reportApproved(
-        _ report: AIRequestReport,
-        _ pending: PendingAIRequest,
-        approvedOn: AIRequestAnswerSide
-    ) async -> AIRequestReport {
-        await reportFinal(AIRequestOutcome(report, pending: pending, approvedOn: approvedOn), via: pending.channel)
         return report
     }
 
@@ -842,40 +623,12 @@ actor AIRequestCoordinator {
     private static func pendingReport(for pending: PendingAIRequest) -> AIRequestReport {
         .pending(
             askedOn: pending.askedOn,
-            approvalStyle: pending.prompt.approvalStyle,
-            answerRoute: pending.prompt.answerRoute,
             shown: pending.prompt.shown,
             display: AIRequestDisplay(
                 title: pending.prompt.title,
                 body: pending.prompt.body,
-                context: pending.prompt.context,
-                mac: pending.prompt.displayMac
+                context: pending.prompt.context
             )
-        )
-    }
-
-    /// Trio's MAC over what the watch shows: the amounts, the text, the approval style and the context. The watch
-    /// approves from the notification, and shows the context rows, only when it checks out. `nil` without a key, and
-    /// for a display the watch never trusts, such as an ID or a title with a line break: the watch then opens the
-    /// request instead.
-    private static func displayMAC(
-        id: String,
-        style: AIRequestApprovalStyle,
-        shown: AIRequestShown,
-        display: AIRequestDisplay,
-        key: Data?
-    ) -> String? {
-        guard let key,
-              AIRequestSigner.isSignableDisplay(id: id, shown: shown, title: display.title, context: display.context)
-        else { return nil }
-        return AIRequestSigner.displayMAC(
-            id: id,
-            approvalStyle: style,
-            shown: shown,
-            title: display.title,
-            body: display.body,
-            context: display.context,
-            key: key
         )
     }
 

@@ -11,7 +11,7 @@ import Testing
     @Test func openReturnsLiveDetails() async {
         let h = makeCoordinator(dose: 1.2)
         await h.coordinator.receive(meal(id: "r1", carbs: d("82.5"), fat: 10, protein: 5), via: .service)
-        h.treatments.doseResult = AIRequestDose(units: d("2.157"), iobAsOf: coordinatorTestStart)
+        h.treatments.doseResult = AIRequestDose(units: d("2.157"))
         let details = await h.coordinator.open(id: "r1", on: .watch)
         #expect(details == AIRequestWatchDetails(
             id: "r1",
@@ -105,6 +105,15 @@ import Testing
         ])
     }
 
+    @Test func closingOnThePhoneIgnoresDismissed() async {
+        // Only the watch's notification can be swiped away: the phone's close is always a decline on the iPhone.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.close(id: "r1", on: .phone, dismissed: true)
+        #expect(h.reporter.reports.last?.report == .declined(on: .phone))
+        #expect(h.left == [LeftEvent(id: "r1", left: .declined(.phone), source: "ChatGPT")])
+    }
+
     @Test func closingARequestThatIsntPendingDoesNothing() async {
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1"), via: .service)
@@ -122,9 +131,23 @@ import Testing
         #expect(await h.coordinator.claim(id: "r1", on: .watch) == false)
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.phone), source: "ChatGPT")])
         #expect(h.coordinator.current.value == nil)
-        #expect(h.backup.cancelled == ["r1"] && h.watch.withdrawn == ["r1"])
+        #expect(h.backup.cancelled == ["r1"])
         // The phone reports what it did; nothing is reported yet.
         #expect(h.reporter.states == ["r1:pending"])
+    }
+
+    @Test func claimRefusesTheWatch() async {
+        // The watch carries a request out with `carryOutWatchConfirm`, which reports it. A claim for the watch would
+        // take the request out of pending and leave a claim nothing reports.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(await h.coordinator.claim(id: "r1", on: .watch) == false)
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        #expect(h.left.isEmpty)
+        #expect(h.backup.cancelled.isEmpty)
+        // The request is still there for the watch's confirmation.
+        let report = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+        #expect(report == .delivering(shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: d("1.2"))))
     }
 
     @Test func watchConfirmAfterPhoneClaimLogsNothing() async {
@@ -197,6 +220,60 @@ import Testing
         #expect(!FileManager.default.fileExists(
             atPath: h.files.pending.deletingLastPathComponent().appendingPathComponent("carrying-out.json").path
         ))
+    }
+
+    @Test func watchConfirmForAReplacedOrUnknownRequestLogsNothing() async {
+        let h = makeCoordinator()
+        #expect(await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil)) == nil)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.receive(meal(id: "r2"), via: .service)
+        #expect(await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil)) == nil)
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(h.coordinator.current.value?.request.id == "r2")
+        #expect(h.reporter.states == ["r1:pending", "r1:replaced", "r2:pending"])
+    }
+
+    @Test func watchConfirmWithCarbsOverTheMaxStoresNothing() async {
+        // The watch's own carbs weren't checked when the request arrived.
+        let h = makeCoordinator(limits: AIRequestLimits(maxCarbs: 50, maxFat: 250, maxProtein: 250, maxBolus: 10))
+        await h.coordinator.receive(meal(id: "r1", carbs: 20), via: .service)
+        let report = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: 80))
+        #expect(report == .failed(reason: "Over your max carbs (50 g)", carbsLogged: false))
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(h.reporter.reports.last?.report == report)
+    }
+
+    @Test func secondWatchConfirmWaitsForTheFirstCarryOut() async {
+        let h = makeCoordinator(dose: 1.2)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        let second = TestBox<Task<AIRequestReport?, Never>?>(nil)
+        h.treatments.whileEnactingBolus = { [coordinator = h.coordinator, backup = h.backup] in
+            // While the pump takes r1's bolus, r2 arrives and the watch confirms it.
+            await coordinator.receive(meal(id: "r2"), via: .service)
+            second.value = Task {
+                await coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r2", units: d("2.5"), carbs: nil))
+            }
+            // r2 left pending when the watch confirmed it. Give its carry-out time to run ahead of r1's bolus, if it could.
+            _ = await eventuallyTrue { backup.cancelled.contains("r2") }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        let first = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+        #expect(first == .delivering(shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: d("1.2"))))
+        #expect(await second.value?.value == .delivering(shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: d("2.5"))))
+        #expect(h.treatments.events == ["store r1", "enact 1.2", "enacted 1.2", "store r2", "enact 2.5", "enacted 2.5"])
+        #expect(h.reporter.states == ["r1:pending", "r2:pending", "r1:delivering", "r2:delivering"])
+    }
+
+    @Test func watchConfirmAfterARelaunchActsOnTheSavedRequest() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        let relaunched = makeCoordinator(files: h.files, now: coordinatorTestStart + 60)
+        let report = await relaunched.coordinator.carryOutWatchConfirm(
+            AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil)
+        )
+        #expect(report == .delivering(shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: d("1.2"))))
+        #expect(relaunched.treatments.stored.map(\.id) == ["r1"] && relaunched.treatments.enacted == [1.2])
+        #expect(relaunched.reporter.states == ["r1:delivering"])
     }
 
     @Test func phoneResultReports() async {

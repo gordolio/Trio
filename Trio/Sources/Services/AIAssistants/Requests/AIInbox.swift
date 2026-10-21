@@ -1,10 +1,9 @@
 import Foundation
 
-/// What `GET /api/v1/inbox` returns: the requests that aren't final, and the answers the watch relayed
-/// through the service.
+/// What `GET /api/v1/inbox` returns: the requests that aren't final. The service may still list the answers a watch
+/// relayed through it, under `answers`. Trio takes no answers from it, so that key is left unread.
 struct AIInbox: Decodable {
     let requests: [Request]
-    let answers: [AIRequestAnswer]
 
     struct Request: Decodable {
         let id: String
@@ -63,8 +62,6 @@ struct AIInbox: Decodable {
 struct AIRequestStateBody: Encodable, Equatable {
     let state: AIRequestState
     private(set) var askedOn: AIRequestAskedOn?
-    private(set) var approvalStyle: AIRequestApprovalStyle?
-    private(set) var answerRoute: AIRequestAnswerRoute?
     private(set) var shown: AIRequestShown?
     private(set) var display: AIRequestDisplay?
     private(set) var declinedOn: AIRequestDeclinedOn?
@@ -74,10 +71,8 @@ struct AIRequestStateBody: Encodable, Equatable {
     init(_ report: AIRequestReport) {
         state = report.state
         switch report {
-        case let .pending(askedOn, approvalStyle, answerRoute, shown, display):
+        case let .pending(askedOn, shown, display):
             self.askedOn = askedOn
-            self.approvalStyle = approvalStyle
-            self.answerRoute = answerRoute
             self.shown = shown
             self.display = display
         case let .delivering(shown),

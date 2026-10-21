@@ -1,8 +1,6 @@
 import Combine
 import Foundation
 import Swinject
-import UIKit
-import UserNotifications
 import WatchConnectivity
 
 /// Everything that handles an AI assistant's requests, built once at launch. The hooks in
@@ -27,8 +25,6 @@ final class AIRequestsRuntime {
     /// The one store of the request preferences, so a change in the settings reaches the coordinator.
     let preferences: AIAssistantsPreferencesStore
     let checkIn: AIAssistantsCheckIn
-    /// Sends each outcome to the watch and the notifier, for as long as the runtime lives.
-    private let outcomeSubscription: AnyCancellable
 
     /// `isLinked` says whether Trio is linked to the service, and `loopRuns` sends each loop run's date.
     /// `uploadNow` registers the device with the service again, which a new watch push token needs.
@@ -40,7 +36,6 @@ final class AIRequestsRuntime {
         uploadNow: @escaping () -> Void
     ) {
         let preferences = AIAssistantsPreferencesStore()
-        let keys = AIRequestKeyStore()
         // The seen store creates the folder that the pending request is kept in.
         let seen = AIRequestSeenStore.appDefault()
         let pendingFileURL = URL.applicationSupportDirectory
@@ -51,7 +46,6 @@ final class AIRequestsRuntime {
         let relay = WatchRelay()
         let watchLink = AIRequestsRuntime.makeWatchLink(
             session: WCSession.default,
-            keys: keys,
             relay: relay,
             onWatchTokenChanged: uploadNow
         )
@@ -59,31 +53,15 @@ final class AIRequestsRuntime {
         let coordinator = AIRequestCoordinator(
             seen: seen,
             pendingFileURL: pendingFileURL,
-            keys: keys,
             preferences: { preferences.value },
             treatments: BaseAIRequestTreatments(resolver: resolver),
             watch: watchLink,
             phoneBackup: phoneBackup,
             reporters: [.service: ServiceRequestReporter(api: api)]
         )
-        // Subscribed here too, before anything can start the coordinator: `left` has no replay either, and `start()` can
-        // expire the request that was pending when Trio quit.
+        // Subscribed here, before anything can start the coordinator: `left` has no replay, and `start()` can expire the
+        // request that was pending when Trio quit.
         relay.connect(coordinator: coordinator, link: watchLink)
-
-        // Subscribed here, before anything can start the coordinator: `outcomes` has no replay, and `start()` can send
-        // one at once, for an approval that Trio stopped carrying out. A later subscriber would miss it.
-        // The Treatments sheet counts as showing a request only while Trio is in front. Both are read on the main queue,
-        // where the outcomes are received.
-        let notifier = AIRequestsRuntime.makeNotifier(
-            center: UNUserNotificationCenter.current(),
-            presentedID: { MainActor.assumeIsolated { AIRequestTreatmentsSession.shared.requestID } },
-            isAppActive: { MainActor.assumeIsolated { UIApplication.shared.applicationState == .active } }
-        )
-        outcomeSubscription = coordinator.outcomes
-            .receive(on: DispatchQueue.main)
-            .sink { outcome in
-                AIRequestsRuntime.publish(outcome, to: watchLink, notifier: notifier)
-            }
 
         self.coordinator = coordinator
         self.watchLink = watchLink
@@ -105,45 +83,18 @@ extension AIRequestsRuntime {
     /// while to carry out, so each one runs on a task of its own.
     static func makeWatchLink(
         session: AIRequestWatchSession,
-        keys: AIRequestKeyStore,
         defaults: UserDefaults = .standard,
         relay: WatchRelay,
         onWatchTokenChanged: @escaping () -> Void
     ) -> AIRequestWatchLink {
         AIRequestWatchLink(
             session: session,
-            keys: keys,
             defaults: defaults,
-            onAnswer: { relay.forward($0) },
-            onViewing: { relay.viewing($0) },
             onOpen: { id in Task { await relay.open(id) } },
             onConfirm: { confirm in Task { await relay.confirm(confirm) } },
             onClose: { close in Task { await relay.close(close) } },
             onWatchTokenChanged: onWatchTokenChanged
         )
-    }
-
-    /// The notifier for failures after an approval. It skips a request only while its Treatments sheet is up and Trio is in
-    /// front. `presentedID` and `isAppActive` are read on the main queue.
-    static func makeNotifier(
-        center: AIRequestNotificationScheduling,
-        presentedID: @escaping () -> String?,
-        isAppActive: @escaping () -> Bool
-    ) -> AIRequestResultNotifier {
-        AIRequestResultNotifier(center: center, isShowing: { id in isAppActive() && presentedID() == id })
-    }
-
-    /// Tells the watch and the iPhone how a request ended. The watch hears the result of a request it was asked or that
-    /// Trio showed it, and the notifier decides whether the iPhone needs a notification.
-    static func publish(
-        _ outcome: AIRequestOutcome,
-        to watchLink: AIRequestWatchLink,
-        notifier: AIRequestResultNotifier
-    ) {
-        if outcome.reachesWatch {
-            watchLink.sendResult(AIRequestResultText.message(for: outcome))
-        }
-        notifier.notify(outcome)
     }
 }
 
@@ -191,17 +142,6 @@ final class WatchRelay {
             .handleEvents(receiveOutput: { [weak self] event in self?.remember(event) })
             .receive(on: DispatchQueue.main)
             .sink { [weak self] event in self?.sendEnded(event) }
-    }
-
-    func forward(_ answer: AIRequestAnswer) {
-        guard let coordinator = current?.coordinator else { return }
-        Task { _ = await coordinator.answer(.watch(answer)) }
-    }
-
-    /// The watch opened the approval screen of the request with this ID.
-    func viewing(_ id: String) {
-        guard let coordinator = current?.coordinator else { return }
-        Task { await coordinator.postponePhoneBackup(id: id) }
     }
 
     /// The wearer opened the request on the watch. It's answered with the request's details, or with nothing when the

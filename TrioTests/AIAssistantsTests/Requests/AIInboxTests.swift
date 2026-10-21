@@ -54,37 +54,29 @@ import Testing
         #expect(inbox.requests[1].withdrawn)
     }
 
-    @Test func decodesRelayedAnswers() throws {
-        let json = """
-        {"requests":[],"answers":[
-          {"v":1,"requestId":"r1","decision":"approve","shown":{"carbs":"20.00","fat":"10.00","protein":"8.00","units":"1.20"},\
-        "answeredAt":"2026-10-19T15:04:05Z","mac":"TYVul3-aELwwSpYoB2qLxixw1TDykYk36_qH7KYikmY"},
-          {"v":1,"requestId":"r2","decision":"decline","declinedBy":"dismissed","shown":{"carbs":"1.00","fat":"0.00","protein":"0.00","units":"0.10"},\
-        "answeredAt":"2026-10-19T15:04:05Z","mac":"DjDX-M29kj5YUOopDWGgB4NcqAtX1YKZ42PD_u_GKQs"}
-        ]}
-        """
-        let answers = try AIInbox.decoder.decode(AIInbox.self, from: Data(json.utf8)).answers
-        #expect(answers.map(\.requestId) == ["r1", "r2"])
-        #expect(answers[0].declinedBy == nil && answers[1].declinedBy == .dismissed)
-        #expect(answers[0].shown.units == "1.20")
+    @Test func inboxIgnoresAnswers() throws {
+        // An older service still lists the answers the watch relayed. Trio takes no answers from it, so whatever
+        // that key holds is left alone.
+        let json = #"{"requests":[],"answers":[{"v":1,"requestId":"r1","decision":"approve","mac":"x"},{"junk":true}]}"#
+        let inbox = try AIInbox.decoder.decode(AIInbox.self, from: Data(json.utf8))
+        #expect(inbox.requests.isEmpty)
     }
 
-    @Test func pendingBodyHasContractKeys() throws {
+    @Test func pendingReportHasNoStyleOrRoute() throws {
         let body = AIRequestStateBody(.pending(
             askedOn: .watch,
-            approvalStyle: .oneGesture,
-            answerRoute: .both,
-            shown: AIRequestShown(carbs: 20, fat: 0, protein: 0, units: 1.2),
+            shown: Self.shown,
             display: .init(title: "t", body: "b")
         ))
         let obj = try keys(of: body)
-        #expect(Set(obj.keys) == ["state", "askedOn", "approvalStyle", "answerRoute", "shown", "display"])
+        // The keys the contract has left for a pending report: no approval style, answer route or display MAC.
+        #expect(Set(obj.keys) == ["state", "askedOn", "shown", "display"])
         #expect(obj["state"] as? String == "pending")
         #expect(obj["askedOn"] as? String == "watch")
-        #expect(obj["approvalStyle"] as? String == "oneGesture")
-        #expect(obj["answerRoute"] as? String == "both")
         #expect(obj["shown"] as? [String: String] == ["carbs": "20.00", "fat": "0.00", "protein": "0.00", "units": "1.20"])
         #expect(obj["display"] as? [String: String] == ["title": "t", "body": "b"])
+        let text = String(decoding: try JSONEncoder().encode(body), as: UTF8.self)
+        #expect(!text.contains("approvalStyle") && !text.contains("answerRoute") && !text.contains("mac"))
     }
 
     @Test func pendingBodyCarriesTheContextInsideTheDisplay() throws {
@@ -97,8 +89,6 @@ import Testing
         )
         let body = AIRequestStateBody(.pending(
             askedOn: .watch,
-            approvalStyle: .twoStep,
-            answerRoute: .both,
             shown: Self.shown,
             display: .init(title: "t", body: "b", context: context)
         ))
@@ -110,20 +100,6 @@ import Testing
         #expect(sent["glucose"] as? String == "142 mg/dL ↗" && sent["glucoseAgeMinutes"] as? Int == 3)
         #expect(sent["recentCarbs"] as? [String: AnyHashable] == ["amount": "20", "minutesAgo": 6])
         #expect(sent["recentBolus"] as? [String: AnyHashable] == ["amount": "3.00", "minutesAgo": 8])
-    }
-
-    @Test func pendingBodyCarriesTheDisplayMACInsideTheDisplay() throws {
-        let mac = "3rIvGEpt8j9Zt1cE86ABd7Uh8vYWR3J-U5Tqfzo2zLM"
-        let body = AIRequestStateBody(.pending(
-            askedOn: .watch,
-            approvalStyle: .oneGesture,
-            answerRoute: .both,
-            shown: Self.shown,
-            display: .init(title: "t", body: "b", mac: mac)
-        ))
-        let display = try #require(try keys(of: body)["display"] as? [String: Any])
-        #expect(Set(display.keys) == ["title", "body", "mac"])
-        #expect(display["mac"] as? String == mac)
     }
 
     @Test func deliveringAndLoggedBodiesCarryShown() throws {

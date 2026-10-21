@@ -7,7 +7,6 @@ enum AIRequestIdentifiers {
     // MARK: Notification categories
 
     static let categoryReview = "trio.request.review"
-    static let categoryApprove = "trio.request.approve"
     static let categoryPhone = "trio.request.phone"
     /// The iPhone's notice that the request its Treatments sheet had open ended elsewhere, such as "Logged on your
     /// watch". It shows as a banner while Trio is open.
@@ -16,27 +15,11 @@ enum AIRequestIdentifiers {
     // MARK: Notification actions
 
     static let actionReview = "AIRequest.review"
-    static let actionApprove = "AIRequest.approve"
 
     // MARK: WatchConnectivity keys
 
-    /// The shared answer key, sent from the phone to the watch.
-    static let keyMessage = "aiRequestKey"
-    /// The watch asks the phone for a (new) answer key.
-    static let keyRequest = "aiRequestKeyRequest"
-    /// A request for the watch to show, as JSON-encoded `AIRequestPrompt`.
-    static let keyPrompt = "aiRequestPrompt"
-    /// The ID of a request the watch should stop showing.
-    static let keyWithdraw = "aiRequestWithdraw"
-    /// The watch's answer, as JSON-encoded `AIRequestAnswer`.
-    static let keyAnswer = "aiRequestAnswer"
     /// The watch's push token, as hex, for the service to reach the watch directly.
     static let keyWatchPushToken = "aiWatchPushToken"
-    /// How a request ended, as JSON-encoded `AIRequestResultMessage`, sent from the phone to the watch.
-    static let keyResult = "aiRequestResult"
-    /// The ID of the request whose approval screen the watch has opened, sent from the watch to the phone so its
-    /// backup waits.
-    static let keyViewing = "aiRequestViewing"
     /// The ID of the request the wearer opened on the watch, as a `String`, sent from the watch to the phone. The
     /// phone answers with `keyDetails`.
     static let keyOpen = "aiRequestOpen"
@@ -58,9 +41,9 @@ enum AIRequestIdentifiers {
     /// The identifier of the watch's request notification, so a newer request takes the place of an older one there. The
     /// iPhone's backup is still one per request: its identifier adds the request's ID to this.
     static let notificationSlot = "ai-request"
-    /// The identifier of a result's notification.
+    /// The identifier of the iPhone's notice that a request ended elsewhere (`categoryNotice`). It adds the request's ID.
     static let resultNotificationSlot = "ai-request-result"
-    /// The thread that groups the request, backup and result notifications.
+    /// The thread that groups the request, backup and notice notifications.
     static let threadID = "trio.ai-request"
 
     // MARK: Notification payloads
@@ -71,31 +54,12 @@ enum AIRequestIdentifiers {
     /// backup is forwarded to the wrist.
     static let backupRequestIDKey = "aiRequestId"
 
-    /// The ID of the request a request notification is for, from either payload: the watch's own notification holds
-    /// the JSON prompt under `keyPrompt`, and the service's push holds the ID at `trio-rc.request.id`. `nil` for any
-    /// other notification.
+    /// The ID of the request the service's push is for, at `trio-rc.request.id`. `nil` for any other notification.
     static func requestID(in userInfo: [AnyHashable: Any]) -> String? {
-        if let data = userInfo[keyPrompt] as? Data {
-            return (try? JSONDecoder().decode(RequestID.self, from: data))?.id
-        }
         guard let payload = userInfo[pushPayloadKey] as? [String: Any],
               let request = payload["request"] as? [String: Any]
         else { return nil }
         return request["id"] as? String
-    }
-
-    /// Just the ID of a JSON prompt, so a prompt that no longer decodes in full still says which request it is.
-    private struct RequestID: Decodable {
-        let id: String
-    }
-
-    static func category(for style: AIRequestApprovalStyle) -> String {
-        switch style {
-        case .twoStep:
-            return categoryReview
-        case .oneGesture:
-            return categoryApprove
-        }
     }
 
     /// The categories the watch registers: a request's, whose Review opens it on the watch's Confirm screen, and the

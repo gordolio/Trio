@@ -8,33 +8,10 @@ private func freshDefaults() -> UserDefaults {
     UserDefaults(suiteName: UUID().uuidString)!
 }
 
-/// A keychain that lives in memory, for tests.
-final class InMemoryAIRequestKeychain: AIRequestKeychain {
-    private var items: [String: Data] = [:]
-    /// When `true`, `set` changes nothing and reports failure.
-    var failWrites = false
-
-    func data(for account: String) -> Data? {
-        items[account]
-    }
-
-    @discardableResult func set(_ data: Data?, for account: String) -> Bool {
-        guard !failWrites else { return false }
-        items[account] = data
-        return true
-    }
-}
-
 @Suite("AI Assistants preferences") struct AIAssistantsPreferencesTests {
     @Test func defaults() {
         let p = AIAssistantsPreferencesStore(defaults: freshDefaults()).value
-        #expect(p == AIAssistantsPreferences(
-            allowsMealRequests: false,
-            approvalStyle: .twoStep,
-            phoneBackupDelay: 15,
-            answerRoute: .both,
-            wakePushType: .passive
-        ))
+        #expect(p == AIAssistantsPreferences(allowsMealRequests: false, phoneBackupDelay: 15, wakePushType: .passive))
     }
 
     @Test func roundTripsAndPublishes() {
@@ -61,21 +38,18 @@ final class InMemoryAIRequestKeychain: AIRequestKeychain {
         #expect(AIAssistantsPreferencesStore(defaults: d).value.phoneBackupDelay == 15)
     }
 
-    @Test func keyRotationReplacesTheKey() {
-        let keys = AIRequestKeyStore(keychain: InMemoryAIRequestKeychain())
-        #expect(keys.current == nil)
-        let first = keys.rotate()
-        #expect(first?.count == 32 && keys.current == first)
-        #expect(keys.rotate() != first)
-    }
-
-    @Test func failedKeyWriteKeepsTheOldKey() {
-        let keychain = InMemoryAIRequestKeychain()
-        let keys = AIRequestKeyStore(keychain: keychain)
-        let first = keys.rotate()
-        #expect(first != nil)
-        keychain.failWrites = true
-        #expect(keys.rotate() == nil)
-        #expect(keys.current == first)
+    @Test func oldPreferencesStillDecode() {
+        // A build that had the approval style and the answer route saved them next to the ones that are left.
+        let d = freshDefaults()
+        d.set(true, forKey: "AIAssistants.allowsMealRequests")
+        d.set(30.0, forKey: "AIAssistants.phoneBackupDelay")
+        d.set("timeSensitive", forKey: "AIAssistants.wakePushType")
+        d.set("oneGesture", forKey: "AIAssistants.approvalStyle")
+        d.set("serviceOnly", forKey: "AIAssistants.answerRoute")
+        #expect(AIAssistantsPreferencesStore(defaults: d).value == AIAssistantsPreferences(
+            allowsMealRequests: true,
+            phoneBackupDelay: 30,
+            wakePushType: .timeSensitive
+        ))
     }
 }

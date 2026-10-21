@@ -18,8 +18,6 @@ extension AIAssistantsConfig {
         /// Goes up by one for each copy, to show the "Copied" confirmation again.
         @Published private(set) var copyCount = 0
         @Published private(set) var copiedMessage = ""
-        /// Whether the screen is asking if "Approve from the notification" should really be turned on.
-        @Published var isConfirmingOneGesture = false
 
         /// What the request settings on the screen show. Kept in sync with `preferencesStore` once `subscribe()` ran.
         @Published var preferences = AIAssistantsPreferences()
@@ -149,31 +147,6 @@ extension AIAssistantsConfig {
                     localized: "Signed out, but Trio couldn't reach the service, so assistants may still see your last status. Sign in and sign out again when you're online."
                 )
             }
-        }
-
-        // MARK: - Approval style
-
-        /// The picker asks for a style. Approving from the notification gives the bolus without opening the request,
-        /// so it's only turned on once the screen's question is answered; any other choice applies at once.
-        func requestApprovalStyle(_ style: AIRequestApprovalStyle) {
-            guard style != preferences.approvalStyle else { return }
-            if style == .oneGesture {
-                isConfirmingOneGesture = true
-            } else {
-                preferences.approvalStyle = style
-            }
-        }
-
-        /// "Turn On": applies the style the picker asked for. Does nothing when no question is open.
-        func confirmOneGesture() {
-            guard isConfirmingOneGesture else { return }
-            isConfirmingOneGesture = false
-            preferences.approvalStyle = .oneGesture
-        }
-
-        /// "Cancel": the style stays as it was.
-        func cancelOneGesture() {
-            isConfirmingOneGesture = false
         }
 
         // MARK: - Copying

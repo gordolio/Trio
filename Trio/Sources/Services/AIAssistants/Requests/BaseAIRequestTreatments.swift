@@ -10,8 +10,7 @@ struct AIRequestCarbsNotSavedError: LocalizedError {
     var errorDescription: String? { "Couldn't save the carbs" }
 }
 
-/// Trio's treatment side of a request: the wearer's limits, Trio's bolus calculator and safety checks, the carbs
-/// storage and the pump.
+/// Trio's treatment side of a request: the wearer's limits, Trio's bolus calculator, the carbs storage and the pump.
 final class BaseAIRequestTreatments: AIRequestTreatments {
     /// The `minPredBG` the watch's bolus recommendation uses without a determination from the last 30 minutes.
     private static let defaultMinPredBG: Decimal = 54
@@ -30,7 +29,6 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     private let settingsManager: SettingsManager
     private let carbsStorage: CarbsStorage
     private let bolusCalculationManager: BolusCalculationManager
-    private let bolusSafetyValidator: BolusSafetyValidator
     private let apsManager: APSManager
     private let determinationStorage: DeterminationStorage
     /// Reads the latest glucose and the last carbs for the notification.
@@ -43,7 +41,6 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         self.apsManager = apsManager
         carbsStorage = resolver.resolve(CarbsStorage.self)!
         bolusCalculationManager = resolver.resolve(BolusCalculationManager.self)!
-        bolusSafetyValidator = resolver.resolve(BolusSafetyValidator.self)!
         determinationStorage = resolver.resolve(DeterminationStorage.self)!
         snapshotBuilder = AIAssistantsSnapshotBuilder(
             context: CoreDataStack.shared.newTaskContext(),
@@ -63,10 +60,8 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     }
 
     /// Trio's bolus calculator's dose for the carbs, as the watch's bolus recommendation gets it, made deliverable
-    /// exactly as shown, and the loop run the calculator read insulin on board from.
+    /// exactly as shown.
     func dose(forCarbs carbs: Decimal) async -> AIRequestDose {
-        // Read before the calculator reads its own: if a loop run lands in between, `iobAsOf` is the earlier one, so
-        // the recent-insulin check counts more insulin, never less.
         let determination = await latestDetermination()
         let result = await bolusCalculationManager.handleBolusCalculation(
             carbs: carbs,
@@ -78,8 +73,7 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
             isBackdated: false
         )
         return AIRequestDose(
-            units: Self.deliverableDose(result.insulinCalculated, increment: settingsManager.preferences.bolusIncrement),
-            iobAsOf: determination.deliverAt
+            units: Self.deliverableDose(result.insulinCalculated, increment: settingsManager.preferences.bolusIncrement)
         )
     }
 
@@ -274,46 +268,6 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         return nil
     }
 
-    /// Trio's bolus safety checks, with the recent-insulin window starting at `since`, as Trio Remote Control starts
-    /// it at its command's time.
-    func checkBolus(_ units: Decimal, since: Date) async -> String? {
-        do {
-            switch try await bolusSafetyValidator.validate(bolusAmount: units, lookbackStart: since) {
-            case .allowed:
-                return nil
-            case let .rejected(rejection):
-                return Self.reason(for: rejection)
-            }
-        } catch {
-            debug(.service, "AI requests: the bolus safety check failed: \(error)")
-            return error.localizedDescription
-        }
-    }
-
-    /// Whether a meal entry is dated after `date` and not in the future, as Trio Remote Control checks for carbs logged
-    /// since its command. Fat and protein equivalents are dated ahead, so they're left out. If the store can't be
-    /// read, it answers `true`, so the approval is refused rather than given unchecked.
-    func carbsLogged(after date: Date) async -> Bool {
-        let now = Date()
-        let context = CoreDataStack.shared.newTaskContext()
-        context.name = "AIRequestTreatments.carbsLogged"
-        do {
-            return try await context.perform { [context] in
-                let request = CarbEntryStored.fetchRequest()
-                request.predicate = NSPredicate(
-                    format: "date > %@ AND date <= %@ AND isFPU == NO",
-                    date as NSDate,
-                    now as NSDate
-                )
-                request.fetchLimit = 1
-                return try context.count(for: request) > 0
-            }
-        } catch {
-            debug(.service, "AI requests: couldn't check for carbs logged since the request arrived: \(error)")
-            return true
-        }
-    }
-
     /// Stores the meal as Trio's remote meal command does, eaten now, with the assistant and the description in the
     /// note, then checks the meal entry was saved: `CarbsStorage` doesn't report a failed save. `carbs` replaces the
     /// request's own carbs when set.
@@ -355,25 +309,24 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     // MARK: - Helpers
 
     /// The newest determination from the last 30 minutes, the one Trio's bolus calculator reads: its `minPredBG`, read
-    /// as the watch's bolus recommendation reads it, its `deliverAt`, which is `nil` when there's none, and its insulin
-    /// on board, which is `nil` when there's none.
-    private func latestDetermination() async -> (minPredBG: Decimal, deliverAt: Date?, iob: Decimal?) {
+    /// as the watch's bolus recommendation reads it, and its insulin on board, which is `nil` when there's none.
+    private func latestDetermination() async -> (minPredBG: Decimal, iob: Decimal?) {
         do {
             let context = CoreDataStack.shared.newTaskContext()
             context.name = "AIRequestTreatments.latestDetermination"
             let ids = try await determinationStorage.fetchLastDeterminationObjectID(
                 predicate: NSPredicate.predicateFor30MinAgoForDetermination
             )
-            let latest = try await context.perform { [context] () -> (minPredBG: Decimal?, deliverAt: Date?, iob: Decimal)? in
+            let latest = try await context.perform { [context] () -> (minPredBG: Decimal?, iob: Decimal)? in
                 guard let id = ids.first, let determination = try context.existingObject(with: id) as? OrefDetermination
                 else { return nil }
                 // As the calculator reads it: no insulin on board is 0.
-                return (determination.minPredBGFromReason, determination.deliverAt, (determination.iob ?? 0) as Decimal)
+                return (determination.minPredBGFromReason, (determination.iob ?? 0) as Decimal)
             }
-            return (latest?.minPredBG ?? Self.defaultMinPredBG, latest?.deliverAt, latest?.iob)
+            return (latest?.minPredBG ?? Self.defaultMinPredBG, latest?.iob)
         } catch {
             debug(.service, "AI requests: couldn't read the last determination, using \(Self.defaultMinPredBG): \(error)")
-            return (Self.defaultMinPredBG, nil, nil)
+            return (Self.defaultMinPredBG, nil)
         }
     }
 
@@ -387,20 +340,6 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
             request.predicate = NSPredicate(format: "id == %@ AND isFPU == NO", id as NSUUID)
             request.fetchLimit = 1
             return try context.count(for: request) > 0
-        }
-    }
-
-    /// What the service is told when Trio's bolus safety checks reject the dose.
-    static func reason(for rejection: BolusSafetyRejection) -> String {
-        switch rejection {
-        case let .exceedsMaxBolus(maxBolus):
-            return "Over your max bolus (\(maxBolus) U)"
-        case .exceedsMaxIOB:
-            return "Over your max IOB"
-        case .iobUnavailable:
-            return "Insulin on board isn't known yet"
-        case let .recentBolusWithinWindow(totalRecent):
-            return "Trio gave \(twoDecimals(totalRecent)) U after working out this dose. Ask again in a few minutes"
         }
     }
 

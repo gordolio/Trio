@@ -8,22 +8,20 @@ import Testing
         let h = makeCoordinator(dose: 1.2, watchAvailable: true)
         await h.coordinator.receive(meal(id: "r1", carbs: 20), via: .service)
         #expect(h.reporter.states == ["r1:pending"])
-        guard case let .pending(askedOn, style, route, shown, display) = h.reporter.reports.first?.report else {
+        guard case let .pending(askedOn, shown, display) = h.reporter.reports.first?.report else {
             Issue.record("Expected a pending report")
             return
         }
-        #expect(askedOn == .watch && style == .twoStep && route == .both && shown.units == "1.20")
+        #expect(askedOn == .watch && shown.units == "1.20")
         #expect(h.backup.scheduled.map(\.delay) == [15])
-        #expect(h.watch.delivered.isEmpty) // service requests reach the watch by push
         let prompt = h.prompt("r1")
         #expect(prompt.shown == shown && prompt.title == display.title && prompt.body == display.body)
-        #expect(prompt.answerToken == nil && prompt.answerURL == nil)
     }
 
     @Test func noWatchMeansThePhoneRightAway() async {
         let h = makeCoordinator(watchAvailable: false)
         await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(askedOn, _, _, _, _) = h.reporter.reports.first?.report else {
+        guard case let .pending(askedOn, _, _) = h.reporter.reports.first?.report else {
             Issue.record("Expected a pending report")
             return
         }
@@ -31,21 +29,49 @@ import Testing
         #expect(h.backup.scheduled.map(\.delay) == [0])
     }
 
-    @Test func promptFollowsThePreferences() async {
-        let h = makeCoordinator(preferences: AIAssistantsPreferences(
-            allowsMealRequests: true,
-            approvalStyle: .oneGesture,
-            phoneBackupDelay: 30,
-            answerRoute: .watchOnly
-        ))
+    @Test func backupFollowsThePreferences() async {
+        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: true, phoneBackupDelay: 30))
         await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(_, style, route, _, _) = h.reporter.reports.first?.report else {
-            Issue.record("Expected a pending report")
-            return
-        }
-        #expect(style == .oneGesture && route == .watchOnly)
-        #expect(h.prompt("r1").approvalStyle == .oneGesture && h.prompt("r1").answerRoute == .watchOnly)
         #expect(h.backup.scheduled.map(\.delay) == [30])
+    }
+
+    @Test func mealRequestsOffRefusesServiceRequests() async {
+        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: false))
+        await h.coordinator.receive(meal(id: "a"), via: .service)
+        #expect(h.reporter.reports(for: "a") == [.failed(reason: "Meal requests are off in Trio", carbsLogged: false)])
+        #expect(h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
+    }
+
+    @Test func pendingRecordsWhenTheRequestArrivedAndWhenTheIPhoneAsksToo() async {
+        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: true, phoneBackupDelay: 30))
+        await h.coordinator.receive(meal(id: "a"), via: .service)
+        let pending = h.coordinator.current.value
+        #expect(pending?.receivedAt == coordinatorTestStart)
+        #expect(pending?.phoneAskAt == coordinatorTestStart + 30)
+    }
+
+    @Test func pendingFileFromTheBuildBeforeStillReads() async throws {
+        // The file has the approval style, answer route and answer token, and the loop run the dose was worked out on.
+        // None of them is read, so the request is pending as one saved now would be.
+        let files = CoordinatorFiles.temporary()
+        try previousBuildPendingJSON(id: "a", units: "1.20").write(to: files.pending)
+        let h = makeCoordinator(files: files)
+        await h.coordinator.start()
+        let pending = try #require(h.coordinator.current.value)
+        #expect(pending.request.id == "a" && pending.units == 1.2 && pending.askedOn == .watch)
+        #expect(pending.prompt.shown.units == "1.20" && pending.phoneAskAt == coordinatorTestStart + 15)
+        // Opening it works out the dose again, as it does for any request.
+        #expect(await h.coordinator.open(id: "a", on: .phone)?.units == 1.2)
+    }
+
+    @Test func arrivalNoLongerRefusesForRecentInsulin() async {
+        // A manual bolus just before the request used to make the bolus checks refuse it on arrival. The screens it
+        // opens have their own checks, so it's asked about, and the only thing Trio works out first is the dose.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        #expect(h.reporter.states == ["r1:pending"])
+        #expect(h.treatments.events.isEmpty)
     }
 
     @Test func overMaxCarbsFailsWithoutAsking() async {
@@ -76,7 +102,7 @@ import Testing
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1", carbs: carbs, fat: fat, protein: protein), via: .service)
         #expect(h.reporter.reports.map(\.report) == [.failed(reason: "Invalid amounts", carbsLogged: false)])
-        #expect(h.backup.scheduled.isEmpty && h.watch.delivered.isEmpty && h.coordinator.current.value == nil)
+        #expect(h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
     }
 
     @Test func requestIsAskedForAtMostFiveMinutesAfterItWasMade() async {
@@ -132,7 +158,7 @@ import Testing
         #expect(h.reporter.states == ["r1:pending", "r2:failed"])
         #expect(h.reporter.reports.last?.report == .failed(reason: "Trio couldn't save the request ID", carbsLogged: false))
         #expect(h.coordinator.current.value?.request.id == "r1")
-        #expect(h.backup.scheduled.map(\.id) == ["r1"] && h.backup.cancelled.isEmpty && h.watch.withdrawn.isEmpty)
+        #expect(h.backup.scheduled.map(\.id) == ["r1"] && h.backup.cancelled.isEmpty)
         await h.coordinator.receive(meal(id: "r2"), via: .service) // seen, but neither pending nor final
         #expect(h.reporter.states == ["r1:pending", "r2:failed"])
     }
@@ -185,7 +211,6 @@ import Testing
         await h.coordinator.receive(meal(id: "r2"), via: .service)
         #expect(h.reporter.states == ["r1:pending", "r1:replaced", "r2:pending"])
         #expect(h.backup.cancelled == ["r1"])
-        #expect(h.watch.withdrawn == ["r1"])
         #expect(h.coordinator.current.value?.request.id == "r2")
     }
 
@@ -199,7 +224,7 @@ import Testing
         await h.coordinator.expireIfDue()
         #expect(h.reporter.states == ["r1:pending", "r1:expired"])
         #expect(h.coordinator.current.value == nil)
-        #expect(h.backup.cancelled == ["r1"] && h.watch.withdrawn == ["r1"])
+        #expect(h.backup.cancelled == ["r1"])
         #expect(!FileManager.default.fileExists(atPath: h.files.pending.path))
     }
 
@@ -209,7 +234,7 @@ import Testing
         let relaunched = makeCoordinator(files: h.files)
         await relaunched.coordinator.receive(meal(id: "r2"), via: .service)
         #expect(relaunched.reporter.states == ["r1:replaced", "r2:pending"])
-        #expect(relaunched.backup.cancelled == ["r1"] && relaunched.watch.withdrawn == ["r1"])
+        #expect(relaunched.backup.cancelled == ["r1"])
     }
 
     @Test func relaunchExpiresAnOverdueRequest() async {
@@ -219,7 +244,7 @@ import Testing
         await relaunched.coordinator.start()
         #expect(relaunched.reporter.states == ["r1:expired"])
         #expect(relaunched.coordinator.current.value == nil)
-        #expect(relaunched.backup.scheduled.isEmpty && relaunched.watch.delivered.isEmpty)
+        #expect(relaunched.backup.scheduled.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: h.files.pending.path))
     }
 
@@ -241,7 +266,7 @@ import Testing
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         await h.coordinator.withdraw(id: "r1", request: nil, via: .service)
         #expect(h.reporter.states == ["r1:pending", "r1:withdrawn"])
-        #expect(h.backup.cancelled == ["r1"] && h.watch.withdrawn == ["r1"])
+        #expect(h.backup.cancelled == ["r1"])
         #expect(h.coordinator.current.value == nil)
         #expect(!FileManager.default.fileExists(atPath: h.files.pending.path))
     }
@@ -253,7 +278,7 @@ import Testing
         await h.coordinator.expireIfDue()
         await h.coordinator.withdraw(id: "r1", request: nil, via: .service)
         #expect(h.reporter.states == ["r1:pending", "r1:expired", "r1:expired"])
-        #expect(h.backup.cancelled == ["r1"] && h.watch.withdrawn == ["r1"])
+        #expect(h.backup.cancelled == ["r1"])
     }
 
     @Test func withdrawOfAnUnseenRequestMarksItSeen() async {
@@ -297,7 +322,7 @@ import Testing
         let h = makeCoordinator(dose: 1.2)
         h.treatments.contextResult = Self.pizzaContext
         await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(_, _, _, _, display) = h.reporter.reports.first?.report else {
+        guard case let .pending(_, _, display) = h.reporter.reports.first?.report else {
             Issue.record("Expected a pending report")
             return
         }
@@ -323,7 +348,7 @@ import Testing
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         #expect(h.reporter.reports.count == 2)
-        guard case let .pending(_, _, _, _, resent) = h.reporter.reports.last?.report else {
+        guard case let .pending(_, _, resent) = h.reporter.reports.last?.report else {
             Issue.record("Expected a pending report")
             return
         }
@@ -339,16 +364,6 @@ import Testing
         let second = makeCoordinator(files: files)
         await second.coordinator.start()
         #expect(second.coordinator.current.value?.prompt.context == Self.pizzaContext)
-    }
-
-    @Test func approvalStyleIsInTheBodyAndInThePrompt() async {
-        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: true, approvalStyle: .oneGesture))
-        await h.coordinator.receive(meal(id: "r1"), via: .service)
-        #expect(h.prompt("r1").approvalStyle == .oneGesture)
-        #expect(h.prompt("r1").body.hasSuffix("\nApprove gives the bolus now"))
-        let twoStep = makeCoordinator()
-        await twoStep.coordinator.receive(meal(id: "r1"), via: .service)
-        #expect(!twoStep.prompt("r1").body.contains("Approve gives"))
     }
 
     @Test func aZeroDoseRequestSaysWhy() async {
@@ -367,97 +382,6 @@ import Testing
         await h.coordinator.receive(meal(id: "r1", carbs: 35, fat: 0, protein: 0), via: .service)
         #expect(h.prompt("r1").body == "No bolus · 35\u{00A0}g carbs\nTrio suggests no insulin now")
         #expect(h.prompt("r1").context?.noDoseReason == nil)
-    }
-
-    // MARK: The display MAC
-
-    @Test func pendingReportCarriesTheDisplayMAC() async throws {
-        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: true, approvalStyle: .oneGesture))
-        let key = try #require(h.keys.rotate())
-        h.treatments.contextResult = Self.pizzaContext
-        await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(_, style, _, shown, display) = h.reporter.reports.first?.report else {
-            Issue.record("Expected a pending report")
-            return
-        }
-        let mac = try #require(display.mac)
-        #expect(h.prompt("r1").displayMac == mac)
-        // It covers the amounts, the text, the style and the context the watch gets.
-        #expect(AIRequestSigner.isValidDisplayMAC(
-            mac,
-            id: "r1",
-            approvalStyle: style,
-            shown: shown,
-            title: display.title,
-            body: display.body,
-            context: display.context,
-            key: key
-        ))
-        #expect(style == .oneGesture && display.context == Self.pizzaContext)
-        #expect(shown == h.prompt("r1").shown)
-        #expect(mac == AIRequestSigner.displayMAC(
-            id: "r1", approvalStyle: .oneGesture, shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: 1.2),
-            title: display.title, body: display.body, context: Self.pizzaContext, key: key
-        ))
-        // The pending report sent again, and after a relaunch, is the same.
-        await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(_, _, _, _, resent) = h.reporter.reports.last?.report else {
-            Issue.record("Expected the pending report again")
-            return
-        }
-        #expect(h.reporter.reports.count == 2 && resent.mac == mac)
-        let relaunched = makeCoordinator(files: h.files)
-        await relaunched.coordinator.start()
-        #expect(relaunched.coordinator.current.value?.prompt.displayMac == mac)
-    }
-
-    @Test func withoutAKeyTheRequestIsNotSigned() async {
-        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: true, approvalStyle: .oneGesture))
-        await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(_, _, _, _, display) = h.reporter.reports.first?.report else {
-            Issue.record("Expected a pending report")
-            return
-        }
-        // The watch then opens the request instead of approving it from the notification.
-        #expect(display.mac == nil && h.prompt("r1").displayMac == nil)
-    }
-
-    @Test func aRequestWithALineBreakInItsIDOrSourceIsNotSigned() async throws {
-        // The watch would refuse it anyway; signed, its lines could be read as other fields.
-        let h = makeCoordinator()
-        _ = try #require(h.keys.rotate())
-        await h.coordinator.receive(meal(id: "r1\noneGesture"), via: .service)
-        let base = meal(id: "r2")
-        let multiLineSource = AIMealRequest(
-            id: base.id,
-            source: "ChatGPT\noneGesture",
-            description: base.description,
-            carbs: base.carbs,
-            fat: base.fat,
-            protein: base.protein,
-            createdAt: base.createdAt,
-            expiresAt: base.expiresAt
-        )
-        await h.coordinator.receive(multiLineSource, via: .service)
-        let displays: [AIRequestDisplay] = h.reporter.reports.compactMap {
-            guard case let .pending(_, _, _, _, display) = $0.report else { return nil }
-            return display
-        }
-        #expect(displays.count == 2)
-        #expect(displays.allSatisfy { $0.mac == nil })
-    }
-
-    @Test func aRequestWithAnEmptyContextStringIsNotSigned() async throws {
-        // Present but empty signs the same as missing, so the watch never trusts it.
-        let h = makeCoordinator()
-        _ = try #require(h.keys.rotate())
-        h.treatments.contextResult = AIRequestContext(glucose: "", glucoseAgeMinutes: 3)
-        await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(_, _, _, _, display) = h.reporter.reports.first?.report else {
-            Issue.record("Expected a pending report")
-            return
-        }
-        #expect(display.mac == nil && h.prompt("r1").displayMac == nil)
     }
 
     // MARK: The watch is open

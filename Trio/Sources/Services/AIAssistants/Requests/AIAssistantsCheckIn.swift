@@ -108,9 +108,6 @@ final class AIAssistantsCheckIn {
                 debug(.service, "AI requests: skipped \(request.id), it isn't a meal Trio can read")
             }
         }
-        for answer in inbox.answers {
-            _ = await coordinator.answer(.watch(answer))
-        }
         await coordinator.expireIfDue()
         return true
     }

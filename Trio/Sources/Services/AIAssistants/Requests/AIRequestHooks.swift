@@ -90,14 +90,12 @@ enum AIRequestHooks {
 }
 
 /// Passes the watch's request messages to a receiver. Until there is one, it holds them and passes them on, in
-/// the order they came, once the receiver is set. A queued answer or key request is delivered right after
-/// launch, before the runtime exists, and would otherwise be lost.
+/// the order they came, once the receiver is set. A queued message, such as the watch's push token, is delivered
+/// right after launch, before the runtime exists, and would otherwise be lost.
 final class AIRequestMessageHolder {
     typealias Receiver = ([String: Any]) -> Bool
 
     private static let requestKeys = [
-        AIRequestIdentifiers.keyRequest,
-        AIRequestIdentifiers.keyAnswer,
         AIRequestIdentifiers.keyWatchPushToken,
         AIRequestIdentifiers.keyOpen,
         AIRequestIdentifiers.keyConfirm,

@@ -23,8 +23,8 @@ func inboxMeal(
     )
 }
 
-func inbox(requests: [AIInbox.Request], answers: [AIRequestAnswer] = []) -> AIInbox {
-    AIInbox(requests: requests, answers: answers)
+func inbox(requests: [AIInbox.Request]) -> AIInbox {
+    AIInbox(requests: requests)
 }
 
 /// Counts calls from any thread.
@@ -124,23 +124,17 @@ func makeCheckIn(api: FakeAIAssistantsAPI, isLinked: Bool = true) -> CheckInHarn
         #expect(h.activity.events == checkInActivity)
     }
 
-    @Test func relayedAnswerIsApplied() async throws {
+    @Test func relayedAnswersAreIgnored() async {
+        // An older service lists the answers a watch relayed. Nothing is carried out for them.
         let api = FakeAIAssistantsAPI()
-        api.inbox = inbox(requests: [inboxMeal(id: "r1")])
         let h = makeCheckIn(api: api)
-        let key = try #require(h.requests.keys.rotate())
-        await h.checkIn.checkIn(reason: .push)
-        let approve = AIRequestSigner.sign(
-            prompt: h.requests.prompt("r1"),
-            decision: .approve,
-            declinedBy: nil,
-            at: h.requests.now,
-            key: key
+        api.inboxBody = Data(
+            #"{"requests":[],"answers":[{"v":1,"requestId":"r1","decision":"approve","mac":"x"}]}"#.utf8
         )
-        api.inbox = inbox(requests: [inboxMeal(id: "r1")], answers: [approve])
         await h.checkIn.checkIn(reason: .push)
-        #expect(api.reportedStates == ["r1:pending", "r1:pending", "r1:delivering"])
-        #expect(h.requests.treatments.stored.map(\.id) == ["r1"] && h.requests.treatments.enacted == [1.2])
+        #expect(api.calls == ["getInbox"])
+        #expect(h.requests.treatments.stored.isEmpty && h.requests.treatments.enacted.isEmpty)
+        #expect(api.reportedStates.isEmpty)
     }
 
     @Test func withdrawnRequestIsWithdrawn() async {

@@ -56,27 +56,22 @@ enum AIRequestDisplayText {
     }
 
     /// The title and body of a request, and the context the service gets. Each line of the body appears only when it
-    /// applies: the dose first, then the fat, protein and glucose, why the dose is 0 U, the facts about recent carbs and
-    /// insulin, and, when approving from the notification gives the bolus, that it does.
+    /// applies: the dose first, then the fat, protein and glucose, why the dose is 0 U, and the facts about recent carbs
+    /// and insulin.
     static func display(
         source: String,
         description: String,
         shown: AIRequestShown,
-        context: AIRequestContext,
-        style: AIRequestApprovalStyle
+        context: AIRequestContext
     ) -> AIRequestDisplay {
         AIRequestDisplay(
             title: title(source: source, description: description),
-            body: body(shown: shown, context: context, style: style),
+            body: body(shown: shown, context: context),
             context: context
         )
     }
 
-    private static func body(
-        shown: AIRequestShown,
-        context: AIRequestContext,
-        style: AIRequestApprovalStyle
-    ) -> String {
+    private static func body(shown: AIRequestShown, context: AIRequestContext) -> String {
         let givesNoBolus = AIRequestContextRows.givesNoBolus(shown)
         // Trio's context rows, shared with the watch's approval screen so the two can't drift apart. The glucose joins
         // the fat and protein on the second line; the rest follow in their own order.
@@ -116,14 +111,6 @@ enum AIRequestDisplayText {
             lines.append(details.joined(separator: " · "))
         }
         lines += rows.filter { $0.kind != .glucose }.map(\.text)
-
-        // Approving from the notification gives the bolus, unless there is no bolus.
-        if style == .oneGesture, !givesNoBolus {
-            lines.append(String(
-                localized: "Approve gives the bolus now",
-                comment: "Request notification, last line when approving from the notification gives the bolus"
-            ))
-        }
         return cappedBody(lines.joined(separator: "\n"))
     }
 

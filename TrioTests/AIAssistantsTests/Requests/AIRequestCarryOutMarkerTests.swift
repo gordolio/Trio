@@ -7,7 +7,7 @@ import Testing
     @Test func markerIsGoneAfterAFinalReport() async {
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "a"), via: .service)
-        _ = await h.coordinator.answer(.phone(.approve, id: "a"))
+        _ = await h.coordinator.carryOutWatchConfirm(confirm("a"))
         #expect(h.reporter.reports(for: "a").last == .delivering(shown: h.prompt("a").shown))
         #expect(!FileManager.default.fileExists(atPath: markerURL(h.files).path))
     }
@@ -17,11 +17,10 @@ import Testing
         await h.coordinator.receive(meal(id: "a"), via: .service)
         let url = markerURL(h.files)
         let markers = TestBox<[AIRequestCarryOutMarker?]>([])
-        h.treatments.whileCheckingBolus = { markers.value.append(AIRequestCarryOutMarker.load(from: url)) }
         h.treatments.whileStoringCarbs = { markers.value.append(AIRequestCarryOutMarker.load(from: url)) }
         h.treatments.whileEnactingBolus = { markers.value.append(AIRequestCarryOutMarker.load(from: url)) }
-        _ = await h.coordinator.answer(.phone(.approve, id: "a"))
-        #expect(markers.value.map { $0?.stage } == [.checking, .storingCarbs, .enacting])
+        _ = await h.coordinator.carryOutWatchConfirm(confirm("a"))
+        #expect(markers.value.map { $0?.stage } == [.storingCarbs, .enacting])
         #expect(markers.value.first == AIRequestCarryOutMarker(
             id: "a",
             channel: .service,
@@ -29,21 +28,9 @@ import Testing
             source: "ChatGPT",
             shown: h.prompt("a").shown,
             askedOn: .watch,
-            approvedOn: .phone,
-            stage: .checking
+            approvedOn: .watch,
+            stage: .storingCarbs
         ))
-    }
-
-    @Test func watchApprovalIsMarkedAsApprovedOnTheWatch() async throws {
-        let h = makeCoordinator()
-        let key = try #require(h.keys.rotate())
-        await h.coordinator.receive(meal(id: "a"), via: .service)
-        let url = markerURL(h.files)
-        let marker = TestBox<AIRequestCarryOutMarker?>(nil)
-        h.treatments.whileEnactingBolus = { marker.value = AIRequestCarryOutMarker.load(from: url) }
-        let answer = AIRequestSigner.sign(prompt: h.prompt("a"), decision: .approve, declinedBy: nil, at: h.now, key: key)
-        #expect(await h.coordinator.answer(.watch(answer)) == .acted)
-        #expect(marker.value?.approvedOn == .watch)
     }
 
     @Test func anotherRequestsFinalReportKeepsTheMarker() async {
@@ -54,10 +41,10 @@ import Testing
         h.treatments.whileEnactingBolus = { [coordinator = h.coordinator] in
             // While the pump takes a's bolus, b arrives and is declined.
             await coordinator.receive(meal(id: "b"), via: .service)
-            _ = await coordinator.answer(.phone(.decline, id: "b"))
+            await coordinator.close(id: "b", on: .phone, dismissed: false)
             marker.value = AIRequestCarryOutMarker.load(from: url)
         }
-        _ = await h.coordinator.answer(.phone(.approve, id: "a"))
+        _ = await h.coordinator.carryOutWatchConfirm(confirm("a"))
         #expect(h.reporter.reports(for: "b").last == .declined(on: .phone))
         #expect(marker.value?.id == "a" && marker.value?.stage == .enacting)
         #expect(!FileManager.default.fileExists(atPath: url.path))
@@ -90,12 +77,12 @@ import Testing
     }
 
     @Test func approvalBeforeStartReportsTheLeftoverMarkerFirst() async {
-        // `start()` runs in a task at launch, so an answer can reach the coordinator before it.
+        // `start()` runs in a task at launch, so a confirmation can reach the coordinator before it.
         let files = CoordinatorFiles.temporary()
         leftoverMarker(id: "a", stage: .enacting).save(to: markerURL(files))
         let h = makeCoordinator(files: files)
         await h.coordinator.receive(meal(id: "b"), via: .service)
-        _ = await h.coordinator.answer(.phone(.approve, id: "b"))
+        _ = await h.coordinator.carryOutWatchConfirm(confirm("b"))
         await h.coordinator.start()
         #expect(h.reporter.states == ["b:pending", "a:failed", "b:delivering"])
         #expect(h.treatments.enacted == [1.2])
@@ -107,7 +94,7 @@ import Testing
         let files = CoordinatorFiles.temporary()
         let first = makeCoordinator(files: files)
         await first.coordinator.receive(meal(id: "a"), via: .service)
-        _ = await first.coordinator.answer(.phone(.approve, id: "a"))
+        _ = await first.coordinator.carryOutWatchConfirm(confirm("a"))
         leftoverMarker(id: "a", stage: .enacting).save(to: markerURL(files))
         let relaunched = makeCoordinator(files: files)
         await relaunched.coordinator.start()
@@ -155,14 +142,14 @@ import Testing
         await h.coordinator.start()
         // b is carried out with its marker in memory only, so the one Trio left isn't written over.
         await h.coordinator.receive(meal(id: "b"), via: .service)
-        _ = await h.coordinator.answer(.phone(.approve, id: "b"))
+        _ = await h.coordinator.carryOutWatchConfirm(confirm("b"))
         #expect(h.reporter.states == ["b:pending", "b:delivering"])
         try setReadable(url, true)
         #expect(AIRequestCarryOutMarker.load(from: url) == leftoverMarker(id: "a", stage: .enacting))
 
         // The next approval reads it again, and reports it before its own marker takes the file.
         await h.coordinator.receive(meal(id: "c"), via: .service)
-        _ = await h.coordinator.answer(.phone(.approve, id: "c"))
+        _ = await h.coordinator.carryOutWatchConfirm(confirm("c"))
         #expect(h.reporter.states == ["b:pending", "b:delivering", "c:pending", "a:failed", "c:delivering"])
         #expect(h.treatments.enacted == [1.2, 1.2])
         #expect(!FileManager.default.fileExists(atPath: url.path))
@@ -172,6 +159,11 @@ import Testing
 /// Makes the file readable to Trio or not, as protected data is after and before the first unlock.
 private func setReadable(_ url: URL, _ readable: Bool) throws {
     try FileManager.default.setAttributes([.posixPermissions: readable ? 0o644 : 0o000], ofItemAtPath: url.path)
+}
+
+/// The watch's confirmation of Trio's 1.2 U dose for `meal(id:)`, with its own carbs.
+private func confirm(_ id: String) -> AIRequestWatchConfirm {
+    AIRequestWatchConfirm(id: id, units: 1.2, carbs: nil)
 }
 
 /// Where the coordinator keeps its carry-out marker: next to the pending file.
