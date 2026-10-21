@@ -288,19 +288,17 @@ final class FakeAIAssistantsService: AIAssistantsService {
     }
 
     @Test(
-        "Send a test request hands Trio a 10 g request from the phone that lasts five minutes"
+        "A test request hands Trio 10 g from the phone that lasts five minutes"
     ) func testRequestIsTenGramsAndLocal(
     ) async throws {
         let state = makeState()
         var received: [(AIMealRequest, AIRequestChannel)] = []
         state.receiveRequest = { received.append(($0, $1)) }
         #expect(state.canSendTestRequest)
-        await state.sendTestRequest()
+        await state.sendTestRequest(.dryRun)
         let (request, channel) = try #require(received.first)
         #expect(received.count == 1)
         #expect(channel == .local)
-        #expect(request.source == "Test")
-        #expect(request.description == "test request")
         #expect(request.carbs == 10)
         #expect(request.fat == 0)
         #expect(request.protein == 0)
@@ -309,20 +307,98 @@ final class FakeAIAssistantsService: AIAssistantsService {
         #expect(abs(request.createdAt.timeIntervalSinceNow) < 5)
     }
 
+    @Test("The dry-run test request is marked as one, from \"Trio test\"") func dryRunTestRequestIsMarked() async throws {
+        let state = makeState()
+        var received: [AIMealRequest] = []
+        state.receiveRequest = { request, _ in received.append(request) }
+        await state.sendTestRequest(.dryRun)
+        let request = try #require(received.first)
+        #expect(request.testKind == .dryRun)
+        #expect(request.source == "Trio test")
+        #expect(request.description == "10 g carbs")
+    }
+
+    @Test("The real test request is marked as one, from \"Trio test\"") func realTestRequestIsMarked() async throws {
+        let state = makeState()
+        var received: [AIMealRequest] = []
+        state.receiveRequest = { request, _ in received.append(request) }
+        await state.sendTestRequest(.real)
+        let request = try #require(received.first)
+        #expect(request.testKind == .real)
+        #expect(request.source == "Trio test")
+        #expect(request.description == "10 g carbs")
+        #expect(request.carbs == 10)
+    }
+
     @Test("Each test request has its own ID") func testRequestsHaveDifferentIDs() async {
         let state = makeState()
         var ids: [String] = []
         state.receiveRequest = { request, _ in ids.append(request.id) }
-        await state.sendTestRequest()
-        await state.sendTestRequest()
+        await state.sendTestRequest(.dryRun)
+        await state.sendTestRequest(.real)
         #expect(ids.count == 2)
         #expect(Set(ids).count == 2)
+    }
+
+    @Test("Each test request sent counts once, for the confirmation") func testRequestsAreCounted() async {
+        let state = makeState()
+        state.receiveRequest = { _, _ in }
+        #expect(state.testCount == 0)
+        await state.sendTestRequest(.dryRun)
+        #expect(state.testCount == 1)
+        await state.sendTestRequest(.real)
+        #expect(state.testCount == 2)
     }
 
     @Test("Without the request runtime the test request can't be sent") func testRequestNeedsTheRuntime() async {
         let state = makeState()
         state.receiveRequest = nil
         #expect(!state.canSendTestRequest)
-        await state.sendTestRequest()
+        await state.sendTestRequest(.dryRun)
+        await state.sendTestRequest(.real)
+        #expect(state.testCount == 0)
+    }
+
+    // MARK: - Approving from the notification
+
+    @Test("Choosing to approve from the notification asks first and changes nothing") func oneGestureNeedsConfirmation() {
+        let state = makeState()
+        #expect(state.preferences.approvalStyle == .twoStep)
+        state.requestApprovalStyle(.oneGesture)
+        #expect(state.isConfirmingOneGesture)
+        #expect(state.preferences.approvalStyle == .twoStep)
+        state.confirmOneGesture()
+        #expect(!state.isConfirmingOneGesture)
+        #expect(state.preferences.approvalStyle == .oneGesture)
+    }
+
+    @Test("Canceling the question leaves Review on watch first") func cancellingOneGestureKeepsTwoSteps() {
+        let state = makeState()
+        state.requestApprovalStyle(.oneGesture)
+        state.cancelOneGesture()
+        #expect(!state.isConfirmingOneGesture)
+        #expect(state.preferences.approvalStyle == .twoStep)
+        // A confirmation with nothing asked changes nothing either.
+        state.confirmOneGesture()
+        #expect(state.preferences.approvalStyle == .twoStep)
+    }
+
+    @Test("Going back to Review on watch first needs no question") func twoStepAppliesAtOnce() {
+        let state = makeState()
+        state.preferences.approvalStyle = .oneGesture
+        state.requestApprovalStyle(.twoStep)
+        #expect(!state.isConfirmingOneGesture)
+        #expect(state.preferences.approvalStyle == .twoStep)
+    }
+
+    @Test("Choosing the style already on asks nothing") func choosingTheCurrentStyleAsksNothing() {
+        let state = makeState()
+        state.preferences.approvalStyle = .oneGesture
+        state.requestApprovalStyle(.oneGesture)
+        #expect(!state.isConfirmingOneGesture)
+        #expect(state.preferences.approvalStyle == .oneGesture)
+        state.requestApprovalStyle(.twoStep)
+        state.requestApprovalStyle(.twoStep)
+        #expect(!state.isConfirmingOneGesture)
     }
 }

@@ -8,7 +8,9 @@ extension AIAssistantsConfig {
         var body: some View {
             Section(
                 header: Text("Things you can ask"),
-                footer: Text("Assistants can only read. Nothing they do changes your treatments.")
+                footer: Text(
+                    "Assistants can read your status. They can also ask Trio to log a meal and bolus for it. Nothing is logged or given until you approve it on your watch or iPhone."
+                )
             ) {
                 ForEach(AIAssistantsConfig.questionGroups) { group in
                     VStack(alignment: .leading, spacing: 10) {

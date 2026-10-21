@@ -18,6 +18,10 @@ extension AIAssistantsConfig {
         /// Goes up by one for each copy, to show the "Copied" confirmation again.
         @Published private(set) var copyCount = 0
         @Published private(set) var copiedMessage = ""
+        /// Goes up by one for each test request sent, to confirm it and give the haptic.
+        @Published private(set) var testCount = 0
+        /// Whether the screen is asking if "Approve from the notification" should really be turned on.
+        @Published var isConfirmingOneGesture = false
 
         /// What the request settings on the screen show. Kept in sync with `preferencesStore` once `subscribe()` ran.
         @Published var preferences = AIAssistantsPreferences()
@@ -152,28 +156,56 @@ extension AIAssistantsConfig {
             }
         }
 
+        // MARK: - Approval style
+
+        /// The picker asks for a style. Approving from the notification gives the bolus without opening the request,
+        /// so it's only turned on once the screen's question is answered; any other choice applies at once.
+        func requestApprovalStyle(_ style: AIRequestApprovalStyle) {
+            guard style != preferences.approvalStyle else { return }
+            if style == .oneGesture {
+                isConfirmingOneGesture = true
+            } else {
+                preferences.approvalStyle = style
+            }
+        }
+
+        /// "Turn On": applies the style the picker asked for. Does nothing when no question is open.
+        func confirmOneGesture() {
+            guard isConfirmingOneGesture else { return }
+            isConfirmingOneGesture = false
+            preferences.approvalStyle = .oneGesture
+        }
+
+        /// "Cancel": the style stays as it was.
+        func cancelOneGesture() {
+            isConfirmingOneGesture = false
+        }
+
         // MARK: - Test request
 
         var canSendTestRequest: Bool {
             receiveRequest != nil
         }
 
-        /// Asks Trio for 10 g of carbs as if an assistant had sent it, to try the approval on the watch and
-        /// the iPhone. It lasts five minutes, and Trio's dose for it is worked out as for any request.
-        @MainActor func sendTestRequest() async {
+        /// Asks Trio for 10 g of carbs as if an assistant had sent it, to try the approval on the watch and the
+        /// iPhone. It lasts five minutes. A dry run goes through the approval and every check, then says what it
+        /// would have given; a real one logs the carbs and gives Trio's dose for them, as any request does.
+        @MainActor func sendTestRequest(_ kind: AIRequestTestKind) async {
             guard let receiveRequest else { return }
             let now = Date()
             let request = AIMealRequest(
                 id: UUID().uuidString,
-                source: "Test",
-                description: "test request",
+                source: "Trio test",
+                description: "10 g carbs",
                 carbs: 10,
                 fat: 0,
                 protein: 0,
                 createdAt: now,
-                expiresAt: now.addingTimeInterval(5 * 60)
+                expiresAt: now.addingTimeInterval(5 * 60),
+                testKind: kind
             )
             await receiveRequest(request, .local)
+            testCount += 1
         }
 
         // MARK: - Copying

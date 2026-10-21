@@ -437,8 +437,8 @@ enum SettingItems {
             title: "AI Assistants",
             view: .aiAssistantsConfig,
             searchContents: [
-                "Claude", "ChatGPT", "Grok", "MCP", "Sign in with Apple",
-                "Approval style", "Also ask on iPhone after", "Send watch answers by", "Wake-up push", "Send a test request"
+                "Claude", "ChatGPT", "Grok", "MCP", "Sign in with Apple", "Allow meal requests", "Approval style",
+                "Ask on iPhone if no answer", "Send watch answers by", "Wake-up push", "Send a test request"
             ],
             path: ["Services", "AI Assistants"]
         ),

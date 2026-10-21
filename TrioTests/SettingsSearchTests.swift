@@ -40,6 +40,21 @@ import Testing
         }
     }
 
+    @Test("The AI Assistants screen is found by its settings") func aiAssistantsSettingsAreSearchable() {
+        let terms = [
+            "Allow meal requests", "Approval style", "Ask on iPhone if no answer",
+            "Send watch answers by", "Wake-up push", "Send a test request"
+        ]
+        for term in terms {
+            let match = SettingItems.filteredItems(searchText: term)
+                .first { $0.matchedContent == term && $0.settingItem.view == .aiAssistantsConfig }
+            #expect(match != nil, "\(term) isn't found")
+        }
+        // The old label is gone from the screen, so it's gone from the search too.
+        let old = SettingItems.filteredItems(searchText: "Also ask on iPhone after")
+        #expect(!old.contains { $0.settingItem.view == .aiAssistantsConfig })
+    }
+
     @Test("SearchResultTarget is Hashable and equatable by value") func searchResultTargetHashable() {
         let a = SearchResultTarget(screen: .dynamicISF, scrollLabel: "Dynamic ISF")
         let b = SearchResultTarget(screen: .dynamicISF, scrollLabel: "Dynamic ISF")
