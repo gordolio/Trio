@@ -80,19 +80,6 @@ enum AIRequestResultText {
                 ),
                 .neutral
             )
-        case let .dryRun(shown):
-            let units = shown.units
-            return (
-                String(
-                    localized: "Test: would give \(units)\u{00A0}U",
-                    comment: "Result headline: a test request passed every check. The placeholder is the dose it would give"
-                ),
-                String(
-                    localized: "Nothing was logged or given.",
-                    comment: "Result detail: a test request logs and gives nothing"
-                ),
-                .success
-            )
         case .pending:
             // Only a final report is an outcome.
             assertionFailure("A pending report is not an outcome")

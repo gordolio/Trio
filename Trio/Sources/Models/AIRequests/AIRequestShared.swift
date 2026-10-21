@@ -74,8 +74,6 @@ struct AIRequestPrompt: Codable, Equatable {
     /// What Trio itself adds to the request: the latest glucose, recent carbs and insulin, and why the dose is 0 U.
     /// `nil` for a request made before Trio recorded them, or when the service sent none.
     var context: AIRequestContext? = nil
-    /// Set only on the iPhone's test requests, which the approval says.
-    var testKind: AIRequestTestKind? = nil
     /// Trio's MAC over the amounts, the title, the body, the approval style and the context: see
     /// `AIRequestSigner.displayMAC`. `nil` when Trio had no key to sign with, or the service sent none.
     var displayMac: String? = nil
@@ -98,7 +96,6 @@ struct AIRequestPrompt: Codable, Equatable {
         case answerToken
         case answerURL
         case context
-        case testKind
         case displayMac
     }
 

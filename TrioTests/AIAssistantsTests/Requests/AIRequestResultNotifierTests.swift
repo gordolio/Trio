@@ -66,7 +66,6 @@ private func outcome(
         let shown = AIRequestShown(carbs: "35.00", fat: "10.00", protein: "8.00", units: "2.10")
         notifier.notify(outcome(.delivering(shown: shown), approvedOn: .watch))
         notifier.notify(outcome(.logged(shown: shown), approvedOn: .phone))
-        notifier.notify(outcome(.dryRun(shown: shown), approvedOn: .phone))
         #expect(center.added.isEmpty)
     }
 
@@ -182,31 +181,5 @@ private func outcome(
         #expect(message.id == "r1" && message.headline == "Not given" && message.answeredOn == .watch)
         #expect(session.userInfos.count == 1)
         #expect(center.added.count == 2)
-    }
-
-    /// A test request is shown on the watch by Trio itself, even when it's asked on the iPhone because the watch has no
-    /// push token, so the watch hears how it ended too.
-    @Test func outcomeReachesTheWatchWhenTrioShowedItThere() throws {
-        let session = FakeWatchSession()
-        session.isReachable = true
-        let link = AIRequestWatchLink(
-            session: session,
-            keys: AIRequestKeyStore(keychain: InMemoryAIRequestKeychain()),
-            defaults: UserDefaults(suiteName: UUID().uuidString)!,
-            onAnswer: { _ in },
-            onViewing: { _ in },
-            onWatchTokenChanged: {}
-        )
-        let notifier = AIRequestResultNotifier(center: FakeNotificationCenter(), isShowing: { _ in false })
-
-        var shown = outcome(.expired, askedOn: .phone)
-        shown.deliveredToWatch = true
-        AIRequestsRuntime.publish(shown, to: link, notifier: notifier)
-
-        let sent = try #require(session.userInfos.first?[AIRequestIdentifiers.keyResult] as? Data)
-        let message = try JSONDecoder().decode(AIRequestResultMessage.self, from: sent)
-        #expect(message.id == "r1" && message.headline == "Expired" && message.answeredOn == nil)
-        #expect(session.userInfos.count == 1)
-        #expect(session.messages.count == 1)
     }
 }

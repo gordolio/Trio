@@ -1,13 +1,5 @@
 import Foundation
 
-/// Which test request the iPhone sent, so the approval says it's a test.
-enum AIRequestTestKind: String, Codable {
-    /// Goes through every check, then reports the dose it would give. Nothing is logged or given.
-    case dryRun
-    /// Logs the carbs and gives Trio's real dose, like an assistant's request.
-    case real
-}
-
 /// The facts Trio itself adds to a request, so the wearer sees them whatever the assistant said: the latest
 /// glucose, carbs or insulin given a moment ago, and why the dose is 0 U. The approval screens show them as fixed rows.
 ///

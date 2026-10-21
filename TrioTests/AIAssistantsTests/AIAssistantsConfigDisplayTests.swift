@@ -93,6 +93,18 @@ import Testing
         #expect(text(now.addingTimeInterval(-2 * 3600), now) == "Updated 2 hours ago")
     }
 
+    // MARK: - Sections
+
+    @Test("The settings have no Testing section, so no test request can be sent") func settingsHaveNoTestingSection() {
+        // The screen's content, as the types of the sections it is made of.
+        let content = String(reflecting: AIAssistantsConfig.ContentView.Body.self)
+        // The same reading finds the sections that are there, so an empty reading can't pass.
+        #expect(content.contains("AIAssistantsConfig.ApprovalSection"))
+        #expect(content.contains("AIAssistantsConfig.QuestionsSection"))
+        // Not just "Testing": SwiftUI's own `allowsHitTesting` modifier has it in its name.
+        #expect(!content.contains("AIAssistantsConfig.Testing"))
+    }
+
     // MARK: - Account
 
     @Test("Initials come from the name, else the email") func initials() {

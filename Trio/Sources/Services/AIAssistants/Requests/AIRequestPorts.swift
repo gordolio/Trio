@@ -11,21 +11,12 @@ struct AIMealRequest: Codable, Equatable {
     let protein: Decimal
     let createdAt: Date
     let expiresAt: Date
-    /// Set only on the iPhone's test requests.
-    var testKind: AIRequestTestKind? = nil
 }
 
-/// Where a request came from, and so where its states are reported.
+/// Where a request came from, and so where its states are reported. The service is the only one; the pending request
+/// and the carry-out marker keep their channel on disk, so it stays an enum.
 enum AIRequestChannel: String, Codable {
     case service
-    /// The debug request, made on the phone.
-    case local
-
-    /// Whether Trio itself shows the channel's requests on the watch, over WatchConnectivity, wherever they're asked.
-    /// The service's requests reach the watch by the service's push instead.
-    var isDeliveredToWatchByTrio: Bool {
-        self == .local
-    }
 }
 
 enum AIRequestAskedOn: String, Codable {
@@ -60,12 +51,10 @@ struct AIRequestOutcome: Equatable {
     /// Trio stopped while starting the bolus, so it may have been given. Only a carry-out marker found at `.enacting`
     /// says so.
     var bolusUnconfirmed = false
-    /// Trio showed the request on the watch itself, as it does every test request, even one asked on the iPhone.
-    var deliveredToWatch = false
 
-    /// Whether the watch hears how the request ended: it was asked there, or Trio showed it there.
+    /// Whether the watch hears how the request ended: it was asked there.
     var reachesWatch: Bool {
-        askedOn == .watch || deliveredToWatch
+        askedOn == .watch
     }
 }
 
@@ -99,8 +88,7 @@ extension AIRequestOutcome {
             report: report,
             askedOn: pending.askedOn,
             approvedOn: approvedOn,
-            declinedOn: declinedOn,
-            deliveredToWatch: pending.channel.isDeliveredToWatchByTrio
+            declinedOn: declinedOn
         )
     }
 
@@ -115,8 +103,7 @@ extension AIRequestOutcome {
             askedOn: marker.askedOn,
             approvedOn: marker.approvedOn,
             declinedOn: nil,
-            bolusUnconfirmed: marker.stage == .enacting,
-            deliveredToWatch: marker.channel.isDeliveredToWatchByTrio
+            bolusUnconfirmed: marker.stage == .enacting
         )
     }
 }
@@ -159,9 +146,6 @@ enum AIRequestReport: Codable, Equatable {
     case replaced
     /// A check failed and nothing was stored, or the pump failed after the carbs were logged.
     case failed(reason: String, carbsLogged: Bool)
-    /// A dry-run test passed every check, and nothing was logged or given. Only the iPhone's test requests are dry
-    /// runs, so it's reported only on `.local`.
-    case dryRun(shown: AIRequestShown)
 
     var state: AIRequestState {
         switch self {
@@ -169,8 +153,7 @@ enum AIRequestReport: Codable, Equatable {
             return .pending
         case .delivering:
             return .delivering
-        case .dryRun,
-             .logged:
+        case .logged:
             return .logged
         case .declined:
             return .declined

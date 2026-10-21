@@ -206,7 +206,7 @@ struct CoordinatorFiles {
 /// A coordinator over fakes, its clock, and the prompts it asked with.
 final class CoordinatorHarness {
     let coordinator: AIRequestCoordinator
-    /// Gets every report, unless a service reporter was given; then it gets the local ones only.
+    /// Gets every report, unless a service reporter was given; then it gets none.
     let reporter: RecordingReporter
     let treatments: FakeTreatments
     let watch: FakeWatch
@@ -258,7 +258,7 @@ final class CoordinatorHarness {
             treatments: treatments,
             watch: watch,
             phoneBackup: backup,
-            reporters: [.service: serviceReporter ?? reporter, .local: reporter],
+            reporters: [.service: serviceReporter ?? reporter],
             now: { clock.value }
         )
         subscription = coordinator.current

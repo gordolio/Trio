@@ -45,50 +45,19 @@ import Testing
     }
 
     @Test(
-        "A test request is shown on the watch by Trio itself, so its outcome says so even when it was asked on the iPhone"
-    ) func testRequestOutcomeSaysItWasDeliveredToTheWatch() async {
-        // No watch push token: the request is asked on the iPhone, but Trio still shows it on the watch.
-        let h = makeCoordinator(watchAvailable: false)
-        let outcomes = OutcomeRecorder(h.coordinator.outcomes)
-        var test = meal(id: "r1")
-        test.testKind = .dryRun
-        await h.coordinator.receive(test, via: .local)
-        #expect(h.watch.delivered.map(\.id) == ["r1"])
-        _ = await h.coordinator.answer(.phone(.approve, id: "r1"))
-        #expect(outcomes.all.map(\.askedOn) == [.phone])
-        #expect(outcomes.all.map(\.deliveredToWatch) == [true])
-        #expect(outcomes.all.map(\.reachesWatch) == [true])
-
-        // Replaced, expired or withdrawn, it was still shown there.
-        await h.coordinator.receive(meal(id: "r2"), via: .local)
-        await h.coordinator.receive(meal(id: "r3"), via: .local)
-        #expect(outcomes.all.map(\.id) == ["r1", "r2"])
-        #expect(outcomes.all.map(\.deliveredToWatch) == [true, true])
-
-        // A test request refused on arrival was never shown anywhere.
-        h.treatments.checkResult = "Over your max IOB"
-        await h.coordinator.receive(meal(id: "r4"), via: .local)
-        #expect(outcomes.all.last?.id == "r4")
-        #expect(outcomes.all.last?.deliveredToWatch == false)
-        #expect(outcomes.all.last?.reachesWatch == false)
-    }
-
-    @Test(
         "An assistant's request reaches the watch by the service's push, so only being asked there sends its result"
-    ) func serviceRequestOutcomeIsNotDeliveredByTrio() async {
+    ) func onlyBeingAskedOnTheWatchSendsItsResult() async {
         let onPhone = makeCoordinator(watchAvailable: false)
         let phoneOutcomes = OutcomeRecorder(onPhone.coordinator.outcomes)
         await onPhone.coordinator.receive(meal(id: "r1"), via: .service)
         #expect(onPhone.watch.delivered.isEmpty)
         _ = await onPhone.coordinator.answer(.phone(.approve, id: "r1"))
-        #expect(phoneOutcomes.all.map(\.deliveredToWatch) == [false])
         #expect(phoneOutcomes.all.map(\.reachesWatch) == [false])
 
         let onWatch = makeCoordinator(watchAvailable: true)
         let watchOutcomes = OutcomeRecorder(onWatch.coordinator.outcomes)
         await onWatch.coordinator.receive(meal(id: "r1"), via: .service)
         _ = await onWatch.coordinator.answer(.phone(.approve, id: "r1"))
-        #expect(watchOutcomes.all.map(\.deliveredToWatch) == [false])
         #expect(watchOutcomes.all.map(\.reachesWatch) == [true])
     }
 
@@ -177,21 +146,12 @@ import Testing
         #expect(outcomes.all.map(\.approvedOn) == [.phone])
     }
 
-    @Test func zeroDoseAndDryRunSendTheirOwnOutcomes() async {
+    @Test func zeroDoseSendsItsOwnOutcome() async {
         let zero = makeCoordinator(dose: 0)
         let zeroOutcomes = OutcomeRecorder(zero.coordinator.outcomes)
         await zero.coordinator.receive(meal(id: "a"), via: .service)
         _ = await zero.coordinator.answer(.phone(.approve, id: "a"))
         #expect(zeroOutcomes.all.map(\.report) == [.logged(shown: zero.prompt("a").shown)])
-
-        let dry = makeCoordinator()
-        let dryOutcomes = OutcomeRecorder(dry.coordinator.outcomes)
-        var test = meal(id: "b")
-        test.testKind = .dryRun
-        await dry.coordinator.receive(test, via: .local)
-        _ = await dry.coordinator.answer(.phone(.approve, id: "b"))
-        #expect(dryOutcomes.all.map(\.report) == [.dryRun(shown: dry.prompt("b").shown)])
-        #expect(dryOutcomes.all.map(\.approvedOn) == [.phone])
     }
 
     @Test func declineOnThePhoneSendsAnOutcomeWithWhereItWasDeclined() async {
@@ -295,26 +255,6 @@ import Testing
         await h.coordinator.start()
         await h.coordinator.receive(meal(id: "a"), via: .service)
         #expect(outcomes.all.count == 1)
-    }
-
-    @Test func markerOfATestRequestSaysItWasDeliveredToTheWatch() async throws {
-        let files = CoordinatorFiles.temporary()
-        _ = try AIRequestSeenStore(fileURL: files.seen, now: { coordinatorTestStart }).observe("a")
-        AIRequestCarryOutMarker(
-            id: "a",
-            channel: .local,
-            title: "Trio test: 10 g carbs",
-            source: "Trio test",
-            shown: AIRequestShown(carbs: "10.00", fat: "0.00", protein: "0.00", units: "0.50"),
-            askedOn: .phone,
-            approvedOn: .phone,
-            stage: .checking
-        ).save(to: files.pending.deletingLastPathComponent().appendingPathComponent("carrying-out.json"))
-        let h = makeCoordinator(files: files)
-        let outcomes = OutcomeRecorder(h.coordinator.outcomes)
-        await h.coordinator.start()
-        #expect(outcomes.all.map(\.deliveredToWatch) == [true])
-        #expect(outcomes.all.map(\.reachesWatch) == [true])
     }
 
     @Test func markerOfAnAlreadyReportedRequestSendsNoOutcome() async {

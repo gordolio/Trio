@@ -7,12 +7,8 @@ import Testing
     private static let dose = AIRequestShown(carbs: "35.00", fat: "0.00", protein: "0.00", units: "2.10")
     private static let noDose = AIRequestShown(carbs: "35.00", fat: "0.00", protein: "0.00", units: "0.00")
 
-    private static func rows(
-        _ context: AIRequestContext?,
-        shown: AIRequestShown = dose,
-        testKind: AIRequestTestKind? = nil
-    ) -> [AIRequestContextRow] {
-        AIRequestContextRows.rows(context: context, shown: shown, testKind: testKind)
+    private static func rows(_ context: AIRequestContext?, shown: AIRequestShown = dose) -> [AIRequestContextRow] {
+        AIRequestContextRows.rows(context: context, shown: shown)
     }
 
     @Test("Every row, in the one order both screens use, with the warnings marked") func everyRowInOrder() {
@@ -23,7 +19,7 @@ import Testing
             recentBolus: .init(amount: "3.00", minutesAgo: 8),
             noDoseReason: "glucose is forecast to go low"
         )
-        #expect(Self.rows(context, shown: Self.noDose, testKind: .real) == [
+        #expect(Self.rows(context, shown: Self.noDose) == [
             AIRequestContextRow(kind: .glucose, text: "61 mg/dL ↘ · 4 min ago", isWarning: false),
             AIRequestContextRow(
                 kind: .noDose,
@@ -31,8 +27,7 @@ import Testing
                 isWarning: false
             ),
             AIRequestContextRow(kind: .recentCarbs, text: "Carbs 20\u{00A0}g logged 6 min ago", isWarning: true),
-            AIRequestContextRow(kind: .recentBolus, text: "Bolus 3.00\u{00A0}U given 8 min ago", isWarning: true),
-            AIRequestContextRow(kind: .test, text: "Real dose. Decline unless you're eating this.", isWarning: true)
+            AIRequestContextRow(kind: .recentBolus, text: "Bolus 3.00\u{00A0}U given 8 min ago", isWarning: true)
         ])
     }
 
@@ -40,7 +35,6 @@ import Testing
         #expect(Self.rows(nil).isEmpty)
         #expect(Self.rows(AIRequestContext()).isEmpty)
         #expect(Self.rows(nil, shown: Self.noDose) == Self.rows(AIRequestContext(), shown: Self.noDose))
-        #expect(Self.rows(nil, testKind: .dryRun) == Self.rows(AIRequestContext(), testKind: .dryRun))
 
         // An age without a reading, and empty strings, add nothing.
         #expect(Self.rows(AIRequestContext(glucoseAgeMinutes: 30)).isEmpty)
@@ -76,16 +70,6 @@ import Testing
         #expect(text(age: 25) == "142 mg/dL ↗ · 25 min ago")
     }
 
-    @Test("A test says what it does, and only the real one is a warning") func testRows() {
-        #expect(Self.rows(nil, testKind: .dryRun) == [
-            AIRequestContextRow(kind: .test, text: "Test only: nothing is logged or given", isWarning: false)
-        ])
-        #expect(Self.rows(nil, testKind: .real) == [
-            AIRequestContextRow(kind: .test, text: "Real dose. Decline unless you're eating this.", isWarning: true)
-        ])
-        #expect(Self.rows(nil, testKind: nil).isEmpty)
-    }
-
     @Test(
         "Warnings first moves the warnings above the other rows, each kept in the one order"
     ) func warningsFirst() {
@@ -96,14 +80,14 @@ import Testing
             recentBolus: .init(amount: "3.00", minutesAgo: 8),
             noDoseReason: "glucose is forecast to go low"
         )
-        let rows = Self.rows(context, shown: Self.noDose, testKind: .real)
+        let rows = Self.rows(context, shown: Self.noDose)
         let reordered = AIRequestContextRows.warningsFirst(rows)
-        #expect(reordered.map(\.kind) == [.recentCarbs, .recentBolus, .test, .glucose, .noDose])
+        #expect(reordered.map(\.kind) == [.recentCarbs, .recentBolus, .glucose, .noDose])
         #expect(Set(reordered.map(\.text)) == Set(rows.map(\.text)))
         #expect(reordered.count == rows.count)
 
         // With no warnings, or only warnings, nothing moves.
-        let calm = Self.rows(context, shown: Self.noDose, testKind: .dryRun).filter { !$0.isWarning }
+        let calm = rows.filter { !$0.isWarning }
         #expect(AIRequestContextRows.warningsFirst(calm) == calm)
         let alarming = rows.filter(\.isWarning)
         #expect(AIRequestContextRows.warningsFirst(alarming) == alarming)

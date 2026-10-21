@@ -36,7 +36,6 @@
 		F21153A53E244F46B14559FB /* AIAssistantsCheckInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */; };
 		6BDBA53B6BAA43EFA432E7DE /* AIInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70F8B809C6045D3905D019B /* AIInbox.swift */; };
 		6972F71FF2EE43D394392953 /* AIInboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39BD404EE2143A18D9889FB /* AIInboxTests.swift */; };
-		C72DA10CA17D4C619365D2D4 /* AIAssistantsTestingSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = E906288AA158426EA8F7A388 /* AIAssistantsTestingSection.swift */; };
 		C6EE0CB0DFA64C61BA729E53 /* AIAssistantsApprovalSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */; };
 		F3CD107FB529465DBAC702AC /* AIRequestPhoneApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D58A5E87044C24AF75FE5A /* AIRequestPhoneApprovalView.swift */; };
 		072A5F0C958442B5BAD37A48 /* AIRequestPhoneBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1BD9E67190442CD94491170 /* AIRequestPhoneBackup.swift */; };
@@ -1363,7 +1362,6 @@
 		468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsCheckInTests.swift; sourceTree = "<group>"; };
 		E70F8B809C6045D3905D019B /* AIInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIInbox.swift; sourceTree = "<group>"; };
 		C39BD404EE2143A18D9889FB /* AIInboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIInboxTests.swift; sourceTree = "<group>"; };
-		E906288AA158426EA8F7A388 /* AIAssistantsTestingSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsTestingSection.swift; sourceTree = "<group>"; };
 		A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsApprovalSection.swift; sourceTree = "<group>"; };
 		62D58A5E87044C24AF75FE5A /* AIRequestPhoneApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneApprovalView.swift; sourceTree = "<group>"; };
 		B1BD9E67190442CD94491170 /* AIRequestPhoneBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneBackup.swift; sourceTree = "<group>"; };
@@ -2716,7 +2714,6 @@
 		3DAA3B455744249FFFF53168 /* View */ = {
 			isa = PBXGroup;
 			children = (
-				E906288AA158426EA8F7A388 /* AIAssistantsTestingSection.swift */,
 				A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */,
 				62D58A5E87044C24AF75FE5A /* AIRequestPhoneApprovalView.swift */,
 				7A349D3318134544809EC8BE /* AIAssistantsConfigPreviews.swift */,
@@ -6083,7 +6080,6 @@
 				6107468383D74CF1A7B296A7 /* ServiceRequestReporter.swift in Sources */,
 				71E36E3AFED1426B860A1BCC /* AIAssistantsCheckIn.swift in Sources */,
 				6BDBA53B6BAA43EFA432E7DE /* AIInbox.swift in Sources */,
-				C72DA10CA17D4C619365D2D4 /* AIAssistantsTestingSection.swift in Sources */,
 				C6EE0CB0DFA64C61BA729E53 /* AIAssistantsApprovalSection.swift in Sources */,
 				F3CD107FB529465DBAC702AC /* AIRequestPhoneApprovalView.swift in Sources */,
 				072A5F0C958442B5BAD37A48 /* AIRequestPhoneBackup.swift in Sources */,

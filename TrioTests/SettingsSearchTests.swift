@@ -41,10 +41,7 @@ import Testing
     }
 
     @Test("The AI Assistants screen is found by its settings") func aiAssistantsSettingsAreSearchable() {
-        let terms = [
-            "Allow meal requests", "Approval style", "Ask on iPhone if no answer",
-            "Send watch answers by", "Wake-up push", "Send a test request"
-        ]
+        let terms = ["Allow meal requests", "Approval style", "Ask on iPhone if no answer"]
         for term in terms {
             let match = SettingItems.filteredItems(searchText: term)
                 .first { $0.matchedContent == term && $0.settingItem.view == .aiAssistantsConfig }
@@ -53,6 +50,14 @@ import Testing
         // The old label is gone from the screen, so it's gone from the search too.
         let old = SettingItems.filteredItems(searchText: "Also ask on iPhone after")
         #expect(!old.contains { $0.settingItem.view == .aiAssistantsConfig })
+    }
+
+    @Test("The test requests are gone from the settings search") func searchFindsNoTestRequest() {
+        #expect(SettingItems.filteredItems(searchText: "test request").isEmpty)
+        // The advanced delivery settings went with them.
+        for term in ["Send watch answers by", "Wake-up push"] {
+            #expect(SettingItems.filteredItems(searchText: term).isEmpty, "\(term) is still found")
+        }
     }
 
     @Test("SearchResultTarget is Hashable and equatable by value") func searchResultTargetHashable() {

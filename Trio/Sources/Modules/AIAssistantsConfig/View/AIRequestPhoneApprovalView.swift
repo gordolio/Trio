@@ -378,11 +378,9 @@ struct AIRequestPhoneApprovalView: View {
                         .accessibilityAddTraits(.updatesFrequently)
                 }
             } footer: {
-                if let approveLine {
-                    Text(approveLine)
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                }
+                Text(approveLine)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
             }
             .listRowBackground(Color.chart)
         }
@@ -449,11 +447,7 @@ struct AIRequestPhoneApprovalView: View {
 
     /// Trio's rows for the request, the same as on the watch and in the notification.
     private var contextRowList: [AIRequestContextRow] {
-        AIRequestContextRows.rows(
-            context: pending.prompt.context,
-            shown: shown,
-            testKind: pending.prompt.testKind
-        )
+        AIRequestContextRows.rows(context: pending.prompt.context, shown: shown)
     }
 
     /// The rows, a warning with an orange triangle. The watch's is yellow, which doesn't read on a light row, and the
@@ -477,10 +471,8 @@ struct AIRequestPhoneApprovalView: View {
         }
     }
 
-    /// What approving does, or `nil` for a test that only goes through the motions: its own row says nothing is logged
-    /// or given, and this line would say the opposite.
-    private var approveLine: String? {
-        guard pending.prompt.testKind != .dryRun else { return nil }
+    /// What approving does.
+    private var approveLine: String {
         if AIRequestContextRows.givesNoBolus(shown) {
             return String(
                 localized: "Approving logs \(shown.carbsText) of carbs only.",

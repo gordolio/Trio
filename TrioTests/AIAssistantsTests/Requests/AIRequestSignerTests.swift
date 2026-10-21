@@ -89,7 +89,6 @@ import Testing
             recentBolus: .init(amount: "3.00", minutesAgo: 8),
             noDoseReason: "glucose is low (52 mg/dL)"
         ))
-        #expect(prompt.testKind == nil)
     }
 
     @Test func pushContextMayHaveOnlySomeKeys() throws {
@@ -126,19 +125,30 @@ import Testing
         }
     }
 
-    @Test func promptKeepsItsContextAndTestKindThroughJSON() throws {
+    @Test func promptKeepsItsContextThroughJSON() throws {
         var prompt = Self.prompt
         prompt.context = AIRequestContext(glucose: "142 mg/dL ↗", recentBolus: .init(amount: "3.00", minutesAgo: 8))
-        prompt.testKind = .real
         let decoded = try JSONDecoder().decode(AIRequestPrompt.self, from: JSONEncoder().encode(prompt))
         #expect(decoded == prompt)
-        // A prompt saved before these existed still reads.
+        // A prompt saved before the context existed still reads.
         let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any]
-        #expect(plain?["context"] == nil && plain?["testKind"] == nil)
+        #expect(plain?["context"] == nil)
         #expect(
             try JSONDecoder().decode(AIRequestPrompt.self, from: JSONSerialization.data(withJSONObject: plain ?? [:])) == Self
                 .prompt
         )
+    }
+
+    @Test func promptSavedWithATestKindStillReads() throws {
+        // The test requests are gone, but a prompt one of them left in a file still reads, and the flag is dropped.
+        var saved = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any]
+        )
+        saved["testKind"] = "dryRun"
+        let decoded = try JSONDecoder().decode(AIRequestPrompt.self, from: JSONSerialization.data(withJSONObject: saved))
+        #expect(decoded == Self.prompt)
+        let reencoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? [String: Any]
+        #expect(reencoded?["testKind"] == nil)
     }
 
     @Test func watchCategoriesPutTheGestureActionFirst() throws {

@@ -151,8 +151,7 @@ actor AIRequestCoordinator {
             await reportFinal(AIRequestOutcome(.expired, request: request), via: channel)
             return
         }
-        // The test requests are made on the iPhone, so they're asked about either way.
-        if channel == .service, !preferences().allowsMealRequests {
+        if !preferences().allowsMealRequests {
             let refused = AIRequestReport.failed(reason: Self.mealRequestsOffReason, carbsLogged: false)
             await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
             return
@@ -184,8 +183,7 @@ actor AIRequestCoordinator {
             description: request.description,
             shown: shown,
             context: context,
-            style: preferences.approvalStyle,
-            testKind: request.testKind
+            style: preferences.approvalStyle
         )
         display.mac = Self.displayMAC(
             id: request.id,
@@ -207,7 +205,6 @@ actor AIRequestCoordinator {
             answerToken: nil,
             answerURL: nil,
             context: context,
-            testKind: request.testKind,
             displayMac: display.mac
         )
         let phoneDelay = askedOn == .phone ? 0 : preferences.phoneBackupDelay
@@ -225,11 +222,6 @@ actor AIRequestCoordinator {
         savePending(pending)
         scheduleExpiryCheck(at: request.expiresAt)
         phoneBackup.schedule(prompt, after: phoneDelay, askedOn: askedOn)
-        if channel.isDeliveredToWatchByTrio {
-            // The service's requests reach the watch by the service's push. The outcome says Trio showed it there, so the
-            // watch hears how it ended.
-            watch.deliver(prompt)
-        }
         debug(.service, "AI requests: \(request.id) is pending, asked on the \(askedOn.rawValue)")
 
         if let replaced {
@@ -382,7 +374,7 @@ actor AIRequestCoordinator {
 
     /// Carries out an approved request. A marker on disk says how far it got until the final report. Every check runs
     /// again before anything is stored, then the carbs are stored, then exactly the units shown are enacted. A failed
-    /// bolus keeps the carbs, because the food was eaten. A dry run stops after the checks.
+    /// bolus keeps the carbs, because the food was eaten.
     private func carryOut(_ pending: PendingAIRequest, approvedOn: AIRequestAnswerSide) async {
         // Before this approval's marker replaces it on disk.
         await reportStoppedCarryOut()
@@ -400,10 +392,6 @@ actor AIRequestCoordinator {
 
         if let failure = await approvalFailure(for: pending) {
             await reportApproved(.failed(reason: failure, carbsLogged: false), pending, approvedOn: approvedOn)
-            return
-        }
-        if pending.request.testKind == .dryRun {
-            await reportApproved(.dryRun(shown: pending.prompt.shown), pending, approvedOn: approvedOn)
             return
         }
 
@@ -565,8 +553,7 @@ actor AIRequestCoordinator {
             fat: request.fat,
             protein: request.protein,
             createdAt: request.createdAt,
-            expiresAt: expiresAt,
-            testKind: request.testKind
+            expiresAt: expiresAt
         )
     }
 

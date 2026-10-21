@@ -65,7 +65,7 @@ final class AIRequestsRuntime {
             treatments: BaseAIRequestTreatments(resolver: resolver),
             watch: watchLink,
             phoneBackup: phoneBackup,
-            reporters: [.service: ServiceRequestReporter(api: api), .local: LoggingReporter()]
+            reporters: [.service: ServiceRequestReporter(api: api)]
         )
         relay.coordinator = coordinator
 
@@ -140,12 +140,5 @@ private final class WatchRelay {
     func viewing(_ id: String) {
         guard let coordinator else { return }
         Task { await coordinator.postponePhoneBackup(id: id) }
-    }
-}
-
-/// Reports the debug request's states, which have nowhere to go: it logs the ID and the state, nothing else.
-final class LoggingReporter: AIRequestReporter {
-    func report(_ report: AIRequestReport, for id: String) async {
-        debug(.service, "AI requests: reported \(id) as \(report.state.rawValue)")
     }
 }

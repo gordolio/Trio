@@ -63,7 +63,7 @@ struct AIRequestApprovalView: View {
         self.prompt = prompt
         _flow = State(initialValue: flow)
         self.isDisplayVerified = isDisplayVerified
-        contextRows = AIRequestContextRows.rows(context: prompt.context, shown: prompt.shown, testKind: prompt.testKind)
+        contextRows = AIRequestContextRows.rows(context: prompt.context, shown: prompt.shown)
     }
 
     private var center: AIRequestWatchCenter { .shared }
@@ -772,8 +772,7 @@ struct AIRequestApprovalView: View {
     }
 
     /// What Approve does, for VoiceOver: "Logs 35 grams of carbs and starts a 2.1 unit bolus." A request with no dose logs
-    /// the carbs only. It says what the signed amounts would do, and takes nothing from the unsigned test flag, so a dry
-    /// run is described as if it were real.
+    /// the carbs only.
     private var approveAccessibilityHint: String {
         let grams = Self.spokenGrams(prompt.shown.carbs)
         guard Self.positive(prompt.shown.units) != nil else {
@@ -870,7 +869,6 @@ private extension AIRequestPrompt {
             glucoseAgeMinutes: 3,
             recentBolus: AIRequestContext.Recent(amount: "3.00", minutesAgo: 8)
         ),
-        testKind: AIRequestTestKind? = nil,
         expiresIn lifetime: TimeInterval = 300
     ) -> AIRequestPrompt {
         AIRequestPrompt(
@@ -885,8 +883,7 @@ private extension AIRequestPrompt {
             answerRoute: .both,
             answerToken: nil,
             answerURL: nil,
-            context: context,
-            testKind: testKind
+            context: context
         )
     }
 }
@@ -903,8 +900,7 @@ private extension AIRequestPrompt {
                 recentCarbs: AIRequestContext.Recent(amount: "20", minutesAgo: 6),
                 recentBolus: AIRequestContext.Recent(amount: "3.00", minutesAgo: 8),
                 noDoseReason: "glucose is forecast to go low"
-            ),
-            testKind: .real
+            )
         )
     }
 }
@@ -1005,12 +1001,11 @@ private func previewScreen(
     ))
 }
 
-#Preview("Asking: 0 U dry run") {
+#Preview("Asking: 0 U") {
     previewScreen(.preview(
-        title: "Trio test: 10 g carbs",
+        title: "ChatGPT: 10 g carbs",
         shown: AIRequestShown(carbs: "10.00", fat: "0.00", protein: "0.00", units: "0.00"),
-        context: AIRequestContext(glucose: "52 mg/dL ↓", noDoseReason: "glucose is low (52 mg/dL)"),
-        testKind: .dryRun
+        context: AIRequestContext(glucose: "52 mg/dL ↓", noDoseReason: "glucose is low (52 mg/dL)")
     ))
 }
 

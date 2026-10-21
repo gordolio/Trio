@@ -11,28 +11,26 @@ struct AIRequestContextRow: Equatable {
         case recentCarbs
         /// A bolus given a moment ago.
         case recentBolus
-        /// What a test request does.
-        case test
     }
 
     let kind: Kind
     let text: String
-    /// Something to stop and check before approving: carbs or insulin given a moment ago, or a test that gives the real
-    /// dose. The watch shows it as a warning.
+    /// Something to stop and check before approving: carbs or insulin given a moment ago. The watch shows it as a
+    /// warning.
     let isWarning: Bool
 }
 
 /// Trio's context rows for a request, in the one order the notification body and the watch's approval screen both
-/// show: the glucose, why the dose is 0 U, carbs and insulin given a moment ago, and what a test does. A row appears
-/// only when it applies. Grams and units sit next to their number with a no-break space (U+00A0); the glucose and the
+/// show: the glucose, why the dose is 0 U, and carbs and insulin given a moment ago. A row appears only when it
+/// applies. Grams and units sit next to their number with a no-break space (U+00A0); the glucose and the
 /// minutes use plain spaces.
 enum AIRequestContextRows {
     /// A reading is shown with its age from this many minutes old. A younger one is current.
     static let glucoseAgeShownFrom = 2
 
-    /// The rows for a request. No context and an empty one give the same rows: only the 0 U row, when the dose is 0 U,
-    /// and the test row. No row is made up from a value that's missing.
-    static func rows(context: AIRequestContext?, shown: AIRequestShown, testKind: AIRequestTestKind?) -> [AIRequestContextRow] {
+    /// The rows for a request. No context and an empty one give the same rows: only the 0 U row, when the dose is 0 U.
+    /// No row is made up from a value that's missing.
+    static func rows(context: AIRequestContext?, shown: AIRequestShown) -> [AIRequestContextRow] {
         let context = context ?? AIRequestContext()
         var rows: [AIRequestContextRow] = []
 
@@ -87,29 +85,6 @@ enum AIRequestContextRows {
                 ),
                 isWarning: true
             ))
-        }
-
-        switch testKind {
-        case .dryRun:
-            rows.append(AIRequestContextRow(
-                kind: .test,
-                text: String(
-                    localized: "Test only: nothing is logged or given",
-                    comment: "Request notification and watch approval: this request is a dry-run test"
-                ),
-                isWarning: false
-            ))
-        case .real:
-            rows.append(AIRequestContextRow(
-                kind: .test,
-                text: String(
-                    localized: "Real dose. Decline unless you're eating this.",
-                    comment: "Request notification and watch approval: this request is a test that gives Trio's real dose"
-                ),
-                isWarning: true
-            ))
-        case nil:
-            break
         }
         return rows
     }

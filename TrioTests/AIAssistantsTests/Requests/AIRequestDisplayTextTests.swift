@@ -12,16 +12,14 @@ import Testing
     private func display(
         shown: AIRequestShown = Self.shown,
         context: AIRequestContext = AIRequestContext(glucose: "142 mg/dL ↗"),
-        style: AIRequestApprovalStyle = .twoStep,
-        testKind: AIRequestTestKind? = nil
+        style: AIRequestApprovalStyle = .twoStep
     ) -> AIRequestDisplay {
         AIRequestDisplayText.display(
             source: "ChatGPT",
             description: "slice of pizza",
             shown: shown,
             context: context,
-            style: style,
-            testKind: testKind
+            style: style
         )
     }
 
@@ -133,22 +131,11 @@ import Testing
     }
 
     @Test func approveNeverPromisesABolusThatIsNotComing() {
-        // A 0 U request and a dry run give no bolus, so their one-gesture notification doesn't say it does.
+        // A 0 U request gives no bolus, so its one-gesture notification doesn't say it does.
         let none = AIRequestShown(carbs: 35, fat: 0, protein: 0, units: 0)
         #expect(!display(shown: none, context: AIRequestContext(), style: .oneGesture).body.contains("Approve gives"))
-        #expect(!display(context: AIRequestContext(), style: .oneGesture, testKind: .dryRun).body.contains("Approve gives"))
-        // A real test gives the dose.
-        #expect(display(context: AIRequestContext(), style: .oneGesture, testKind: .real).body.hasSuffix(
-            "Real dose. Decline unless you're eating this.\nApprove gives the bolus now"
-        ))
-    }
-
-    @Test func dryRunAndRealTestLines() {
-        let context = AIRequestContext(glucose: "142 mg/dL ↗")
-        let plain = display(context: context).body
-        #expect(display(context: context, testKind: .dryRun).body == plain + "\nTest only: nothing is logged or given")
-        #expect(display(context: context, testKind: .real).body == plain + "\nReal dose. Decline unless you're eating this.")
-        #expect(!plain.contains("Test only") && !plain.contains("Real dose"))
+        // A request with a dose gives it.
+        #expect(display(context: AIRequestContext(), style: .oneGesture).body.hasSuffix("\nApprove gives the bolus now"))
     }
 
     @Test func glucoseAgeShownFromTwoMinutes() {
@@ -178,20 +165,6 @@ import Testing
         #expect(display(context: context).context == context)
     }
 
-    @Test func testRequestsKeepTheirTitleOnOneLine() {
-        let shown = AIRequestShown(carbs: 10, fat: 0, protein: 0, units: 0.5)
-        let display = AIRequestDisplayText.display(
-            source: "Trio test",
-            description: "10 g carbs",
-            shown: shown,
-            context: AIRequestContext(),
-            style: .twoStep,
-            testKind: .dryRun
-        )
-        #expect(display.title == "Trio test: 10 g carbs")
-        #expect(display.body == "Bolus 0.50\u{00A0}U · 10\u{00A0}g carbs\nTest only: nothing is logged or given")
-    }
-
     @Test func bodyStaysWithinTheServiceLimit() {
         let context = AIRequestContext(
             glucose: "142 mg/dL ↗",
@@ -200,7 +173,7 @@ import Testing
             recentBolus: .init(amount: "2.10", minutesAgo: 8),
             noDoseReason: String(repeating: "x", count: 120)
         )
-        let body = display(context: context, style: .oneGesture, testKind: .real).body
+        let body = display(context: context, style: .oneGesture).body
         #expect(body.utf16.count <= AIRequestDisplayText.maxLength)
         #expect(body.hasSuffix("…"))
         // The dose is first, so it is whole.

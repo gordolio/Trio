@@ -113,12 +113,6 @@ import Testing
             "Canceled",
             "ChatGPT canceled it. Nothing was logged.",
             .neutral
-        ),
-        (
-            .dryRun(shown: shown("10.00", units: "0.90")),
-            "Test: would give 0.90\u{00A0}U",
-            "Nothing was logged or given.",
-            .success
         )
     ]
 

@@ -19,11 +19,6 @@ final class ServiceRequestReporter: AIRequestReporter {
     }
 
     func report(_ report: AIRequestReport, for id: String) async {
-        if case .dryRun = report {
-            // Only the iPhone's test requests are dry runs, and the service would read it as carbs logged.
-            debug(.service, "AI requests: dropped \(id)'s dry-run report, which isn't sent to the service")
-            return
-        }
         let body = AIRequestStateBody(report)
         var failure = await send(body, for: id)
         if (failure as? AIAssistantsAPIError) == .network {

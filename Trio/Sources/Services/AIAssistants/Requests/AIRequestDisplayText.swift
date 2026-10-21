@@ -57,18 +57,17 @@ enum AIRequestDisplayText {
 
     /// The title and body of a request, and the context the service gets. Each line of the body appears only when it
     /// applies: the dose first, then the fat, protein and glucose, why the dose is 0 U, the facts about recent carbs and
-    /// insulin, what a test is, and, when approving from the notification gives the bolus, that it does.
+    /// insulin, and, when approving from the notification gives the bolus, that it does.
     static func display(
         source: String,
         description: String,
         shown: AIRequestShown,
         context: AIRequestContext,
-        style: AIRequestApprovalStyle,
-        testKind: AIRequestTestKind?
+        style: AIRequestApprovalStyle
     ) -> AIRequestDisplay {
         AIRequestDisplay(
             title: title(source: source, description: description),
-            body: body(shown: shown, context: context, style: style, testKind: testKind),
+            body: body(shown: shown, context: context, style: style),
             context: context
         )
     }
@@ -76,13 +75,12 @@ enum AIRequestDisplayText {
     private static func body(
         shown: AIRequestShown,
         context: AIRequestContext,
-        style: AIRequestApprovalStyle,
-        testKind: AIRequestTestKind?
+        style: AIRequestApprovalStyle
     ) -> String {
         let givesNoBolus = AIRequestContextRows.givesNoBolus(shown)
         // Trio's context rows, shared with the watch's approval screen so the two can't drift apart. The glucose joins
         // the fat and protein on the second line; the rest follow in their own order.
-        let rows = AIRequestContextRows.rows(context: context, shown: shown, testKind: testKind)
+        let rows = AIRequestContextRows.rows(context: context, shown: shown)
         let carbs = trimmed(shown.carbs)
         var lines: [String] = []
 
@@ -119,8 +117,8 @@ enum AIRequestDisplayText {
         }
         lines += rows.filter { $0.kind != .glucose }.map(\.text)
 
-        // Approving from the notification gives the bolus, unless there is no bolus or it is a dry run.
-        if style == .oneGesture, !givesNoBolus, testKind != .dryRun {
+        // Approving from the notification gives the bolus, unless there is no bolus.
+        if style == .oneGesture, !givesNoBolus {
             lines.append(String(
                 localized: "Approve gives the bolus now",
                 comment: "Request notification, last line when approving from the notification gives the bolus"

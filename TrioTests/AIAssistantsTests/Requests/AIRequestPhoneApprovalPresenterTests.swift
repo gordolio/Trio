@@ -410,7 +410,6 @@ private func sampleOutcome(
     @Test func aSuccessPlaysSuccess() {
         #expect(AIRequestPhoneHaptic(result: result(.delivering(shown: sampleShown), approvedOn: .phone)) == .success)
         #expect(AIRequestPhoneHaptic(result: result(.logged(shown: sampleShown), approvedOn: .phone)) == .success)
-        #expect(AIRequestPhoneHaptic(result: result(.dryRun(shown: sampleShown), approvedOn: .phone)) == .success)
     }
 
     @Test func aRefusalPlaysError() {

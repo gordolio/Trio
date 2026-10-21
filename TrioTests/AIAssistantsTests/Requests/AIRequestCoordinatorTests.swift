@@ -31,13 +31,6 @@ import Testing
         #expect(h.backup.scheduled.map(\.delay) == [0])
     }
 
-    @Test func localRequestIsDeliveredOverWatchConnectivity() async {
-        let h = makeCoordinator()
-        await h.coordinator.receive(meal(id: "r1"), via: .local)
-        #expect(h.reporter.states == ["r1:pending"])
-        #expect(h.watch.delivered.count == 1 && h.watch.delivered.first == h.prompt("r1"))
-    }
-
     @Test func promptFollowsThePreferences() async {
         let h = makeCoordinator(preferences: AIAssistantsPreferences(
             allowsMealRequests: true,
@@ -322,7 +315,6 @@ import Testing
         Carbs 20\u{00A0}g logged 6 min ago
         Bolus 3.00\u{00A0}U given 8 min ago
         """)
-        #expect(h.prompt("r1").testKind == nil)
     }
 
     @Test func theResentPendingReportKeepsTheContext() async {
@@ -357,19 +349,6 @@ import Testing
         let twoStep = makeCoordinator()
         await twoStep.coordinator.receive(meal(id: "r1"), via: .service)
         #expect(!twoStep.prompt("r1").body.contains("Approve gives"))
-    }
-
-    @Test(arguments: [
-        (AIRequestTestKind.dryRun, "Test only: nothing is logged or given"),
-        (AIRequestTestKind.real, "Real dose. Decline unless you're eating this.")
-    ]) func aTestRequestSaysSoAndKeepsItsKind(kind: AIRequestTestKind, line: String) async {
-        let h = makeCoordinator()
-        var request = meal(id: "r1", carbs: 10, fat: 0, protein: 0)
-        request.testKind = kind
-        await h.coordinator.receive(request, via: .local)
-        #expect(h.prompt("r1").testKind == kind)
-        #expect(h.prompt("r1").body.hasSuffix("\n" + line))
-        #expect(h.watch.delivered.first?.testKind == kind)
     }
 
     @Test func aZeroDoseRequestSaysWhy() async {
@@ -441,23 +420,6 @@ import Testing
         }
         // The watch then opens the request instead of approving it from the notification.
         #expect(display.mac == nil && h.prompt("r1").displayMac == nil)
-    }
-
-    @Test func aLocalRequestCarriesTheDisplayMACToTheWatch() async throws {
-        let h = makeCoordinator()
-        let key = try #require(h.keys.rotate())
-        await h.coordinator.receive(meal(id: "r1"), via: .local)
-        let delivered = try #require(h.watch.delivered.first)
-        #expect(AIRequestSigner.isValidDisplayMAC(
-            delivered.displayMac,
-            id: "r1",
-            approvalStyle: .twoStep,
-            shown: delivered.shown,
-            title: delivered.title,
-            body: delivered.body,
-            context: delivered.context,
-            key: key
-        ))
     }
 
     @Test func aRequestWithALineBreakInItsIDOrSourceIsNotSigned() async throws {
