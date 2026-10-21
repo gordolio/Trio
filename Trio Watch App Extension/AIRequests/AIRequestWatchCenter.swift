@@ -310,19 +310,21 @@ import WatchKit
 
     // MARK: Checks
 
-    /// Whether Trio signed the request's title, body, approval style and context with the shared key, so the
-    /// approval screen can show its context rows.
+    /// Whether Trio signed the request's amounts, title, body, approval style and context with the shared key, and its
+    /// notification showed nothing else, so the approval screen can show its context rows.
     func isDisplayVerified(_ prompt: AIRequestPrompt) -> Bool {
         isDisplayVerified(prompt, as: prompt.approvalStyle)
     }
 
-    /// Whether Trio signed the request's title, body and context for `style`. `false` without a key.
+    /// Whether Trio signed the request's amounts, title, body and context for `style`, and its notification showed
+    /// no other text. `false` without a key.
     private func isDisplayVerified(_ prompt: AIRequestPrompt, as style: AIRequestApprovalStyle) -> Bool {
-        guard let key = keychain.data(for: Self.keyAccount) else { return false }
+        guard !prompt.hasUncheckedAlertText, let key = keychain.data(for: Self.keyAccount) else { return false }
         return AIRequestSigner.isValidDisplayMAC(
             prompt.displayMac,
             id: prompt.id,
             approvalStyle: style,
+            shown: prompt.shown,
             title: prompt.title,
             body: prompt.body,
             context: prompt.context,
@@ -337,6 +339,16 @@ import WatchKit
 
     private func isWithdrawn(_ id: String) -> Bool {
         lock.withLock { withdrawnIDs.contains(id) }
+    }
+
+    /// Reads a request from a delivered notification. A subtitle is text the display MAC doesn't cover, so the request
+    /// is marked as having unchecked text, as a push with other alert keys is.
+    private static func prompt(in content: UNNotificationContent) -> AIRequestPrompt? {
+        guard var prompt = prompt(in: content.userInfo) else { return nil }
+        if !content.subtitle.isEmpty {
+            prompt.hasUncheckedAlertText = true
+        }
+        return prompt
     }
 
     /// Reads a request from the service's push, or from a local notification the watch posted.
@@ -361,7 +373,7 @@ import WatchKit
         let content = notification.request.content
         let requestCategories = [AIRequestIdentifiers.categoryReview, AIRequestIdentifiers.categoryApprove]
         guard requestCategories.contains(content.categoryIdentifier),
-              let prompt = Self.prompt(in: content.userInfo),
+              let prompt = Self.prompt(in: content),
               isOpen(prompt)
         else {
             completionHandler([])
@@ -375,7 +387,7 @@ import WatchKit
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        guard let prompt = Self.prompt(in: response.notification.request.content.userInfo) else {
+        guard let prompt = Self.prompt(in: response.notification.request.content) else {
             WatchNotificationHandler.shared.userNotificationCenter(
                 center,
                 didReceive: response,
@@ -388,7 +400,7 @@ import WatchKit
         switch response.actionIdentifier {
         case AIRequestIdentifiers.actionApprove:
             // Only the Approve category has this action, so it's checked as one-gesture: a request Trio signed as
-            // two-step never approves from the notification, and neither does text Trio didn't write.
+            // two-step never approves from the notification, and neither does text or amounts Trio didn't sign.
             guard isDisplayVerified(prompt, as: .oneGesture) else {
                 Task { await WatchLogger.shared.log("AI requests: couldn't check \(prompt.id)'s text, so it isn't approved") }
                 if keychain.data(for: Self.keyAccount) == nil {

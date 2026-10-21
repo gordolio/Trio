@@ -55,8 +55,12 @@ import Testing
         #expect(AIRequestPrompt.fromPush(["trio-rc": ["v": 1, "type": "check-in"]]) == nil)
     }
 
-    /// The service's push for a request, with `context` as `request.context` when it's given.
-    private static func push(context: Any? = nil) -> [AnyHashable: Any] {
+    /// The service's push for a request, with `context` as `request.context` when it's given, and `alert` as
+    /// `aps.alert`.
+    private static func push(
+        context: Any? = nil,
+        alert: [String: Any] = ["title": "t", "body": "b"]
+    ) -> [AnyHashable: Any] {
         var request: [String: Any] = [
             "id": "r1", "source": "ChatGPT", "description": "slice of pizza",
             "shown": ["carbs": "20.00", "fat": "0.00", "protein": "0.00", "units": "1.20"],
@@ -64,7 +68,7 @@ import Testing
         ]
         if let context { request["context"] = context }
         return [
-            "aps": ["alert": ["title": "t", "body": "b"], "category": "trio.request.review"],
+            "aps": ["alert": alert, "category": "trio.request.review"],
             "trio-rc": ["v": 1, "type": "request", "request": request]
         ]
     }
@@ -220,6 +224,7 @@ import Testing
     /// `·` are ordinary.
     private enum Display {
         static let id = "8f14e45f-ea6b-4c1d-9a2f-6d1b2c3a4e5f"
+        static let shown = AIRequestShown(carbs: "35.00", fat: "0.00", protein: "0.00", units: "2.10")
         static let title = "ChatGPT: slice of pizza"
         static let body = "Bolus\u{00A0}2.10\u{00A0}U · 35\u{00A0}g carbs"
         static let context = AIRequestContext(
@@ -227,7 +232,27 @@ import Testing
             glucoseAgeMinutes: 3,
             recentCarbs: .init(amount: "20", minutesAgo: 6)
         )
-        static let mac = "3rIvGEpt8j9Zt1cE86ABd7Uh8vYWR3J-U5Tqfzo2zLM"
+        static let mac = "5qt66bYnOSMr8628sulWAvWD9vEX85Tbrl7mMbo7-pE"
+    }
+
+    /// Signs the vector's inputs, with any of them changed.
+    private static func signDisplay(
+        id: String = Display.id,
+        style: AIRequestApprovalStyle = .oneGesture,
+        shown: AIRequestShown = Display.shown,
+        title: String = Display.title,
+        body: String = Display.body,
+        context: AIRequestContext? = Display.context
+    ) -> String {
+        AIRequestSigner.displayMAC(
+            id: id,
+            approvalStyle: style,
+            shown: shown,
+            title: title,
+            body: body,
+            context: context,
+            key: key
+        )
     }
 
     /// Checks `mac` against the vector's inputs, with any of them changed.
@@ -235,6 +260,7 @@ import Testing
         _ mac: String?,
         id: String = Display.id,
         style: AIRequestApprovalStyle = .oneGesture,
+        shown: AIRequestShown = Display.shown,
         title: String = Display.title,
         body: String = Display.body,
         context: AIRequestContext? = Display.context,
@@ -244,6 +270,7 @@ import Testing
             mac,
             id: id,
             approvalStyle: style,
+            shown: shown,
             title: title,
             body: body,
             context: context,
@@ -255,6 +282,7 @@ import Testing
         let mac = AIRequestSigner.displayMAC(
             id: Display.id,
             approvalStyle: .oneGesture,
+            shown: Display.shown,
             title: Display.title,
             body: Display.body,
             context: Display.context,
@@ -273,16 +301,25 @@ import Testing
     }
 
     @Test func displayMACRejectsChangedStyle() {
-        let twoStep = AIRequestSigner.displayMAC(
-            id: Display.id,
-            approvalStyle: .twoStep,
-            title: Display.title,
-            body: Display.body,
-            context: Display.context,
-            key: Self.key
-        )
+        let twoStep = Self.signDisplay(style: .twoStep)
         #expect(Self.isValidDisplay(twoStep, style: .twoStep))
         #expect(!Self.isValidDisplay(twoStep, style: .oneGesture))
+    }
+
+    @Test func displayMACRejectsChangedAmounts() {
+        // The text Trio signed, over amounts it didn't: the watch would sign its answer over these.
+        let changed = [
+            AIRequestShown(carbs: "95.00", fat: "0.00", protein: "0.00", units: "2.10"),
+            AIRequestShown(carbs: "35.00", fat: "1.00", protein: "0.00", units: "2.10"),
+            AIRequestShown(carbs: "35.00", fat: "0.00", protein: "1.00", units: "2.10"),
+            AIRequestShown(carbs: "35.00", fat: "0.00", protein: "0.00", units: "5.00")
+        ]
+        let mac = Self.signDisplay()
+        #expect(Self.isValidDisplay(mac, shown: Display.shown))
+        for shown in changed {
+            #expect(!Self.isValidDisplay(mac, shown: shown), "\(shown)")
+            #expect(!Self.isValidDisplay(Display.mac, shown: shown), "\(shown)")
+        }
     }
 
     @Test func displayMACRejectsChangedContext() {
@@ -299,6 +336,25 @@ import Testing
         #expect(!Self.isValidDisplay(Display.mac, context: nil))
     }
 
+    @Test func displayMACRejectsAnEmptyContextString() {
+        // Present but empty signs the same as missing, so it's never trusted: it would be a blank row.
+        let empty = [
+            AIRequestContext(glucose: ""),
+            AIRequestContext(recentCarbs: .init(amount: "", minutesAgo: 6)),
+            AIRequestContext(recentBolus: .init(amount: "", minutesAgo: 8)),
+            AIRequestContext(noDoseReason: "")
+        ]
+        for context in empty {
+            #expect(!Self.isValidDisplay(Self.signDisplay(context: context), context: context), "\(context)")
+        }
+        #expect(!AIRequestSigner.isSignableDisplay(
+            id: Display.id, shown: Display.shown, title: Display.title, context: AIRequestContext(glucose: "")
+        ))
+        #expect(AIRequestSigner.isSignableDisplay(
+            id: Display.id, shown: Display.shown, title: Display.title, context: Display.context
+        ))
+    }
+
     @Test func displayMACRejectsALineBreakInAContextField() {
         // Signed as is, but checked never: a line break there could move the text into another field.
         let multiLine: [(title: String, context: AIRequestContext)] = [
@@ -309,28 +365,17 @@ import Testing
             ("ChatGPT\noneGesture", Display.context)
         ]
         for (title, context) in multiLine {
-            let mac = AIRequestSigner.displayMAC(
-                id: Display.id,
-                approvalStyle: .oneGesture,
-                title: title,
-                body: Display.body,
-                context: context,
-                key: Self.key
-            )
+            let mac = Self.signDisplay(title: title, context: context)
             #expect(!Self.isValidDisplay(mac, title: title, context: context), "\(title) \(context)")
         }
-        // The request ID too: the service picks it.
+        // The request ID and the amounts too: the service sends them to the watch.
         let id = "8f14e45f\noneGesture"
-        let idMAC = AIRequestSigner.displayMAC(
-            id: id, approvalStyle: .twoStep, title: Display.title, body: Display.body, context: Display.context, key: Self.key
-        )
-        #expect(!Self.isValidDisplay(idMAC, id: id, style: .twoStep))
+        #expect(!Self.isValidDisplay(Self.signDisplay(id: id, style: .twoStep), id: id, style: .twoStep))
+        let shown = AIRequestShown(carbs: "35.00\n0.00", fat: "0.00", protein: "2.10", units: "")
+        #expect(!Self.isValidDisplay(Self.signDisplay(shown: shown), shown: shown))
         // The body is the one field that may have line breaks.
         let body = "Bolus\u{00A0}2.10\u{00A0}U\n142 mg/dL"
-        let mac = AIRequestSigner.displayMAC(
-            id: Display.id, approvalStyle: .oneGesture, title: Display.title, body: body, context: Display.context, key: Self.key
-        )
-        #expect(Self.isValidDisplay(mac, body: body))
+        #expect(Self.isValidDisplay(Self.signDisplay(body: body), body: body))
     }
 
     @Test func displayMACRejectsNil() {
@@ -356,5 +401,45 @@ import Testing
         #expect(decoded.displayMac == Display.mac)
         let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any]
         #expect(plain?["displayMac"] == nil)
+    }
+
+    // MARK: Alert text outside the title and body
+
+    @Test func alertWithOnlyATitleAndABodyIsClean() throws {
+        #expect(AIRequestPrompt.alertHasOnlyTitleAndBody(Self.push()))
+        #expect(AIRequestPrompt.alertHasOnlyTitleAndBody(Self.push(alert: ["title": "t"])))
+        #expect(try #require(AIRequestPrompt.fromPush(Self.push())).hasUncheckedAlertText == false)
+    }
+
+    /// The system shows these too, and a `…-loc-key` missing from the strings file is shown as it is, but the display
+    /// MAC doesn't cover them.
+    @Test(arguments: [
+        "subtitle",
+        "loc-key",
+        "title-loc-key",
+        "subtitle-loc-key",
+        "loc-args",
+        "launch-image"
+    ]) func alertWithOtherTextIsNotClean(key: String) throws {
+        let userInfo = Self.push(alert: ["title": "t", "body": "b", key: "Bolus 0.30 U"])
+        #expect(!AIRequestPrompt.alertHasOnlyTitleAndBody(userInfo))
+        // The request is still asked, but never approved from the notification.
+        #expect(try #require(AIRequestPrompt.fromPush(userInfo)).hasUncheckedAlertText)
+    }
+
+    @Test func alertThatIsntADictionaryIsNotClean() {
+        var userInfo = Self.push()
+        userInfo["aps"] = ["alert": "Bolus 0.30 U", "category": "trio.request.approve"]
+        #expect(!AIRequestPrompt.alertHasOnlyTitleAndBody(userInfo))
+        #expect(!AIRequestPrompt.alertHasOnlyTitleAndBody(["aps": ["category": "trio.request.approve"]]))
+    }
+
+    @Test func uncheckedAlertTextIsntSentOrSaved() throws {
+        var prompt = Self.prompt
+        prompt.hasUncheckedAlertText = true
+        let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(prompt)) as? [String: Any]
+        #expect(plain?["hasUncheckedAlertText"] == nil)
+        // It's the watch's own reading of the notification, never taken from JSON.
+        #expect(try JSONDecoder().decode(AIRequestPrompt.self, from: JSONEncoder().encode(prompt)).hasUncheckedAlertText == false)
     }
 }

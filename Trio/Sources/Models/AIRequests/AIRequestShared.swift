@@ -76,9 +76,42 @@ struct AIRequestPrompt: Codable, Equatable {
     var context: AIRequestContext? = nil
     /// Set only on the iPhone's test requests, which the approval says.
     var testKind: AIRequestTestKind? = nil
-    /// Trio's MAC over the title, the body, the approval style and the context: see
+    /// Trio's MAC over the amounts, the title, the body, the approval style and the context: see
     /// `AIRequestSigner.displayMAC`. `nil` when Trio had no key to sign with, or the service sent none.
     var displayMac: String? = nil
+    /// Whether the notification this request came in showed text the display MAC doesn't cover: an alert key besides
+    /// `title` and `body`, or a subtitle. Such a request is never approved from the notification, and its context rows
+    /// aren't trusted. It's the watch's own reading of the notification, so it's never sent or saved.
+    var hasUncheckedAlertText = false
+
+    /// Every key but `hasUncheckedAlertText`.
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case source
+        case description
+        case shown
+        case title
+        case body
+        case expiresAt
+        case approvalStyle
+        case answerRoute
+        case answerToken
+        case answerURL
+        case context
+        case testKind
+        case displayMac
+    }
+
+    /// The `aps.alert` keys the display MAC covers.
+    private static let signedAlertKeys: Set<String> = ["title", "body"]
+
+    /// Whether the push's `aps.alert` is a dictionary with no keys but `title` and `body`. The system shows the others
+    /// too: `subtitle` always, and a `loc-key` or `title-loc-key` in place of the body or title, as it is when it isn't
+    /// in the strings file. The display MAC covers only the title and the body.
+    static func alertHasOnlyTitleAndBody(_ userInfo: [AnyHashable: Any]) -> Bool {
+        guard let aps = userInfo["aps"] as? [String: Any], let alert = aps["alert"] as? [String: Any] else { return false }
+        return Set(alert.keys).isSubset(of: signedAlertKeys)
+    }
 
     /// Reads the service's watch push. Returns `nil` unless it is a well-formed request.
     static func fromPush(_ userInfo: [AnyHashable: Any]) -> AIRequestPrompt? {
@@ -115,7 +148,8 @@ struct AIRequestPrompt: Codable, Equatable {
             answerToken: payload["answerToken"] as? String,
             answerURL: (payload["answerUrl"] as? String).flatMap(URL.init(string:)),
             context: context(from: request["context"]),
-            displayMac: payload["displayMac"] as? String
+            displayMac: payload["displayMac"] as? String,
+            hasUncheckedAlertText: !alertHasOnlyTitleAndBody(userInfo)
         )
     }
 
@@ -206,11 +240,12 @@ enum AIRequestSigner {
 
     // MARK: Display MAC
 
-    /// The bytes the display MAC covers: the contract's twelve lines joined with `\n`. A missing value is an empty
+    /// The bytes the display MAC covers: the contract's sixteen lines joined with `\n`. A missing value is an empty
     /// line. The body comes last because it's the only field that may have line breaks.
     static func displayMessage(
         id: String,
         approvalStyle: AIRequestApprovalStyle,
+        shown: AIRequestShown,
         title: String,
         body: String,
         context: AIRequestContext?
@@ -219,6 +254,10 @@ enum AIRequestSigner {
             "trio-display/v1",
             id,
             approvalStyle.rawValue,
+            shown.carbs,
+            shown.fat,
+            shown.protein,
+            shown.units,
             title,
             context?.glucose ?? "",
             context?.glucoseAgeMinutes.map { String($0) } ?? "",
@@ -232,51 +271,68 @@ enum AIRequestSigner {
         return Data(lines.joined(separator: "\n").utf8)
     }
 
-    /// Trio's MAC over the notification text, the approval style and the context, so the watch can tell they came
-    /// from Trio: base64url HMAC-SHA256 without padding. The style is signed so a server can't turn a two-step
-    /// request into a one-tap approval, and the context so it can't forge or drop the warning rows.
+    /// Trio's MAC over the amounts, the notification text, the approval style and the context, so the watch can tell
+    /// they came from Trio: base64url HMAC-SHA256 without padding. The amounts are signed so a server can't put Trio's
+    /// old text over larger amounts, which the watch would sign its answer for; the style so it can't turn a two-step
+    /// request into a one-tap approval; and the context so it can't forge or drop the warning rows.
     static func displayMAC(
         id: String,
         approvalStyle: AIRequestApprovalStyle,
+        shown: AIRequestShown,
         title: String,
         body: String,
         context: AIRequestContext?,
         key: Data
     ) -> String {
-        let message = displayMessage(id: id, approvalStyle: approvalStyle, title: title, body: body, context: context)
+        let message = displayMessage(
+            id: id,
+            approvalStyle: approvalStyle,
+            shown: shown,
+            title: title,
+            body: body,
+            context: context
+        )
         let code = HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: key))
         return base64URL(Data(code))
     }
 
-    /// Whether every field but the body is on one line, so the message can only be split into its fields one way.
-    /// Trio signs only such a display, and the watch trusts only such a display.
-    static func hasSingleLineDisplayFields(id: String, title: String, context: AIRequestContext?) -> Bool {
-        let fields = [
-            id,
-            title,
+    /// Whether the display can be signed and trusted. Every field but the body is on one line, so the message can only
+    /// be split into its fields one way. A context string that's there isn't empty, since empty signs the same as
+    /// missing and would be a blank row. Trio signs only such a display, and the watch trusts only such a display.
+    static func isSignableDisplay(id: String, shown: AIRequestShown, title: String, context: AIRequestContext?) -> Bool {
+        let contextStrings = [
             context?.glucose,
             context?.recentCarbs?.amount,
             context?.recentBolus?.amount,
             context?.noDoseReason
-        ]
-        return !fields.contains { $0?.contains(where: \.isNewline) == true }
+        ].compactMap { $0 }
+        let lines = [id, shown.carbs, shown.fat, shown.protein, shown.units, title] + contextStrings
+        return !lines.contains { $0.contains(where: \.isNewline) } && !contextStrings.contains(where: \.isEmpty)
     }
 
-    /// Recomputes the display MAC and compares it in constant time. `false` for a missing MAC, and for a line
-    /// break in any field but the body: a line break there could move text into another field.
+    /// Recomputes the display MAC and compares it in constant time. `false` for a missing MAC, for a line break in any
+    /// field but the body, which could move text into another field, and for an empty context string.
     static func isValidDisplayMAC(
         _ mac: String?,
         id: String,
         approvalStyle: AIRequestApprovalStyle,
+        shown: AIRequestShown,
         title: String,
         body: String,
         context: AIRequestContext?,
         key: Data
     ) -> Bool {
         guard let mac, let code = data(fromBase64URL: mac),
-              hasSingleLineDisplayFields(id: id, title: title, context: context)
+              isSignableDisplay(id: id, shown: shown, title: title, context: context)
         else { return false }
-        let message = displayMessage(id: id, approvalStyle: approvalStyle, title: title, body: body, context: context)
+        let message = displayMessage(
+            id: id,
+            approvalStyle: approvalStyle,
+            shown: shown,
+            title: title,
+            body: body,
+            context: context
+        )
         return HMAC<SHA256>.isValidAuthenticationCode(code, authenticating: message, using: SymmetricKey(data: key))
     }
 

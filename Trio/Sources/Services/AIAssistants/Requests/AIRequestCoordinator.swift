@@ -187,7 +187,13 @@ actor AIRequestCoordinator {
             style: preferences.approvalStyle,
             testKind: request.testKind
         )
-        display.mac = Self.displayMAC(id: request.id, style: preferences.approvalStyle, display: display, key: keys.current)
+        display.mac = Self.displayMAC(
+            id: request.id,
+            style: preferences.approvalStyle,
+            shown: shown,
+            display: display,
+            key: keys.current
+        )
         let prompt = AIRequestPrompt(
             id: request.id,
             source: request.source,
@@ -656,20 +662,24 @@ actor AIRequestCoordinator {
         )
     }
 
-    /// Trio's MAC over what the watch shows: the text, the approval style and the context. The watch approves from
-    /// the notification, and shows the context rows, only when it checks out. `nil` without a key, and for an ID or a
-    /// title with a line break, which the watch never trusts: the watch then opens the request instead.
+    /// Trio's MAC over what the watch shows: the amounts, the text, the approval style and the context. The watch
+    /// approves from the notification, and shows the context rows, only when it checks out. `nil` without a key, and
+    /// for a display the watch never trusts, such as an ID or a title with a line break: the watch then opens the
+    /// request instead.
     private static func displayMAC(
         id: String,
         style: AIRequestApprovalStyle,
+        shown: AIRequestShown,
         display: AIRequestDisplay,
         key: Data?
     ) -> String? {
-        guard let key, AIRequestSigner.hasSingleLineDisplayFields(id: id, title: display.title, context: display.context)
+        guard let key,
+              AIRequestSigner.isSignableDisplay(id: id, shown: shown, title: display.title, context: display.context)
         else { return nil }
         return AIRequestSigner.displayMAC(
             id: id,
             approvalStyle: style,
+            shown: shown,
             title: display.title,
             body: display.body,
             context: display.context,

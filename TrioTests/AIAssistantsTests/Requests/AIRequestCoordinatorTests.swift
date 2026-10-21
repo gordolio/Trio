@@ -397,26 +397,28 @@ import Testing
         let key = try #require(h.keys.rotate())
         h.treatments.contextResult = Self.pizzaContext
         await h.coordinator.receive(meal(id: "r1"), via: .service)
-        guard case let .pending(_, style, _, _, display) = h.reporter.reports.first?.report else {
+        guard case let .pending(_, style, _, shown, display) = h.reporter.reports.first?.report else {
             Issue.record("Expected a pending report")
             return
         }
         let mac = try #require(display.mac)
         #expect(h.prompt("r1").displayMac == mac)
-        // It covers the text, the style and the context the watch gets.
+        // It covers the amounts, the text, the style and the context the watch gets.
         #expect(AIRequestSigner.isValidDisplayMAC(
             mac,
             id: "r1",
             approvalStyle: style,
+            shown: shown,
             title: display.title,
             body: display.body,
             context: display.context,
             key: key
         ))
         #expect(style == .oneGesture && display.context == Self.pizzaContext)
+        #expect(shown == h.prompt("r1").shown)
         #expect(mac == AIRequestSigner.displayMAC(
-            id: "r1", approvalStyle: .oneGesture, title: display.title, body: display.body,
-            context: Self.pizzaContext, key: key
+            id: "r1", approvalStyle: .oneGesture, shown: AIRequestShown(carbs: 20, fat: 10, protein: 8, units: 1.2),
+            title: display.title, body: display.body, context: Self.pizzaContext, key: key
         ))
         // The pending report sent again, and after a relaunch, is the same.
         await h.coordinator.receive(meal(id: "r1"), via: .service)
@@ -450,6 +452,7 @@ import Testing
             delivered.displayMac,
             id: "r1",
             approvalStyle: .twoStep,
+            shown: delivered.shown,
             title: delivered.title,
             body: delivered.body,
             context: delivered.context,
@@ -480,6 +483,19 @@ import Testing
         }
         #expect(displays.count == 2)
         #expect(displays.allSatisfy { $0.mac == nil })
+    }
+
+    @Test func aRequestWithAnEmptyContextStringIsNotSigned() async throws {
+        // Present but empty signs the same as missing, so the watch never trusts it.
+        let h = makeCoordinator()
+        _ = try #require(h.keys.rotate())
+        h.treatments.contextResult = AIRequestContext(glucose: "", glucoseAgeMinutes: 3)
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        guard case let .pending(_, _, _, _, display) = h.reporter.reports.first?.report else {
+            Issue.record("Expected a pending report")
+            return
+        }
+        #expect(display.mac == nil && h.prompt("r1").displayMac == nil)
     }
 
     // MARK: The watch is open
