@@ -10,6 +10,7 @@ private final class FlowHarness {
     private var turns: [() -> Void] = []
     private(set) var waits: [(seconds: TimeInterval, work: () -> Void)] = []
     private(set) var intercepts = 0
+    private(set) var otherFlowStarts = 0
 
     private(set) lazy var controller: AIRequestWatchFlowController = {
         let controller = AIRequestWatchFlowController(
@@ -19,6 +20,7 @@ private final class FlowHarness {
             locale: Locale(identifier: "en_US")
         )
         controller.onIntercepted = { [unowned self] in self.intercepts += 1 }
+        controller.onAnotherFlowStarted = { [unowned self] in self.otherFlowStarts += 1 }
         return controller
     }()
 
@@ -477,7 +479,7 @@ private final class FlowHarness {
     // MARK: Another flow over the request's screens
 
     @Test(
-        "A manual flow started over the request's screens declines it, and its sends are upstream's own"
+        "A manual flow started over the request's screens declines it, zeroes its values, and its sends are upstream's own"
     ) func aManualFlowOverTheRequestDeclinesAndLetsItsSendsThrough() {
         // The treatment menu covered the main screen as the request opened, so its screens went up underneath. The
         // wearer picks a meal from the menu: its carbs screen goes on top of the request's three.
@@ -487,6 +489,8 @@ private final class FlowHarness {
         #expect(harness.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
         #expect(harness.controller.phase == .idle)
         #expect(harness.controller.notice == nil)
+        // The request's carbs and dose are zeroed, so the manual flow doesn't start from them.
+        #expect(harness.otherFlowStarts == 1)
         harness.clearSent()
 
         // The manual flow's Confirm: its sends go to the phone as upstream's own, not as the request's confirm.
@@ -496,6 +500,8 @@ private final class FlowHarness {
         harness.runTurn()
         #expect(harness.sent.isEmpty)
         #expect(harness.intercepts == 0)
+        // The manual flow's own values are never zeroed.
+        #expect(harness.otherFlowStarts == 1)
 
         // Back on the main screen, nothing more is declined, and upstream's sends stay its own.
         harness.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
@@ -508,6 +514,7 @@ private final class FlowHarness {
         noCarbs.controller.screensChanged(pathCount: 3, carbs: 0, bolus: 1)
         #expect(noCarbs.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
         #expect(noCarbs.controller.phase == .idle)
+        #expect(noCarbs.otherFlowStarts == 1)
 
         // Upstream's acknowledgement screen, which goes on top after the request's own confirm, isn't another flow.
         let confirmed = Self.active()
@@ -516,6 +523,13 @@ private final class FlowHarness {
         confirmed.controller.screensChanged(pathCount: 4, carbs: 0, bolus: 0)
         #expect(confirmed.sent.isEmpty)
         #expect(confirmed.controller.phase == .confirmed(id: "r1"))
+        #expect(confirmed.otherFlowStarts == 0)
+
+        // Leaving the request's screens declines it without counting as another flow.
+        let left = Self.active()
+        left.controller.screensChanged(pathCount: 0, carbs: 0, bolus: 0)
+        #expect(left.closes == [AIRequestWatchClose(id: "r1", dismissed: false)])
+        #expect(left.otherFlowStarts == 0)
     }
 
     // MARK: Leaving

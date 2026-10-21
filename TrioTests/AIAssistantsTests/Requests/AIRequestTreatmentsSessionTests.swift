@@ -491,15 +491,16 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(center.added.isEmpty)
     }
 
-    @Test func coverOverTheSheetDoesNotEndTheSession() async {
-        // The AI food chat covers the sheet: the sheet disappears, but the router still shows it.
+    @Test func disappearingWhileTheRouterShowsTheSheetDoesNotEndTheSession() async {
+        // The sheet's `onDisappear` runs, but the router still shows it. (A cover from inside the sheet, such as the AI
+        // food chat, doesn't run it on iOS 26.5 or 27, but the session doesn't rely on that.)
         let state = await openSheet()
         session.sheetDisappeared()
         #expect(session.requestID == "r1")
         #expect(session.gramFormatter != nil)
         await expectNoFinalReport()
 
-        // The cover goes: the sheet appears again and keeps what the wearer typed.
+        // The sheet appears again, and keeps what the wearer typed.
         state.carbs = 60
         session.sheetAppeared(state: state, recalculate: {})
         await flushMainQueue()

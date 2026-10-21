@@ -11,8 +11,9 @@ import UserNotifications
 /// request leaves pending while the sheet is open, as when it was logged on the watch, the session closes the sheet and
 /// says why in a notice, and a Log pressed on it then logs nothing.
 ///
-/// The sheet is closed when Trio's router no longer shows it. It can disappear while it's still shown, under a cover
-/// such as the AI food chat, and then it comes back.
+/// The sheet is closed when Trio's router no longer shows it, not just when its `onDisappear` runs. A cover shown from
+/// inside the sheet, such as the AI food chat, doesn't run it (checked on iOS 26.5 and 27), but the session doesn't rely
+/// on that.
 ///
 /// What a submit did is read from the sheet's own state, not from the sheet closing: upstream can close the sheet on any
 /// loop run while Face ID is up, and give the bolus after. So a submit is watched until its outcome is known, after the
@@ -142,8 +143,8 @@ import UserNotifications
 
     /// The Treatments sheet appeared. A request's sheet is filled in with its carbs, fat, protein and note once the
     /// wearer's settings have loaded, and `recalculate` then works out the forecast and the recommendation for them.
-    /// The bolus and the time stay as the sheet has them. A sheet that comes back from under a cover isn't filled in
-    /// again.
+    /// The bolus and the time stay as the sheet has them. It's filled in once: a sheet that appears again isn't filled
+    /// in again.
     func sheetAppeared(state: Treatments.StateModel, recalculate: @escaping () -> Void) {
         guard var active, !active.appeared, !active.leftElsewhere else { return }
         active.appeared = true
@@ -211,8 +212,8 @@ import UserNotifications
         return false
     }
 
-    /// The Treatments sheet disappeared. It's closed only if the router no longer shows it; otherwise something covers
-    /// it, and it comes back.
+    /// The Treatments sheet disappeared. It's closed only if the router no longer shows it; otherwise it's still the
+    /// request's open sheet.
     func sheetDisappeared() {
         guard let active, active.appeared, router()?.mainModalScreen.value != .treatmentView else { return }
         sheetClosed()

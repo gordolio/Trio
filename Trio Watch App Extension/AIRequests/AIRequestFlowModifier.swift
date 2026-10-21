@@ -73,7 +73,7 @@ private struct AIRequestFlowModifier: ViewModifier {
             }
         case .idle:
             // The wearer left the request's screens, and their values go. If the wearer started another flow on top of
-            // them instead, that flow's screens and values are the wearer's own, and stay.
+            // them instead, the values went as it started (`onAnotherFlowStarted`), and that flow's screens stay.
             if case .active = old.phase, navigationPath.isEmpty {
                 clearScreens()
             }
@@ -102,6 +102,14 @@ private struct AIRequestFlowModifier: ViewModifier {
         // The confirm sends the dose Confirm shows, from the Double it floors.
         controller.screenBolus = { [state] in
             state.bolusAmount
+        }
+        // A flow the wearer starts on top of the request's screens starts as upstream's own do, not from the request's
+        // carbs and dose: the bolus screen otherwise shows the request's dose until the phone's recommendation comes.
+        controller.onAnotherFlowStarted = { [state] in
+            state.carbsAmount = 0
+            state.bolusAmount = 0
+            state.recommendedBolus = 0
+            state.confirmationProgress = 0
         }
         state.carbsAmount = carbs
         state.recommendedBolus = details.units

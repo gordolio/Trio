@@ -51,6 +51,9 @@ import Observation
     /// Runs as a send call is caught for a confirmation, before upstream's screen moves on to its acknowledgement
     /// screen.
     @ObservationIgnored var onIntercepted: () -> Void = {}
+    /// Runs as the wearer starts another flow on top of the request's screens, before that flow's screens read the
+    /// carbs and dose the request put in them: they're zeroed, so that flow starts from nothing, as upstream's own does.
+    @ObservationIgnored var onAnotherFlowStarted: () -> Void = {}
     /// The watch's bolus increment, which upstream's Confirm screen floors its dose to.
     @ObservationIgnored var bolusIncrement: Decimal = 0.05
     /// The bolus on upstream's Confirm screen, the Double it floors to show its dose. Read as its bolus send is caught,
@@ -234,14 +237,16 @@ import Observation
     }
 
     /// The wearer started another flow on top of the request's screens: they went up under the treatment menu, which
-    /// covered the main screen, and the wearer picked a treatment from it. The request is declined, and the watch is
-    /// idle at once, holding nothing, so that flow's sends go to the phone as upstream's own.
+    /// covered the main screen, and the wearer picked a treatment from it. The request is declined, its carbs and dose
+    /// are zeroed, and the watch is idle at once, holding nothing, so that flow's sends go to the phone as upstream's
+    /// own. Backing out of that flow onto the request's screens shows nothing to send.
     private func anotherFlowStarted() {
         guard case let .active(details) = phase else { return }
         flow += 1
         screensUp = false
         holdsSends = false
         phase = .idle
+        onAnotherFlowStarted()
         sendMessage(AIRequestWatchClose(id: details.id, dismissed: false), as: AIRequestIdentifiers.keyClose)
     }
 

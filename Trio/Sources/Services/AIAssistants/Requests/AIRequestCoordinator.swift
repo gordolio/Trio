@@ -67,6 +67,8 @@ actor AIRequestCoordinator {
     private static let bolusNotStartedReason = "The bolus wasn't started"
     /// Sent when the wearer has turned meal requests off.
     private static let mealRequestsOffReason = "Meal requests are off in Trio"
+    /// Sent for a request of only fat and protein while the wearer's fat and protein entries are off.
+    private static let fatAndProteinOffReason = "Fat and protein entries are off in Trio"
     /// Sent at launch for an approval Trio stopped carrying out before it started the bolus.
     private static let stoppedReason = "Trio stopped before it finished"
     /// Sent at launch for an approval Trio stopped carrying out while it started the bolus.
@@ -145,6 +147,12 @@ actor AIRequestCoordinator {
         }
         if let reason = limitFailure(for: request) {
             let refused = AIRequestReport.failed(reason: reason, carbsLogged: false)
+            await reportFinal(refused, id: request.id, via: channel)
+            return
+        }
+        if request.carbs == 0, request.fat > 0 || request.protein > 0, !treatments.logsFatAndProtein {
+            // With the wearer's fat and protein entries off, only carbs are logged, so this request has nothing to log.
+            let refused = AIRequestReport.failed(reason: Self.fatAndProteinOffReason, carbsLogged: false)
             await reportFinal(refused, id: request.id, via: channel)
             return
         }

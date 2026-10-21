@@ -105,6 +105,25 @@ import Testing
         #expect(h.prompt("r2").body == "Bolus 1.20\u{00A0}U · 20\u{00A0}g carbs\n10\u{00A0}g fat · 8\u{00A0}g protein")
     }
 
+    @Test func fatAndProteinOnlyIsRefusedWhenEntriesAreOff() async {
+        // With "Enable Fat and Protein Entries" off, only carbs are logged: a request with none would log nothing.
+        let h = makeCoordinator()
+        h.treatments.logsFatAndProtein = false
+        await h.coordinator.receive(meal(id: "r1", carbs: 0, fat: 10, protein: 8), via: .service)
+        await h.coordinator.receive(meal(id: "r2", carbs: 0, fat: 0, protein: 8), via: .service)
+        #expect(h.reporter.reports.map(\.report) == [
+            .failed(reason: "Fat and protein entries are off in Trio", carbsLogged: false),
+            .failed(reason: "Fat and protein entries are off in Trio", carbsLogged: false)
+        ])
+        #expect(h.backup.scheduled.isEmpty && h.coordinator.current.value == nil)
+
+        // With carbs, it's asked; with the entries on, so is a request without carbs.
+        await h.coordinator.receive(meal(id: "r3", carbs: Decimal(string: "0.5")!, fat: 10, protein: 8), via: .service)
+        h.treatments.logsFatAndProtein = true
+        await h.coordinator.receive(meal(id: "r4", carbs: 0, fat: 10, protein: 8), via: .service)
+        #expect(h.reporter.states.contains("r3:pending") && h.reporter.states.contains("r4:pending"))
+    }
+
     @Test func overMaxCarbsFailsWithoutAsking() async {
         let h = makeCoordinator(limits: .init(maxCarbs: 50, maxFat: 50, maxProtein: 50, maxBolus: 10))
         await h.coordinator.receive(meal(id: "r1", carbs: 80), via: .service)
