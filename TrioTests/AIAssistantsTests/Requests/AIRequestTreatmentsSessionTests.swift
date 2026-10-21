@@ -7,7 +7,7 @@ import UserNotifications
 @testable import Trio
 
 /// Trio's router, recording each screen sent to the main modal after it was made.
-final class FakeRouter: Router {
+private final class FakeRouter: Router {
     let mainModalScreen = CurrentValueSubject<Screen?, Never>(nil)
     let mainSecondaryModalView = CurrentValueSubject<AnyView?, Never>(nil)
     private(set) var sent: [Screen?] = []
@@ -56,6 +56,16 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
     private let failures: PassthroughSubject<Void, Never>
     /// The text of `APSManager.lastError`.
     private let lastError: TestBox<String?>
+    /// Stands in for `APSManager.roundBolus(amount:)`.
+    private let rounding: TestBox<(Decimal) -> Decimal>
+    /// How many times the bolus signals were stopped.
+    private let signalStops: TestBox<Int>
+    /// Sends when the session's deadline passes.
+    private let deadline: PassthroughSubject<Void, Never>
+    /// The seconds of each deadline the session set.
+    private let deadlines: TestBox<[TimeInterval]>
+    /// Whether the key window shows a sheet, a cover or an alert outside Trio's router.
+    private let keyWindowPresents: TestBox<Bool>
     private let session: AIRequestTreatmentsSession
     private let opener: AIRequestTreatmentsOpener
 
@@ -66,6 +76,11 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         let progress = CurrentValueSubject<Decimal?, Never>(nil)
         let failures = PassthroughSubject<Void, Never>()
         let lastError = TestBox<String?>(nil)
+        let rounding = TestBox<(Decimal) -> Decimal>({ $0 })
+        let signalStops = TestBox(0)
+        let deadline = PassthroughSubject<Void, Never>()
+        let deadlines = TestBox<[TimeInterval]>([])
+        let keyWindowPresents = TestBox(false)
         let session = AIRequestTreatmentsSession(
             coordinator: { h.coordinator },
             router: { router },
@@ -74,8 +89,14 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
                 AIRequestBolusSignals(
                     progress: progress,
                     failures: failures.eraseToAnyPublisher(),
-                    lastErrorText: { lastError.value }
+                    lastErrorText: { lastError.value },
+                    roundBolus: { rounding.value($0) },
+                    stop: { signalStops.value += 1 }
                 )
+            },
+            deadline: { seconds in
+                deadlines.value.append(seconds)
+                return deadline.eraseToAnyPublisher()
             }
         )
         self.h = h
@@ -84,13 +105,19 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         self.progress = progress
         self.failures = failures
         self.lastError = lastError
+        self.rounding = rounding
+        self.signalStops = signalStops
+        self.deadline = deadline
+        self.deadlines = deadlines
+        self.keyWindowPresents = keyWindowPresents
         self.session = session
         opener = AIRequestTreatmentsOpener(
             router: { router },
             coordinator: { h.coordinator },
             session: session,
             now: { h.now },
-            isDue: { pending, now in await AIRequestPhoneBackup(center: center).isDue(pending, now: now) }
+            isDue: { pending, now in await AIRequestPhoneBackup(center: center).isDue(pending, now: now) },
+            keyWindowPresents: { keyWindowPresents.value }
         )
     }
 
@@ -105,10 +132,37 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
     @discardableResult private func openSheet(_ request: AIMealRequest = pizza()) async -> Treatments.StateModel {
         await h.coordinator.receive(request, via: .service)
         await opener.open(requestID: request.id).value
+        await flushMainQueue()
         let state = Treatments.StateModel()
         state.maxCarbs = 250
         session.sheetAppeared(state: state, recalculate: {})
         return state
+    }
+
+    /// The wearer presses Log with `amount` in the Bolus field.
+    private func submit(_ state: Treatments.StateModel, amount: Decimal, external: Bool = false) {
+        state.amount = amount
+        state.externalInsulin = external
+        session.willSubmit(from: state)
+    }
+
+    /// Face ID passed: upstream shows its progress just before it gives the insulin.
+    private func unlock(_ state: Treatments.StateModel) async {
+        state.isAwaitingDeterminationResult = true
+        await flushMainQueue()
+    }
+
+    /// Face ID failed or was canceled: upstream shows its alert.
+    private func failFaceID(_ state: Treatments.StateModel) async {
+        state.showDeterminationFailureAlert = true
+        await flushMainQueue()
+    }
+
+    /// The sheet closes the way upstream closes it: the router's modal goes, then the sheet disappears.
+    private func closeSheet() async {
+        router.mainModalScreen.send(nil)
+        await flushMainQueue()
+        session.sheetDisappeared()
     }
 
     /// Waits for the request's final report, after its pending one.
@@ -116,6 +170,12 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         _ = await eventuallyTrue { h.reporter.reports(for: id).count >= 2 }
         let reports = h.reporter.reports(for: id)
         return reports.count >= 2 ? reports.last : nil
+    }
+
+    /// Gives the session time to report, then checks it reported nothing.
+    private func expectNoFinalReport() async {
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(h.reporter.states == ["r1:pending"])
     }
 
     // MARK: Opening
@@ -155,6 +215,23 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(router.sent == [.settings, nil])
         #expect(session.requestID == nil)
         #expect(session.gramFormatter == nil)
+    }
+
+    @Test func doesNotOpenOverALocalSheet() async {
+        // Home shows a sheet of its own, outside the router.
+        await h.coordinator.receive(pizza(), via: .service)
+        h.now = coordinatorTestStart + 15
+        keyWindowPresents.value = true
+        await opener.open(requestID: "r1").value
+        await opener.openDueRequest()
+        #expect(router.sent.isEmpty)
+        #expect(session.requestID == nil)
+        #expect(session.gramFormatter == nil)
+
+        // Once it's gone, opening Trio again opens the request.
+        keyWindowPresents.value = false
+        await opener.openDueRequest()
+        #expect(router.sent == [.treatmentView])
     }
 
     @Test func doesNotOpenWhenThatSheetCloses() async {
@@ -222,20 +299,22 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         await h.coordinator.receive(pizza(), via: .service)
         await opener.open(requestID: "r1").value
         let formatter = try #require(session.gramFormatter)
-        #expect(formatter.string(from: 82.5) == "82.5")
-        #expect(formatter.string(from: 82) == "82")
-        #expect(formatter.string(from: d("82.25") as NSNumber) == "82.25")
         #expect(formatter.numberStyle == .decimal)
         #expect(formatter.maximumIntegerDigits == 3)
         #expect(formatter.maximumFractionDigits == 2)
         #expect(formatter.minimumFractionDigits == 0)
+        // The sheet formats in the wearer's locale; this checks the digits, so it pins one.
+        formatter.locale = Locale(identifier: "en_US")
+        #expect(formatter.string(from: 82.5) == "82.5")
+        #expect(formatter.string(from: 82) == "82")
+        #expect(formatter.string(from: d("82.25") as NSNumber) == "82.25")
     }
 
     @Test func noFormatterWithoutARequest() async {
         #expect(session.gramFormatter == nil)
         await openSheet()
         #expect(session.gramFormatter != nil)
-        session.sheetDisappeared()
+        await closeSheet()
         #expect(session.gramFormatter == nil)
 
         // A sheet the wearer opens afterwards is a manual one.
@@ -249,25 +328,27 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
     @Test func manualSheetIsLeftAlone() async {
         // A request is pending, but the wearer opened Treatments themselves.
         await h.coordinator.receive(pizza(), via: .service)
+        router.mainModalScreen.send(.treatmentView)
         let state = Treatments.StateModel()
         state.maxCarbs = 250
         state.carbs = 40
         session.sheetAppeared(state: state, recalculate: {})
         #expect(state.carbs == 40)
         #expect(state.note.isEmpty)
-        session.willSubmit(carbs: 40, fat: 0, protein: 0, amount: 1, isExternal: false)
-        session.sheetDisappeared()
-        try? await Task.sleep(for: .milliseconds(50))
-        #expect(h.reporter.states == ["r1:pending"])
+        submit(state, amount: 1)
+        await unlock(state)
+        progress.send(0)
+        await closeSheet()
+        await expectNoFinalReport()
         #expect(h.left.isEmpty)
-        #expect(router.sent.isEmpty)
+        #expect(deadlines.value.isEmpty)
     }
 
-    // MARK: Ending
+    // MARK: Closing
 
     @Test func closingWithoutSubmitDeclines() async {
         await openSheet()
-        session.sheetDisappeared()
+        await closeSheet()
         #expect(await finalReport() == .declined(on: .phone))
         #expect(session.requestID == nil)
         // The wearer closed it: no notice.
@@ -275,84 +356,186 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(center.added.isEmpty)
     }
 
+    @Test func coverOverTheSheetDoesNotEndTheSession() async {
+        // The AI food chat covers the sheet: the sheet disappears, but the router still shows it.
+        let state = await openSheet()
+        session.sheetDisappeared()
+        #expect(session.requestID == "r1")
+        #expect(session.gramFormatter != nil)
+        await expectNoFinalReport()
+
+        // The cover goes: the sheet appears again and keeps what the wearer typed.
+        state.carbs = 60
+        session.sheetAppeared(state: state, recalculate: {})
+        await flushMainQueue()
+        #expect(state.carbs == 60)
+
+        await closeSheet()
+        #expect(await finalReport() == .declined(on: .phone))
+        #expect(session.requestID == nil)
+    }
+
+    @Test func submittingNothingDeclines() async {
+        // "Continue Without Treatment" with every field cleared logs nothing, so it's the same as closing.
+        let state = await openSheet()
+        state.carbs = 0
+        state.fat = 0
+        state.protein = 0
+        submit(state, amount: 0)
+        await closeSheet()
+        #expect(await finalReport() == .declined(on: .phone))
+    }
+
+    @Test func carbsOnlyReportsLogged() async {
+        let state = await openSheet()
+        submit(state, amount: 0)
+        await closeSheet()
+        #expect(await finalReport() == .logged(shown: pizzaShown(units: 0)))
+        #expect(deadlines.value.isEmpty)
+    }
+
+    // MARK: A pump bolus
+
     @Test func startedBolusReportsDelivering() async {
-        await openSheet()
-        session.willSubmit(carbs: d("82.5"), fat: 10, protein: 5, amount: 2, isExternal: false)
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
         progress.send(0)
         await flushMainQueue()
-        session.sheetDisappeared()
+        await closeSheet()
         #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.phone), source: "ChatGPT")])
+        #expect(signalStops.value == 1)
         await flushMainQueue()
         #expect(center.added.isEmpty)
     }
 
+    @Test func pumpUnitsAreReportedRounded() async {
+        // The pump gives whole tenths of a unit, at most.
+        rounding.value = { amount in
+            var value = amount * 10
+            var rounded = Decimal()
+            NSDecimalRound(&rounded, &value, 0, .down)
+            return rounded / 10
+        }
+        let state = await openSheet()
+        submit(state, amount: d("2.17"))
+        await unlock(state)
+        progress.send(0)
+        await closeSheet()
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: d("2.1"))))
+    }
+
+    @Test func loopCycleDuringFaceIDStillReportsTheBolus() async {
+        // A loop cycle closes the sheet while Face ID is up; upstream then gives the bolus.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await closeSheet()
+        await expectNoFinalReport()
+        #expect(session.requestID == nil)
+        #expect(session.gramFormatter == nil)
+
+        await unlock(state)
+        progress.send(0)
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
+    }
+
     @Test func failedBolusReportsFailedWithCarbs() async {
-        await openSheet()
-        session.willSubmit(carbs: d("82.5"), fat: 10, protein: 5, amount: 2, isExternal: false)
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
         lastError.value = "Pump Error (Occlusion)."
         failures.send()
         await flushMainQueue()
-        session.sheetDisappeared()
+        await closeSheet()
         #expect(await finalReport() == .failed(reason: "Pump Error (Occlusion).", carbsLogged: true))
     }
 
     @Test func failedBolusWithoutAnErrorSaysBolusFailed() async {
-        await openSheet()
-        session.willSubmit(carbs: d("82.5"), fat: 10, protein: 5, amount: 2, isExternal: false)
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
         failures.send()
         await flushMainQueue()
-        session.sheetDisappeared()
+        await closeSheet()
         #expect(await finalReport() == .failed(reason: "Bolus failed", carbsLogged: true))
     }
 
     @Test func faceIDCancelReportsNotStarted() async {
         // An earlier bolus left the progress at 0; it isn't this one starting.
         progress.send(0)
-        await openSheet()
-        session.willSubmit(carbs: d("82.5"), fat: 10, protein: 5, amount: 2, isExternal: false)
-        await flushMainQueue()
-        session.sheetDisappeared()
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await failFaceID(state)
+        await closeSheet()
         #expect(await finalReport() == .failed(reason: "The bolus wasn't started", carbsLogged: true))
     }
 
-    @Test func carbsOnlyReportsLogged() async {
-        await openSheet()
-        session.willSubmit(carbs: d("82.5"), fat: 10, protein: 5, amount: 0, isExternal: false)
-        session.sheetDisappeared()
-        #expect(await finalReport() == .logged(shown: pizzaShown(units: 0)))
+    @Test func smbDuringFaceIDCancelIsNotABolus() async {
+        let state = await openSheet()
+        submit(state, amount: 2)
+        // An SMB starts while Face ID is up, before it passes.
+        progress.send(0)
+        await flushMainQueue()
+        await failFaceID(state)
+        await closeSheet()
+        #expect(await finalReport() == .failed(reason: "The bolus wasn't started", carbsLogged: true))
     }
 
-    @Test func externalInsulinReportsLogged() async {
-        await openSheet()
-        session.willSubmit(carbs: d("82.5"), fat: 10, protein: 5, amount: 3, isExternal: true)
-        session.sheetDisappeared()
+    @Test func unknownOutcomeSendsNoReport() async {
+        // Face ID passed, but neither the pump's start nor a failure is heard.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        #expect(deadlines.value == [120])
+        await unlock(state)
+        await closeSheet()
+        await expectNoFinalReport()
+
+        // Two minutes pass: nothing is reported, and a late signal changes nothing.
+        deadline.send()
+        await flushMainQueue()
+        progress.send(0)
+        await flushMainQueue()
+        await expectNoFinalReport()
+        #expect(signalStops.value == 1)
+    }
+
+    // MARK: External insulin
+
+    @Test func externalAfterUnlockIsLogged() async {
+        let state = await openSheet()
+        submit(state, amount: 3, external: true)
+        await unlock(state)
+        await closeSheet()
         #expect(await finalReport() == .logged(shown: pizzaShown(units: 3)))
     }
 
-    @Test func submittingNothingDeclines() async {
-        // "Continue Without Treatment" with every field cleared logs nothing, so it's the same as closing.
-        await openSheet()
-        session.willSubmit(carbs: 0, fat: 0, protein: 0, amount: 0, isExternal: false)
-        session.sheetDisappeared()
-        #expect(await finalReport() == .declined(on: .phone))
+    @Test func externalWithFaceIDCancelIsNotLogged() async {
+        let state = await openSheet()
+        submit(state, amount: 3, external: true)
+        await failFaceID(state)
+        await closeSheet()
+        #expect(await finalReport() == .failed(reason: "The bolus wasn't started", carbsLogged: true))
     }
+
+    // MARK: Claims
 
     @Test func failedClaimDoesNothingMore() async {
         // The watch took the request before the session heard it leave.
         await h.coordinator.receive(pizza(), via: .service)
         let pending = h.coordinator.current.value!
         session.begin(pending)
+        router.mainModalScreen.send(.treatmentView)
         let state = Treatments.StateModel()
         state.maxCarbs = 250
         session.sheetAppeared(state: state, recalculate: {})
         #expect(await h.coordinator.claim(id: "r1", on: .watch))
-        session.willSubmit(carbs: d("82.5"), fat: 10, protein: 5, amount: 2, isExternal: false)
+        submit(state, amount: 2)
+        await unlock(state)
         progress.send(0)
         await flushMainQueue()
-        session.sheetDisappeared()
-        try? await Task.sleep(for: .milliseconds(50))
-        #expect(h.reporter.states == ["r1:pending"])
+        await closeSheet()
+        await expectNoFinalReport()
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT")])
     }
 
@@ -362,7 +545,11 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         await openSheet()
         #expect(await h.coordinator.claim(id: "r1", on: .watch))
         await flushMainQueue()
+        await flushMainQueue()
         #expect(router.sent == [.treatmentView, nil])
+        // The router closing the sheet ends the session.
+        #expect(session.gramFormatter == nil)
+        #expect(session.requestID == nil)
 
         let notice = try #require(center.added.first)
         #expect(center.added.count == 1)
@@ -374,11 +561,8 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
 
         // The sheet goes, and reports nothing.
         session.sheetDisappeared()
-        try? await Task.sleep(for: .milliseconds(50))
-        #expect(h.reporter.states == ["r1:pending"])
+        await expectNoFinalReport()
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT")])
-        #expect(session.gramFormatter == nil)
-        #expect(session.requestID == nil)
     }
 
     @Test func withdrawnRequestClosesTheSheetWithItsReason() async throws {

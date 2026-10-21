@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		460278C2EB8B79E4B5594F73 /* AIRequestBolusSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */; };
 		5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */; };
 		A89895B2F0920F33CB2453C1 /* AIRequestTreatmentsSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */; };
 		4A86AF5A4BDCF4AFAA605E06 /* AIRequestTreatmentsSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */; };
@@ -1341,6 +1342,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestBolusSignals.swift; sourceTree = "<group>"; };
 		4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsOpener.swift; sourceTree = "<group>"; };
 		7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsSession.swift; sourceTree = "<group>"; };
 		DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsSessionTests.swift; sourceTree = "<group>"; };
@@ -2664,6 +2666,7 @@
 		F331CE00DCA84A18B10AFE87 /* Requests */ = {
 			isa = PBXGroup;
 			children = (
+				8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */,
 				4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */,
 				7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */,
 				A38C4B335320460AB1B97D38 /* AIRequestLeftText.swift */,
@@ -6075,6 +6078,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				460278C2EB8B79E4B5594F73 /* AIRequestBolusSignals.swift in Sources */,
 				5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */,
 				A89895B2F0920F33CB2453C1 /* AIRequestTreatmentsSession.swift in Sources */,
 				D60EBCB6909343009642A7A4 /* AIRequestLeftText.swift in Sources */,

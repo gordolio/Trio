@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 /// Opens Trio's Treatments sheet for the pending request: when the wearer taps its iPhone notification, or brings Trio to
 /// the front while the iPhone is asking for it. The sheet opens only when no other sheet is open. Otherwise nothing
@@ -13,19 +14,33 @@ import SwiftUI
     private let now: () -> Date
     /// Whether the iPhone is asking for the request at the date, rather than the watch alone.
     private let isDue: (PendingAIRequest, Date) async -> Bool
+    /// Whether the app's key window shows anything over the app: a sheet, a cover or an alert, Trio's router's or not.
+    private let keyWindowPresents: @MainActor() -> Bool
 
     init(
         router: @escaping @MainActor() -> Router? = { TrioApp.resolver.resolve(Router.self) },
         coordinator: @escaping () -> AIRequestCoordinator? = { AIRequestsRuntime.shared?.coordinator },
         session: AIRequestTreatmentsSession? = nil,
         now: @escaping () -> Date = Date.init,
-        isDue: @escaping (PendingAIRequest, Date) async -> Bool = { await AIRequestPhoneBackup().isDue($0, now: $1) }
+        isDue: @escaping (PendingAIRequest, Date) async -> Bool = { await AIRequestPhoneBackup().isDue($0, now: $1) },
+        keyWindowPresents: @escaping @MainActor() -> Bool = { AIRequestTreatmentsOpener.keyWindowPresentsAnything() }
     ) {
         self.router = router
         self.coordinator = coordinator
         self.session = session ?? .shared
         self.now = now
         self.isDue = isDue
+        self.keyWindowPresents = keyWindowPresents
+    }
+
+    /// Whether the key window's root view controller presents a view controller.
+    static func keyWindowPresentsAnything() -> Bool {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .rootViewController?
+            .presentedViewController != nil
     }
 
     /// Opens the sheet for the request whose notification the wearer tapped, if it's the pending one. The task is the
@@ -52,7 +67,8 @@ import SwiftUI
         guard let candidate = coordinator.current.value, await wanted(candidate) else { return }
         // Read again after the waits. Nothing waits from here until the sheet is asked for.
         guard let pending = coordinator.current.value, pending.request.id == candidate.request.id else { return }
-        guard router.mainModalScreen.value == nil, router.mainSecondaryModalView.value == nil else {
+        // Sheets and covers shown outside the router count too, such as Home's own.
+        guard router.mainModalScreen.value == nil, router.mainSecondaryModalView.value == nil, !keyWindowPresents() else {
             debug(.service, "AI requests: another sheet is open, so \(pending.request.id) isn't opened")
             return
         }
