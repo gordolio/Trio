@@ -15,7 +15,7 @@ enum AIRequestAnswerSource: Equatable {
 ///
 /// A request is reported final once: only the pending request, after it's taken out of pending, or a
 /// request seen for the first time gets a final report. A repeated ID gets that first final report, or
-/// its pending report, again.
+/// its pending report, again. Each first final report also sends the request's `outcomes`.
 actor AIRequestCoordinator {
     enum AnswerOutcome: Equatable {
         /// The answer was accepted, and the request carried out or declined.
@@ -31,6 +31,9 @@ actor AIRequestCoordinator {
 
     /// The request waiting for an answer, if any.
     nonisolated let current: CurrentValueSubject<PendingAIRequest?, Never>
+    /// How each request ended, sent once per request, when its first final report is saved. A repeated ID's report
+    /// sent again isn't an outcome, and a request Trio stopped carrying out has one when a launch reports it.
+    nonisolated let outcomes: PassthroughSubject<AIRequestOutcome, Never>
 
     private let seen: AIRequestSeenStore
     private let pendingFileURL: URL
@@ -110,6 +113,7 @@ actor AIRequestCoordinator {
         self.reporters = reporters
         self.now = now
         current = CurrentValueSubject(nil)
+        outcomes = PassthroughSubject()
     }
 
     deinit {
@@ -139,16 +143,18 @@ actor AIRequestCoordinator {
         let request = withLifetimeCapped(request)
         let receivedAt = now()
         if receivedAt >= request.expiresAt {
-            await reportFinal(.expired, for: request.id, via: channel)
+            await reportFinal(AIRequestOutcome(.expired, request: request), via: channel)
             return
         }
         // The test requests are made on the iPhone, so they're asked about either way.
         if channel == .service, !preferences().allowsMealRequests {
-            await reportFinal(.failed(reason: Self.mealRequestsOffReason, carbsLogged: false), for: request.id, via: channel)
+            let refused = AIRequestReport.failed(reason: Self.mealRequestsOffReason, carbsLogged: false)
+            await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
             return
         }
         if let reason = limitFailure(for: request) {
-            await reportFinal(.failed(reason: reason, carbsLogged: false), for: request.id, via: channel)
+            let refused = AIRequestReport.failed(reason: reason, carbsLogged: false)
+            await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
             return
         }
 
@@ -157,7 +163,8 @@ actor AIRequestCoordinator {
         // The bolus checks run now as well as at approval: a dose they'd refuse isn't asked about, and the assistant
         // hears why.
         if let reason = await bolusFailure(units: units, iobAsOf: dose.iobAsOf) {
-            await reportFinal(.failed(reason: reason, carbsLogged: false), for: request.id, via: channel)
+            let refused = AIRequestReport.failed(reason: reason, carbsLogged: false)
+            await reportFinal(AIRequestOutcome(refused, request: request), via: channel)
             return
         }
         let display = await treatments.display(for: request, units: units)
@@ -202,7 +209,7 @@ actor AIRequestCoordinator {
         debug(.service, "AI requests: \(request.id) is pending, asked on the \(askedOn.rawValue)")
 
         if let replaced {
-            await reportFinal(.replaced, for: replaced.request.id, via: replaced.channel)
+            await reportFinal(AIRequestOutcome(.replaced, pending: replaced), via: replaced.channel)
         }
         await reporters[channel]?.report(
             .pending(
@@ -221,10 +228,10 @@ actor AIRequestCoordinator {
     func withdraw(id: String, request: AIMealRequest?, via channel: AIRequestChannel) async {
         ensureLoaded()
         if let pending = takePending(id: id) {
-            await reportFinal(.withdrawn, for: id, via: pending.channel)
+            await reportFinal(AIRequestOutcome(.withdrawn, pending: pending), via: pending.channel)
             return
         }
-        guard request != nil else {
+        guard let request else {
             let resent = await resendFinalReport(for: id, via: channel)
             if !resent {
                 debug(.service, "AI requests: \(id) was withdrawn, but it isn't pending")
@@ -234,7 +241,7 @@ actor AIRequestCoordinator {
         // A request Trio already handled keeps its outcome.
         switch await observe(id, via: channel) {
         case .new?:
-            await reportFinal(.withdrawn, for: id, via: channel)
+            await reportFinal(AIRequestOutcome(.withdrawn, request: request), via: channel)
         case let .seen(outcome)?:
             await reportRepeat(of: outcome, for: id, via: channel)
         case nil:
@@ -247,7 +254,7 @@ actor AIRequestCoordinator {
         ensureLoaded()
         guard let pending = current.value, now() >= pending.request.expiresAt else { return }
         _ = takePending()
-        await reportFinal(.expired, for: pending.request.id, via: pending.channel)
+        await reportFinal(AIRequestOutcome(.expired, pending: pending), via: pending.channel)
     }
 
     /// Carries out the wearer's answer to the pending request. The first answer accepted takes the request
@@ -295,7 +302,8 @@ actor AIRequestCoordinator {
             carryingOut = task
             await task.value
         case .decline:
-            await reportFinal(.declined(on: declinedOn), for: answered.request.id, via: answered.channel)
+            let declined = AIRequestOutcome(.declined(on: declinedOn), pending: answered, declinedOn: declinedOn)
+            await reportFinal(declined, via: answered.channel)
         }
         return .acted
     }
@@ -337,10 +345,9 @@ actor AIRequestCoordinator {
     private func carryOut(_ pending: PendingAIRequest, approvedOn: AIRequestAnswerSide) async {
         // Before this approval's marker replaces it on disk.
         await reportStoppedCarryOut()
-        let id = pending.request.id
         let units = pending.units
         mark(AIRequestCarryOutMarker(
-            id: id,
+            id: pending.request.id,
             channel: pending.channel,
             title: pending.prompt.title,
             source: pending.request.source,
@@ -351,11 +358,11 @@ actor AIRequestCoordinator {
         ))
 
         if let failure = await approvalFailure(for: pending) {
-            await reportFinal(.failed(reason: failure, carbsLogged: false), for: id, via: pending.channel)
+            await reportApproved(.failed(reason: failure, carbsLogged: false), pending, approvedOn: approvedOn)
             return
         }
         if pending.request.testKind == .dryRun {
-            await reportFinal(.dryRun(shown: pending.prompt.shown), for: id, via: pending.channel)
+            await reportApproved(.dryRun(shown: pending.prompt.shown), pending, approvedOn: approvedOn)
             return
         }
 
@@ -363,23 +370,23 @@ actor AIRequestCoordinator {
         do {
             try await treatments.storeCarbs(for: pending.request)
         } catch {
-            await reportFinal(
+            await reportApproved(
                 .failed(reason: error.localizedDescription, carbsLogged: false),
-                for: id,
-                via: pending.channel
+                pending,
+                approvedOn: approvedOn
             )
             return
         }
 
         guard units > 0 else {
-            await reportFinal(.logged(shown: pending.prompt.shown), for: id, via: pending.channel)
+            await reportApproved(.logged(shown: pending.prompt.shown), pending, approvedOn: approvedOn)
             return
         }
         mark(.enacting)
         if let reason = await treatments.enactBolus(units) {
-            await reportFinal(.failed(reason: reason, carbsLogged: true), for: id, via: pending.channel)
+            await reportApproved(.failed(reason: reason, carbsLogged: true), pending, approvedOn: approvedOn)
         } else {
-            await reportFinal(.delivering(shown: pending.prompt.shown), for: id, via: pending.channel)
+            await reportApproved(.delivering(shown: pending.prompt.shown), pending, approvedOn: approvedOn)
         }
     }
 
@@ -465,11 +472,8 @@ actor AIRequestCoordinator {
         }
         let reason = stopped.stage == .enacting ? Self.stoppedWhileEnactingReason : Self.stoppedReason
         debug(.service, "AI requests: Trio stopped while carrying out \(stopped.id), at \(stopped.stage.rawValue)")
-        await reportFinal(
-            .failed(reason: reason, carbsLogged: stopped.stage != .checking),
-            for: stopped.id,
-            via: stopped.channel
-        )
+        let failed = AIRequestReport.failed(reason: reason, carbsLogged: stopped.stage != .checking)
+        await reportFinal(AIRequestOutcome(failed, stopped: stopped), via: stopped.channel)
     }
 
     // MARK: Requests
@@ -559,13 +563,27 @@ actor AIRequestCoordinator {
 
     // MARK: Reports
 
-    private func reportFinal(_ report: AIRequestReport, for id: String, via channel: AIRequestChannel) async {
+    /// Saves the request's first final report, sends its `outcomes`, and reports it to where the request came from.
+    private func reportFinal(_ outcome: AIRequestOutcome, via channel: AIRequestChannel) async {
+        let id = outcome.id
+        let report = outcome.report
         seen.setOutcome(report.state, for: id)
         saveFinalReport(report, for: id)
         // After the final report is saved, so a launch that finds the marker can tell it was reported.
         removeCarryOutMarker(for: id)
         debug(.service, "AI requests: \(id) is \(report.state.rawValue)")
+        // Before the report goes out, which can wait on the network, so the watch and the iPhone hear it at once.
+        outcomes.send(outcome)
         await reporters[channel]?.report(report, for: id)
+    }
+
+    /// The final report of an approved request: its outcome says where it was approved.
+    private func reportApproved(
+        _ report: AIRequestReport,
+        _ pending: PendingAIRequest,
+        approvedOn: AIRequestAnswerSide
+    ) async {
+        await reportFinal(AIRequestOutcome(report, pending: pending, approvedOn: approvedOn), via: pending.channel)
     }
 
     /// Answers a repeated ID. A finished request gets its first final report again, and the pending request

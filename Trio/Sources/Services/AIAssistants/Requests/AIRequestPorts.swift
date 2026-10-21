@@ -27,17 +27,83 @@ enum AIRequestAskedOn: String, Codable {
     case phone
 }
 
-/// Where the wearer answered a request.
-enum AIRequestAnswerSide: String, Codable {
-    case watch
-    case phone
-}
-
 enum AIRequestDeclinedOn: String, Codable {
     case watch
     case phone
     /// The wearer swiped the watch notification away.
     case dismissed
+}
+
+/// How a request ended: its first final report, and what the wearer, the watch and the iPhone need to say about it.
+/// `AIRequestResultText` turns it into words.
+struct AIRequestOutcome: Equatable {
+    let id: String
+    /// The title the request was asked with. For a request that was never asked, it's made from the request.
+    let title: String
+    /// Who asked, for example "ChatGPT".
+    let source: String
+    /// The amounts the request was asked with, or `nil` when it never was.
+    let shown: AIRequestShown?
+    let report: AIRequestReport
+    /// Where the request was asked, or `nil` when it never was: it was refused or expired on arrival.
+    let askedOn: AIRequestAskedOn?
+    /// Where the wearer approved it, or `nil` when nobody did.
+    let approvedOn: AIRequestAnswerSide?
+    /// Where the wearer declined it, or `nil` when they didn't.
+    let declinedOn: AIRequestDeclinedOn?
+    /// Trio stopped while starting the bolus, so it may have been given. Only a carry-out marker found at `.enacting`
+    /// says so.
+    var bolusUnconfirmed = false
+}
+
+extension AIRequestOutcome {
+    /// A request that was never asked: refused or expired on arrival, or withdrawn before Trio saw it.
+    init(_ report: AIRequestReport, request: AIMealRequest) {
+        self.init(
+            id: request.id,
+            title: AIRequestDisplayText.title(source: request.source, description: request.description),
+            source: request.source,
+            shown: nil,
+            report: report,
+            askedOn: nil,
+            approvedOn: nil,
+            declinedOn: nil
+        )
+    }
+
+    /// The request that was pending, with where it was approved or declined if it was.
+    init(
+        _ report: AIRequestReport,
+        pending: PendingAIRequest,
+        approvedOn: AIRequestAnswerSide? = nil,
+        declinedOn: AIRequestDeclinedOn? = nil
+    ) {
+        self.init(
+            id: pending.request.id,
+            title: pending.prompt.title,
+            source: pending.request.source,
+            shown: pending.prompt.shown,
+            report: report,
+            askedOn: pending.askedOn,
+            approvedOn: approvedOn,
+            declinedOn: declinedOn
+        )
+    }
+
+    /// The approved request Trio stopped carrying out. The bolus is unconfirmed only if Trio stopped while starting it.
+    init(_ report: AIRequestReport, stopped marker: AIRequestCarryOutMarker) {
+        self.init(
+            id: marker.id,
+            title: marker.title,
+            source: marker.source,
+            shown: marker.shown,
+            report: report,
+            askedOn: marker.askedOn,
+            approvedOn: marker.approvedOn,
+            declinedOn: nil,
+            bolusUnconfirmed: marker.stage == .enacting
+        )
+    }
 }
 
 /// The notification text the wearer sees for a request.
