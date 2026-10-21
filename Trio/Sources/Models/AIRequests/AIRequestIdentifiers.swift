@@ -9,6 +9,9 @@ enum AIRequestIdentifiers {
     static let categoryReview = "trio.request.review"
     static let categoryApprove = "trio.request.approve"
     static let categoryPhone = "trio.request.phone"
+    /// The iPhone's notice that the request its Treatments sheet had open ended elsewhere, such as "Logged on your
+    /// watch". It shows as a banner while Trio is open.
+    static let categoryNotice = "trio.request.notice"
 
     // MARK: Notification actions
 

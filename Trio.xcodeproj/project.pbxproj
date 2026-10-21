@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */; };
+		A89895B2F0920F33CB2453C1 /* AIRequestTreatmentsSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */; };
+		4A86AF5A4BDCF4AFAA605E06 /* AIRequestTreatmentsSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */; };
 		D60EBCB6909343009642A7A4 /* AIRequestLeftText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38C4B335320460AB1B97D38 /* AIRequestLeftText.swift */; };
 		3342E99511A446CB8233C894 /* AIRequestWatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A4C79EE4C6460EA8E5B6BC /* AIRequestWatchMessages.swift */; };
 		C0A257AA5DE2422D90FA3C71 /* AIRequestWatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A4C79EE4C6460EA8E5B6BC /* AIRequestWatchMessages.swift */; };
@@ -14,9 +17,6 @@
 		4D17A1D500B54D1395868E53 /* AIRequestWatchApprovals.swift in Sources */ = {isa = PBXBuildFile; fileRef = E642FB2F99584E549B7C3862 /* AIRequestWatchApprovals.swift */; };
 		FDDD5892E67F49448405746B /* AIRequestWatchApprovals.swift in Sources */ = {isa = PBXBuildFile; fileRef = E642FB2F99584E549B7C3862 /* AIRequestWatchApprovals.swift */; };
 		A21E4F99A92A49979B8199E3 /* AIRequestWatchApprovalsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A435B81278E4C6A8F6DC987 /* AIRequestWatchApprovalsTests.swift */; };
-		239D9C5A8C05E468B8DE937C /* AIRequestUnlock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2436FB37214B93D532C011F9 /* AIRequestUnlock.swift */; };
-		8A21652FAB9E171BA2819E7D /* AIRequestUnlockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4981FE926904D3331A062CDA /* AIRequestUnlockTests.swift */; };
-		BB270F9B52AE45639A49F01C /* AIRequestPhoneApprovalPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379899B50EF045ADA31FDEFC /* AIRequestPhoneApprovalPresenterTests.swift */; };
 		2A2EF9D338FC40AFA8EF819D /* AIRequestContextRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 448CFCADCBEB45C592DDD855 /* AIRequestContextRowsTests.swift */; };
 		8CBE3564F92D4FAC80C86100 /* AIRequestContextRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66425E2B5CB84366A64D6F83 /* AIRequestContextRows.swift */; };
 		B389AB83EA1345E4A5B47F64 /* AIRequestContextRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66425E2B5CB84366A64D6F83 /* AIRequestContextRows.swift */; };
@@ -41,7 +41,6 @@
 		6BDBA53B6BAA43EFA432E7DE /* AIInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70F8B809C6045D3905D019B /* AIInbox.swift */; };
 		6972F71FF2EE43D394392953 /* AIInboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39BD404EE2143A18D9889FB /* AIInboxTests.swift */; };
 		C6EE0CB0DFA64C61BA729E53 /* AIAssistantsApprovalSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */; };
-		F3CD107FB529465DBAC702AC /* AIRequestPhoneApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62D58A5E87044C24AF75FE5A /* AIRequestPhoneApprovalView.swift */; };
 		072A5F0C958442B5BAD37A48 /* AIRequestPhoneBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1BD9E67190442CD94491170 /* AIRequestPhoneBackup.swift */; };
 		DC9C0ECE70544B13BA2851A8 /* AIRequestPhoneBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00EFB0AE3CDE423386F4D18D /* AIRequestPhoneBackupTests.swift */; };
 		B9FB037832464B038056A369 /* AIRequestApprovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DF40EA56D784CE7BB9DECFF /* AIRequestApprovalView.swift */; };
@@ -1342,14 +1341,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsOpener.swift; sourceTree = "<group>"; };
+		7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsSession.swift; sourceTree = "<group>"; };
+		DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsSessionTests.swift; sourceTree = "<group>"; };
 		A38C4B335320460AB1B97D38 /* AIRequestLeftText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestLeftText.swift; sourceTree = "<group>"; };
 		88A4C79EE4C6460EA8E5B6BC /* AIRequestWatchMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchMessages.swift; sourceTree = "<group>"; };
 		0CBF78903A7F44DEBB40E3EC /* AIRequestScreensTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestScreensTests.swift; sourceTree = "<group>"; };
 		E642FB2F99584E549B7C3862 /* AIRequestWatchApprovals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchApprovals.swift; sourceTree = "<group>"; };
 		0A435B81278E4C6A8F6DC987 /* AIRequestWatchApprovalsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchApprovalsTests.swift; sourceTree = "<group>"; };
-		2436FB37214B93D532C011F9 /* AIRequestUnlock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestUnlock.swift; sourceTree = "<group>"; };
-		4981FE926904D3331A062CDA /* AIRequestUnlockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestUnlockTests.swift; sourceTree = "<group>"; };
-		379899B50EF045ADA31FDEFC /* AIRequestPhoneApprovalPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneApprovalPresenterTests.swift; sourceTree = "<group>"; };
 		448CFCADCBEB45C592DDD855 /* AIRequestContextRowsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestContextRowsTests.swift; sourceTree = "<group>"; };
 		66425E2B5CB84366A64D6F83 /* AIRequestContextRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestContextRows.swift; sourceTree = "<group>"; };
 		C9DF80AA5167493BB7EBD225 /* AIRequestWatchFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchFlow.swift; sourceTree = "<group>"; };
@@ -1370,7 +1369,6 @@
 		E70F8B809C6045D3905D019B /* AIInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIInbox.swift; sourceTree = "<group>"; };
 		C39BD404EE2143A18D9889FB /* AIInboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIInboxTests.swift; sourceTree = "<group>"; };
 		A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsApprovalSection.swift; sourceTree = "<group>"; };
-		62D58A5E87044C24AF75FE5A /* AIRequestPhoneApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneApprovalView.swift; sourceTree = "<group>"; };
 		B1BD9E67190442CD94491170 /* AIRequestPhoneBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneBackup.swift; sourceTree = "<group>"; };
 		00EFB0AE3CDE423386F4D18D /* AIRequestPhoneBackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneBackupTests.swift; sourceTree = "<group>"; };
 		3DF40EA56D784CE7BB9DECFF /* AIRequestApprovalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestApprovalView.swift; sourceTree = "<group>"; };
@@ -2666,8 +2664,9 @@
 		F331CE00DCA84A18B10AFE87 /* Requests */ = {
 			isa = PBXGroup;
 			children = (
+				4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */,
+				7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */,
 				A38C4B335320460AB1B97D38 /* AIRequestLeftText.swift */,
-				2436FB37214B93D532C011F9 /* AIRequestUnlock.swift */,
 				C05967D293C74389915F3CF2 /* AIRequestResultNotifier.swift */,
 				538CECC02A32422480B54218 /* AIRequestResultText.swift */,
 				5A99277089E54EACA79DEEA3 /* AIRequestCarryOutMarker.swift */,
@@ -2693,10 +2692,9 @@
 		7ADFEF598A034B3EAB259796 /* Requests */ = {
 			isa = PBXGroup;
 			children = (
+				DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */,
 				0CBF78903A7F44DEBB40E3EC /* AIRequestScreensTests.swift */,
 				0A435B81278E4C6A8F6DC987 /* AIRequestWatchApprovalsTests.swift */,
-				4981FE926904D3331A062CDA /* AIRequestUnlockTests.swift */,
-				379899B50EF045ADA31FDEFC /* AIRequestPhoneApprovalPresenterTests.swift */,
 				448CFCADCBEB45C592DDD855 /* AIRequestContextRowsTests.swift */,
 				C27F559271E8458E9FE9AE8C /* AIRequestWatchFlowTests.swift */,
 				252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */,
@@ -2725,7 +2723,6 @@
 			isa = PBXGroup;
 			children = (
 				A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */,
-				62D58A5E87044C24AF75FE5A /* AIRequestPhoneApprovalView.swift */,
 				7A349D3318134544809EC8BE /* AIAssistantsConfigPreviews.swift */,
 				CF077C74C75248129B661565 /* AIAssistantsConfigComponents.swift */,
 				714E1D841CE54605B58B3FA1 /* AIAssistantSetupView.swift */,
@@ -6078,10 +6075,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */,
+				A89895B2F0920F33CB2453C1 /* AIRequestTreatmentsSession.swift in Sources */,
 				D60EBCB6909343009642A7A4 /* AIRequestLeftText.swift in Sources */,
 				3342E99511A446CB8233C894 /* AIRequestWatchMessages.swift in Sources */,
 				FDDD5892E67F49448405746B /* AIRequestWatchApprovals.swift in Sources */,
-				239D9C5A8C05E468B8DE937C /* AIRequestUnlock.swift in Sources */,
 				B389AB83EA1345E4A5B47F64 /* AIRequestContextRows.swift in Sources */,
 				6BAC7E2376D244D0865F9ED4 /* AIRequestWatchFlow.swift in Sources */,
 				E731CC198F894E9BB7AA30A5 /* AIRequestResultNotifier.swift in Sources */,
@@ -6093,7 +6091,6 @@
 				71E36E3AFED1426B860A1BCC /* AIAssistantsCheckIn.swift in Sources */,
 				6BDBA53B6BAA43EFA432E7DE /* AIInbox.swift in Sources */,
 				C6EE0CB0DFA64C61BA729E53 /* AIAssistantsApprovalSection.swift in Sources */,
-				F3CD107FB529465DBAC702AC /* AIRequestPhoneApprovalView.swift in Sources */,
 				072A5F0C958442B5BAD37A48 /* AIRequestPhoneBackup.swift in Sources */,
 				F85AD05FDC3F4F50BD78370F /* AIRequestHooks.swift in Sources */,
 				6965B6705E6F4083BA0A45E9 /* AIRequestsRuntime.swift in Sources */,
@@ -6936,10 +6933,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4A86AF5A4BDCF4AFAA605E06 /* AIRequestTreatmentsSessionTests.swift in Sources */,
 				4F794E8EEE0E4BE39E335CD6 /* AIRequestScreensTests.swift in Sources */,
 				A21E4F99A92A49979B8199E3 /* AIRequestWatchApprovalsTests.swift in Sources */,
-				8A21652FAB9E171BA2819E7D /* AIRequestUnlockTests.swift in Sources */,
-				BB270F9B52AE45639A49F01C /* AIRequestPhoneApprovalPresenterTests.swift in Sources */,
 				2A2EF9D338FC40AFA8EF819D /* AIRequestContextRowsTests.swift in Sources */,
 				8B603C4677D1481AAA564BF3 /* AIRequestWatchFlowTests.swift in Sources */,
 				3F4DC5F2F4DE4EEE9846B260 /* AIRequestContextTests.swift in Sources */,

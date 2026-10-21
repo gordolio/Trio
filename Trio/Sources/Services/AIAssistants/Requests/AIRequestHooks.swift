@@ -16,8 +16,8 @@ enum AIRequestHooks {
     }
 
     /// Chooses how the iPhone shows a notification while Trio is open. Returns `true` if it was an AI request
-    /// notification, so the notifications manager must not handle it: the iPhone backup shows as a banner, and
-    /// the service's check-in push shows nothing.
+    /// notification, so the notifications manager must not handle it: the iPhone backup shows as a banner, the notice
+    /// that closed a request's Treatments sheet shows as a silent banner, and the service's check-in push shows nothing.
     static func willPresent(
         _ notification: UNNotification,
         _ completion: @escaping (UNNotificationPresentationOptions) -> Void
@@ -30,14 +30,14 @@ enum AIRequestHooks {
         return true
     }
 
-    /// Opens the approval screen when the wearer taps the iPhone backup. Returns `true` if it was one, so the
+    /// Opens the request's Treatments sheet when the wearer taps the iPhone backup. Returns `true` if it was one, so the
     /// notifications manager must not handle it. Any other notification is left alone, and the completion handler
     /// is called once for the ones it takes.
     static func didReceive(_ response: UNNotificationResponse, _ completion: @escaping () -> Void) -> Bool {
         let content = response.notification.request.content
         guard content.categoryIdentifier == AIRequestIdentifiers.categoryPhone else { return false }
         if let id = content.userInfo[AIRequestPhoneBackup.requestIDKey] as? String {
-            Task { @MainActor in AIRequestPhoneApprovalPresenter.shared.open(requestID: id) }
+            Task { @MainActor in AIRequestTreatmentsOpener.shared.open(requestID: id) }
         }
         completion()
         return true
@@ -49,6 +49,7 @@ enum AIRequestHooks {
         userInfo: [AnyHashable: Any]
     ) -> UNNotificationPresentationOptions? {
         if category == AIRequestIdentifiers.categoryPhone { return [.banner, .sound, .list] }
+        if category == AIRequestIdentifiers.categoryNotice { return [.banner, .list] }
         if isCheckIn(userInfo) { return [] }
         return nil
     }

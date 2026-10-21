@@ -34,8 +34,8 @@ extension UNUserNotificationCenter: AIRequestNotificationScheduling {
     }
 }
 
-/// The iPhone's backup for a request: a time-sensitive notification that opens Trio's approval screen, which
-/// asks for Face ID before it approves. It's in the request's thread, with the notifications on the watch.
+/// The iPhone's backup for a request: a time-sensitive notification that opens Trio's Treatments sheet, filled in with
+/// the request. It's in the request's thread, with the notifications on the watch.
 final class AIRequestPhoneBackup: AIRequestPhoneBackupScheduling {
     /// The `userInfo` key that holds the request's ID.
     static let requestIDKey = "aiRequestId"

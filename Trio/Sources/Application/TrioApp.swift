@@ -350,7 +350,7 @@ extension Notification.Name {
                 } else if showOnboardingCompletedSplash {
                     LogoBurstSplash(isActive: $showOnboardingCompletedSplash) {
                         Main.RootView(resolver: resolver)
-                            .aiRequestPhoneApproval()
+                            .aiRequestTreatmentsOpener()
                             .preferredColorScheme(colorScheme(for: colorSchemePreference))
                             .environment(
                                 \.managedObjectContext,
@@ -371,7 +371,7 @@ extension Notification.Name {
                     .transition(.opacity)
                 } else {
                     Main.RootView(resolver: resolver)
-                        .aiRequestPhoneApproval()
+                        .aiRequestTreatmentsOpener()
                         .preferredColorScheme(colorScheme(for: colorSchemePreference) ?? nil)
                         .environment(\.managedObjectContext, coreDataStack.persistentContainer.viewContext)
                         .environment(appState)

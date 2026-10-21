@@ -72,11 +72,11 @@ final class AIRequestsRuntime {
 
         // Subscribed here, before anything can start the coordinator: `outcomes` has no replay, and `start()` can send
         // one at once, for an approval that Trio stopped carrying out. A later subscriber would miss it.
-        // The sheet counts as showing a request only while Trio is in front. Both are read on the main queue, where the
-        // outcomes are received.
+        // The Treatments sheet counts as showing a request only while Trio is in front. Both are read on the main queue,
+        // where the outcomes are received.
         let notifier = AIRequestsRuntime.makeNotifier(
             center: UNUserNotificationCenter.current(),
-            presentedID: { MainActor.assumeIsolated { AIRequestPhoneApprovalPresenter.shared.presented?.id } },
+            presentedID: { MainActor.assumeIsolated { AIRequestTreatmentsSession.shared.requestID } },
             isAppActive: { MainActor.assumeIsolated { UIApplication.shared.applicationState == .active } }
         )
         outcomeSubscription = coordinator.outcomes
@@ -123,10 +123,8 @@ extension AIRequestsRuntime {
         )
     }
 
-    /// The notifier for failures after an approval. It skips a request only while the approval sheet is showing it to
-    /// the wearer: the sheet is presenting it, and Trio is in front. The sheet stays presented through "Checking…" and
-    /// its result, so a wearer who approves and then locks the phone or switches apps still gets the notification.
-    /// `presentedID` and `isAppActive` are read on the main queue.
+    /// The notifier for failures after an approval. It skips a request only while its Treatments sheet is up and Trio is in
+    /// front. `presentedID` and `isAppActive` are read on the main queue.
     static func makeNotifier(
         center: AIRequestNotificationScheduling,
         presentedID: @escaping () -> String?,
