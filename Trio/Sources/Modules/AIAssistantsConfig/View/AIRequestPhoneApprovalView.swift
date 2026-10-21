@@ -1,4 +1,5 @@
 import Combine
+import LocalAuthentication
 import SwiftUI
 import Swinject
 
@@ -127,7 +128,7 @@ extension PendingAIRequest: Identifiable {
 }
 
 /// The approval screen's answers to the request it shows. Approving needs Face ID or the passcode, the same check as
-/// an in-app bolus, because an unlocked phone doesn't prove who is holding it.
+/// an in-app bolus, because an unlocked phone doesn't prove who is holding it. The prompt names the dose.
 struct AIRequestPhoneApprovalFlow {
     let requestID: String
     private let unlock: () async throws -> Bool
@@ -143,13 +144,12 @@ struct AIRequestPhoneApprovalFlow {
         self.answer = answer
     }
 
-    /// Trio's Face ID check, and the coordinator.
-    static func live(requestID: String) -> AIRequestPhoneApprovalFlow {
+    /// Face ID with the dose in its reason, and the coordinator. `shown` is what the request asks for.
+    static func live(requestID: String, shown: AIRequestShown) -> AIRequestPhoneApprovalFlow {
         AIRequestPhoneApprovalFlow(
             requestID: requestID,
             unlock: {
-                guard let unlockManager = TrioApp.resolver.resolve(UnlockManager.self) else { return false }
-                return try await unlockManager.unlock()
+                try await AIRequestUnlock.unlock(reason: AIRequestUnlock.reason(shown: shown))
             },
             answer: { source in
                 guard let coordinator = AIRequestsRuntime.shared?.coordinator else { return }
@@ -206,36 +206,196 @@ enum AIRequestPhoneApprovalPhase: Equatable {
 
 /// Asks the wearer to approve or decline a request on the iPhone, and then shows how it ended. The sheet stays until
 /// the wearer presses Done or swipes it away, which only a result allows.
+///
+/// While it asks, the amounts come first, in two columns, because they are what the wearer is approving: the dose and
+/// the carbs, as `pending.prompt.shown` has them. The title, Trio's context rows (`AIRequestContextRows`, as on the
+/// watch and in the notification), the time left and what Approve does follow, and the buttons stay at the bottom.
+/// The look is Trio's: a `Form` on `Color.chart` rows, over `AppState`'s background, tinted `Color.tabBar`.
 struct AIRequestPhoneApprovalView: View {
     let pending: PendingAIRequest
     /// How the request ended, once it has. The presenter has it from the coordinator's outcomes, and it can come
     /// from an answer given on the watch.
     let result: AIRequestResultMessage?
     let flow: AIRequestPhoneApprovalFlow
+    /// What the device unlocks with, which picks the Approve button's icon.
+    let biometryType: LABiometryType
     /// Closes the sheet.
     let done: () -> Void
 
-    /// Face ID or the answer is under way, so a second tap doesn't start another.
-    @State private var isWorking = false
+    /// The answer that is under way, if one is: Face ID and the answer for Approve, the answer alone for Decline. A
+    /// second tap doesn't start another.
+    @State private var working: Answer?
 
-    private var phase: AIRequestPhoneApprovalPhase {
-        AIRequestPhoneApprovalPhase(result: result, requestID: pending.request.id, isWorking: isWorking)
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(AppState.self) private var appState
+
+    private enum Answer {
+        case approve
+        case decline
     }
 
-    var body: some View {
-        VStack(spacing: 24) {
-            Spacer(minLength: 0)
+    private var phase: AIRequestPhoneApprovalPhase {
+        AIRequestPhoneApprovalPhase(result: result, requestID: pending.request.id, isWorking: working != nil)
+    }
 
+    private var shown: AIRequestShown { pending.prompt.shown }
+
+    var body: some View {
+        Group {
             switch phase {
             case .asking,
                  .checking:
-                requestContent
+                requestForm
             case let .result(message):
                 resultContent(message)
+                    .padding(24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            buttons
+        }
+        .background(appState.trioBackgroundColor(for: colorScheme).ignoresSafeArea())
+        .tint(Color.tabBar)
+        .animation(.default, value: phase)
+        .interactiveDismissDisabled(!phase.allowsSwipeToDismiss)
+        // The accessibility sizes make the amounts and the buttons too big to share a half sheet.
+        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium])
+    }
 
-            Spacer(minLength: 0)
+    // MARK: Asking
 
+    /// The amounts, then the title, Trio's context and the time left, with what Approve does under them.
+    private var requestForm: some View {
+        Form {
+            Section {
+                amounts
+            }
+            .listRowBackground(Color.chart)
+
+            Section {
+                Text(pending.prompt.title)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                contextRows
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text("Expires in \(Self.countdown(until: pending.prompt.expiresAt, now: context.date))")
+                        .font(.subheadline.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .accessibilityAddTraits(.updatesFrequently)
+                }
+            } footer: {
+                if let approveLine {
+                    Text(approveLine)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                }
+            }
+            .listRowBackground(Color.chart)
+        }
+        .scrollContentBackground(.hidden)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    /// The dose and the carbs side by side, as big as anything on the sheet. Where they don't fit side by side, they
+    /// stack. An amount is never scaled or cut. The fat and protein, when there are any, are under them.
+    private var amounts: some View {
+        VStack(spacing: 8) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    insulinColumn
+                    carbsColumn
+                }
+                VStack(spacing: 12) {
+                    insulinColumn
+                    carbsColumn
+                }
+            }
+            if let fatAndProtein = shown.fatAndProteinText {
+                Text(fatAndProtein)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var insulinColumn: some View {
+        amountColumn(
+            Text("Insulin", comment: "iPhone approval: label over Trio's dose"),
+            value: shown.unitsText,
+            color: Color.insulin
+        )
+    }
+
+    private var carbsColumn: some View {
+        amountColumn(
+            Text("Carbs", comment: "iPhone approval: label over the carbs"),
+            value: shown.carbsText,
+            color: .orange
+        )
+    }
+
+    private func amountColumn(_ label: Text, value: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            label
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title.bold().monospacedDigit())
+                .foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Trio's rows for the request, the same as on the watch: a warning has a yellow triangle. Its words stay in the
+    /// primary color, which reads on a light background too.
+    @ViewBuilder private var contextRows: some View {
+        let rows = AIRequestContextRows.rows(
+            context: pending.prompt.context,
+            shown: shown,
+            testKind: pending.prompt.testKind
+        )
+        ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+            Group {
+                if row.isWarning {
+                    Label {
+                        Text(row.text)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                    }
+                } else {
+                    Text(row.text)
+                }
+            }
+            .font(.subheadline)
+        }
+    }
+
+    /// What approving does, or `nil` for a test that only goes through the motions: its own row says nothing is logged
+    /// or given, and this line would say the opposite.
+    private var approveLine: String? {
+        guard pending.prompt.testKind != .dryRun else { return nil }
+        if AIRequestContextRows.givesNoBolus(shown) {
+            return String(
+                localized: "Approving logs \(shown.carbsText) of carbs only.",
+                comment: "iPhone approval: what Approve does when Trio's dose is 0 U. The placeholder is the carbs, for example '35 g'."
+            )
+        }
+        return String(
+            localized: "Approving logs \(shown.carbsText) of carbs and starts a \(shown.unitsText) bolus.",
+            comment: "iPhone approval: what Approve does. The placeholders are the carbs, for example '35 g', and the dose, for example '2.10 U'."
+        )
+    }
+
+    // MARK: Buttons
+
+    /// The answer buttons while it asks, and Done once there's a result. They stay at the bottom while the rest scrolls.
+    private var buttons: some View {
+        Group {
             switch phase {
             case .asking,
                  .checking:
@@ -244,43 +404,21 @@ struct AIRequestPhoneApprovalView: View {
                 doneButton
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .animation(.default, value: phase)
-        .interactiveDismissDisabled(!phase.allowsSwipeToDismiss)
-        .presentationDetents([.medium, .large])
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(.bar)
     }
 
-    private var requestContent: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "fork.knife")
-                .font(.largeTitle)
-                .foregroundStyle(.tint)
-                .accessibilityHidden(true)
-            Text(pending.prompt.title)
-                .font(.title2.weight(.semibold))
-                .multilineTextAlignment(.center)
-            Text(pending.prompt.body)
-                .font(.body)
-                .multilineTextAlignment(.center)
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text("Expires in \(Self.countdown(until: pending.prompt.expiresAt, now: context.date))")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .accessibilityAddTraits(.updatesFrequently)
-            }
-        }
-    }
-
-    /// Approve keeps its full strength while it checks, and shows that it is: only Decline is disabled, and taps on
-    /// Approve are ignored.
+    /// The button that is working shows it, and keeps its full strength. The other one is disabled, and a second tap on
+    /// the working one is ignored.
     private var answerButtons: some View {
-        VStack(spacing: 12) {
+        let approveLabel = AIRequestUnlock.approveLabel(shown: shown, biometryType: biometryType)
+        return VStack(spacing: 12) {
             Button {
-                approve()
+                answer(.approve)
             } label: {
-                if phase == .checking {
+                if working == .approve {
                     HStack(spacing: 8) {
                         ProgressView()
                             .tint(.white)
@@ -288,20 +426,29 @@ struct AIRequestPhoneApprovalView: View {
                     }
                     .frame(maxWidth: .infinity)
                 } else {
-                    Label("Approve with Face ID", systemImage: "faceid")
+                    Label(approveLabel.title, systemImage: approveLabel.symbol)
                         .frame(maxWidth: .infinity)
                 }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(working == .decline)
 
             Button(role: .destructive) {
-                decline()
+                answer(.decline)
             } label: {
-                Text("Decline")
+                if working == .decline {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Declining…")
+                    }
                     .frame(maxWidth: .infinity)
+                } else {
+                    Text("Decline")
+                        .frame(maxWidth: .infinity)
+                }
             }
             .buttonStyle(.bordered)
-            .disabled(isWorking)
+            .disabled(working == .approve)
         }
         .controlSize(.large)
     }
@@ -316,6 +463,8 @@ struct AIRequestPhoneApprovalView: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
     }
+
+    // MARK: Result
 
     /// The icon, the headline and the detail. A request answered on the watch says so above them.
     private func resultContent(_ message: AIRequestResultMessage) -> some View {
@@ -360,23 +509,21 @@ struct AIRequestPhoneApprovalView: View {
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
+    // MARK: Answering
+
     /// A failed or cancelled Face ID changes nothing: the request stays pending and the sheet stays as it was. An
     /// answer that goes through comes back as the result, which the presenter gets from the coordinator.
-    private func approve() {
-        guard !isWorking else { return }
-        isWorking = true
+    private func answer(_ answer: Answer) {
+        guard working == nil else { return }
+        working = answer
         Task {
-            defer { isWorking = false }
-            await flow.approve()
-        }
-    }
-
-    private func decline() {
-        guard !isWorking else { return }
-        isWorking = true
-        Task {
-            defer { isWorking = false }
-            await flow.decline()
+            defer { working = nil }
+            switch answer {
+            case .approve:
+                await flow.approve()
+            case .decline:
+                await flow.decline()
+            }
         }
     }
 }
@@ -410,9 +557,12 @@ private struct AIRequestPhoneApprovalModifier: ViewModifier {
                 AIRequestPhoneApprovalView(
                     pending: pending,
                     result: presenter.result,
-                    flow: .live(requestID: pending.request.id),
+                    flow: .live(requestID: pending.request.id, shown: pending.prompt.shown),
+                    biometryType: AIRequestUnlock.currentBiometryType(),
                     done: { presenter.close() }
                 )
+                // A new request starts a new sheet: nothing the last one was doing carries over.
+                .id(pending.request.id)
             }
             // The coordinator is there by the time the app shows, and a tap that launched Trio waits for it. On a
             // cold launch the scene is already active when the app shows, so its phase doesn't change.
