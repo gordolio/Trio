@@ -309,79 +309,48 @@ import Testing
         #expect(h.prompt("r1").shown.units == "0.27")
     }
 
-    // MARK: The context and the text
+    // MARK: The text
 
-    private static let pizzaContext = AIRequestContext(
-        glucose: "142 mg/dL ↗",
-        glucoseAgeMinutes: 3,
-        recentCarbs: .init(amount: "20", minutesAgo: 6),
-        recentBolus: .init(amount: "3.00", minutesAgo: 8)
-    )
-
-    @Test func promptAndReportCarryTheContext() async {
+    @Test func promptAndReportCarryTheDoseLineOnly() async {
         let h = makeCoordinator(dose: 1.2)
-        h.treatments.contextResult = Self.pizzaContext
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         guard case let .pending(_, _, display) = h.reporter.reports.first?.report else {
             Issue.record("Expected a pending report")
             return
         }
-        #expect(h.prompt("r1").context == Self.pizzaContext)
-        #expect(display.context == Self.pizzaContext)
-        #expect(display.context == h.treatments.contextResult)
-        // Trio asked for the context of the dose it shows.
-        #expect(h.treatments.contextedUnits == [1.2])
-        // The text is built from the same context, with the dose first.
-        #expect(h.prompt("r1").body == display.body)
         #expect(display.title == "ChatGPT: slice of pizza")
-        #expect(display.body == """
-        Bolus 1.20\u{00A0}U · 20\u{00A0}g carbs
-        10\u{00A0}g fat · 8\u{00A0}g protein · 142 mg/dL ↗ · 3 min ago
-        Carbs 20\u{00A0}g logged 6 min ago
-        Bolus 3.00\u{00A0}U given 8 min ago
-        """)
+        #expect(display.body == "Bolus 1.20\u{00A0}U · 20\u{00A0}g carbs")
+        #expect(h.prompt("r1").title == display.title)
+        #expect(h.prompt("r1").body == display.body)
+        // Trio asked about the dose it shows, and the fake has no reason to give.
+        #expect(h.treatments.reasonedUnits == [1.2])
     }
 
-    @Test func theResentPendingReportKeepsTheContext() async {
+    @Test func theResentPendingReportIsTheSame() async {
         let h = makeCoordinator()
-        h.treatments.contextResult = Self.pizzaContext
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         #expect(h.reporter.reports.count == 2)
-        guard case let .pending(_, _, resent) = h.reporter.reports.last?.report else {
-            Issue.record("Expected a pending report")
-            return
-        }
-        #expect(resent.context == Self.pizzaContext)
         #expect(h.reporter.reports[0].report == h.reporter.reports[1].report)
-    }
-
-    @Test func contextSurvivesARelaunchInThePendingFile() async {
-        let files = CoordinatorFiles.temporary()
-        let first = makeCoordinator(files: files)
-        first.treatments.contextResult = Self.pizzaContext
-        await first.coordinator.receive(meal(id: "r1"), via: .service)
-        let second = makeCoordinator(files: files)
-        await second.coordinator.start()
-        #expect(second.coordinator.current.value?.prompt.context == Self.pizzaContext)
     }
 
     @Test func aZeroDoseRequestSaysWhy() async {
         let h = makeCoordinator(dose: 0)
-        h.treatments.contextResult = AIRequestContext(noDoseReason: "glucose is forecast to go low")
+        h.treatments.noDoseReasonResult = "glucose is forecast to go low"
         await h.coordinator.receive(meal(id: "r1", carbs: 35, fat: 0, protein: 0), via: .service)
         #expect(h.prompt("r1").body == """
         No bolus · 35\u{00A0}g carbs
         Trio suggests no insulin now: glucose is forecast to go low
         """)
         #expect(h.prompt("r1").shown.units == "0.00")
+        // Trio asked for the reason of the dose it shows.
+        #expect(h.treatments.reasonedUnits == [0])
     }
 
     @Test func aZeroDoseRequestWithoutAKnownReasonSaysSoPlainly() async {
         let h = makeCoordinator(dose: 0)
         await h.coordinator.receive(meal(id: "r1", carbs: 35, fat: 0, protein: 0), via: .service)
         #expect(h.prompt("r1").body == "No bolus · 35\u{00A0}g carbs\nTrio suggests no insulin now")
-        #expect(h.prompt("r1").context?.noDoseReason == nil)
     }
 
     // MARK: The watch is open

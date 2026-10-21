@@ -3,12 +3,14 @@ import Foundation
 /// The notification text the wearer sees for a request, for example "ChatGPT: slice of pizza" over
 ///
 ///     Bolus 2.10 U · 35 g carbs
-///     10 g fat · 12 g protein · 142 mg/dL ↗ · 3 min ago
-///     Carbs 20 g logged 6 min ago
-///     Bolus 3.00 U given 8 min ago
+///
+/// and, when Trio's dose is 0 U, over
+///
+///     No bolus · 35 g carbs
+///     Trio suggests no insulin now: glucose is low (52 mg/dL)
 ///
 /// Each amount in grams or units sits next to its unit with a no-break space (U+00A0), so a line never wraps between
-/// them. The glucose ("142 mg/dL") and the minutes ("3 min ago") use plain spaces.
+/// them. Nothing else about the wearer's glucose, carbs or insulin is in it: the screens the request opens show them.
 enum AIRequestDisplayText {
     /// The service refuses notification text longer than this many UTF-16 code units, which is what its
     /// JavaScript string length counts, so an emoji takes two.
@@ -55,27 +57,22 @@ enum AIRequestDisplayText {
         }
     }
 
-    /// The title and body of a request, and the context the service gets. Each line of the body appears only when it
-    /// applies: the dose first, then the fat, protein and glucose, why the dose is 0 U, and the facts about recent carbs
-    /// and insulin.
+    /// The title and body of a request: the dose line, and for a 0 U dose why. `noDoseReason` is a reason Trio knows is
+    /// true, for example "glucose is low (52 mg/dL)", or `nil` when it knows none.
     static func display(
         source: String,
         description: String,
         shown: AIRequestShown,
-        context: AIRequestContext
+        noDoseReason: String?
     ) -> AIRequestDisplay {
         AIRequestDisplay(
             title: title(source: source, description: description),
-            body: body(shown: shown, context: context),
-            context: context
+            body: body(shown: shown, noDoseReason: noDoseReason)
         )
     }
 
-    private static func body(shown: AIRequestShown, context: AIRequestContext) -> String {
-        let givesNoBolus = AIRequestContextRows.givesNoBolus(shown)
-        // Trio's context rows, shared with the watch's approval screen so the two can't drift apart. The glucose joins
-        // the fat and protein on the second line; the rest follow in their own order.
-        let rows = AIRequestContextRows.rows(context: context, shown: shown)
+    private static func body(shown: AIRequestShown, noDoseReason: String?) -> String {
+        let givesNoBolus = Self.givesNoBolus(shown)
         let carbs = trimmed(shown.carbs)
         var lines: [String] = []
 
@@ -91,38 +88,29 @@ enum AIRequestDisplayText {
                 )
         )
 
-        var details: [String] = []
-        if let fat = positive(shown.fat) {
-            details.append(String(
-                localized: "\(fat)\u{00A0}g fat",
-                comment: "Request notification: the fat in grams. The no-break space keeps the number with its unit."
+        if let reason = noDoseReason, !reason.isEmpty {
+            lines.append(String(
+                localized: "Trio suggests no insulin now: \(reason)",
+                comment: "Request notification: why Trio's dose is 0 U. The placeholder is the reason, for example 'glucose is low (52 mg/dL)'."
+            ))
+        } else if givesNoBolus {
+            // Trio only says a reason it knows is true.
+            lines.append(String(
+                localized: "Trio suggests no insulin now",
+                comment: "Request notification: Trio's dose is 0 U and there's no reason to give"
             ))
         }
-        if let protein = positive(shown.protein) {
-            details.append(String(
-                localized: "\(protein)\u{00A0}g protein",
-                comment: "Request notification: the protein in grams. The no-break space keeps the number with its unit."
-            ))
-        }
-        if let glucose = rows.first(where: { $0.kind == .glucose }) {
-            details.append(glucose.text)
-        }
-        if !details.isEmpty {
-            lines.append(details.joined(separator: " · "))
-        }
-        lines += rows.filter { $0.kind != .glucose }.map(\.text)
         return cappedBody(lines.joined(separator: "\n"))
+    }
+
+    /// Whether Trio's dose is 0 U. An amount that can't be read counts as a dose, so nothing says there's none.
+    private static func givesNoBolus(_ shown: AIRequestShown) -> Bool {
+        (Decimal(string: shown.units, locale: Locale(identifier: "en_US_POSIX")) ?? 1) <= 0
     }
 
     /// A number as text without trailing zeros: "35.00" is "35", "12.50" is "12.5".
     private static func trimmed(_ amount: String) -> String {
         Decimal(string: amount)?.description ?? amount
-    }
-
-    /// The amount without trailing zeros when it is above 0, otherwise `nil`.
-    private static func positive(_ amount: String) -> String? {
-        guard let value = Decimal(string: amount), value > 0 else { return nil }
-        return value.description
     }
 
     /// Text over `maxLength` is cut short, at a whole character, and ends with "…".
@@ -194,40 +182,6 @@ enum AIRequestDisplayText {
         return ranges
     }
 
-    /// The arrow for a `BloodGlucose.Direction` raw value, or "" when there's no trend.
-    static func arrow(_ direction: String?) -> String {
-        guard let direction = direction.flatMap(BloodGlucose.Direction.init(rawValue:)) else { return "" }
-        switch direction {
-        case .doubleUp,
-             .tripleUp:
-            return "⇈"
-        case .singleUp:
-            return "↑"
-        case .fortyFiveUp:
-            return "↗"
-        case .flat:
-            return "→"
-        case .fortyFiveDown:
-            return "↘"
-        case .singleDown:
-            return "↓"
-        case .doubleDown,
-             .tripleDown:
-            return "⇊"
-        case .none,
-             .notComputable,
-             .rateOutOfRange:
-            return ""
-        }
-    }
-
-    /// "142 mg/dL ↗", or "7.9 mmol/L ↗" to one decimal.
-    static func reading(_ glucose: StatusSnapshot.LatestGlucose, displayUnits: String) -> String {
-        [value(mgdl: glucose.mgdl, displayUnits: displayUnits), arrow(glucose.direction)]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
     /// "142 mg/dL", or "7.9 mmol/L" to one decimal. `displayUnits` is a `GlucoseUnits` raw value.
     static func value(mgdl: Int, displayUnits: String) -> String {
         if displayUnits == GlucoseUnits.mmolL.rawValue {
@@ -235,11 +189,5 @@ enum AIRequestDisplayText {
             return "\(String(format: "%.1f", mmol)) \(GlucoseUnits.mmolL.rawValue)"
         }
         return "\(mgdl) \(GlucoseUnits.mgdL.rawValue)"
-    }
-
-    /// Up to two decimals, rounded down so a dose never reads higher than what's delivered, with trailing zeros
-    /// trimmed and a "." whatever the locale, like the rest of this English text.
-    static func amount(_ value: Decimal) -> String {
-        rounded(value, scale: 2, roundingMode: .down).description
     }
 }

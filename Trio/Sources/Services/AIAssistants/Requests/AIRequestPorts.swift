@@ -51,8 +51,6 @@ enum AIRequestDeclinedOn: String, Codable {
 struct AIRequestDisplay: Codable, Equatable {
     let title: String
     let body: String
-    /// What Trio itself adds to the request, sent to the service so it can relay it to the watch.
-    var context: AIRequestContext? = nil
 }
 
 /// The wearer's max carbs, fat and protein, in grams, and max bolus, in units.
@@ -148,9 +146,10 @@ protocol AIRequestReporter: AnyObject {
 protocol AIRequestTreatments: AnyObject {
     var limits: AIRequestLimits { get }
     func dose(forCarbs carbs: Decimal) async -> AIRequestDose
-    /// Trio's own facts for the request's approval: the latest glucose, recent carbs and insulin, and why the dose is
-    /// 0 U when `units` is 0. Every value is inside trio-rc's limits.
-    func context(for request: AIMealRequest, units: Decimal) async -> AIRequestContext
+    /// Why Trio's dose is 0 U, for the notification, when `units` is 0 and Trio knows the reason is true. `nil` for a
+    /// dose over 0 U, and for a 0 U dose with no reason to give: the bolus calculator also gives 0 U when the dose it
+    /// works out is 0 or under the pump's increment.
+    func noDoseReason(units: Decimal) async -> String?
     /// Stores the request's meal, eaten now, with the note `AI: <source> – <description>`. `carbs` replaces the
     /// request's own carbs when set; the fat and protein are always the request's.
     func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws
@@ -165,7 +164,7 @@ protocol AIRequestWatchDelivery: AnyObject {
     var isWatchAvailable: Bool { get }
 }
 
-/// The iPhone's backup notification, which opens Trio's approval screen. `askedOn` says where the request was asked
+/// The iPhone's backup notification, which opens the request on the Treatments sheet. `askedOn` says where the request was asked
 /// first, which its wording follows.
 protocol AIRequestPhoneBackupScheduling: AnyObject {
     func schedule(_ prompt: AIRequestPrompt, after delay: TimeInterval, askedOn: AIRequestAskedOn)

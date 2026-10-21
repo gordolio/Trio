@@ -59,7 +59,7 @@ actor AIRequestCoordinator {
     private static let finalReportRetention: TimeInterval = 24 * 60 * 60
     /// The longest a request is asked for, whatever `expiresAt` the service sent.
     private static let maxLifetime: TimeInterval = 5 * 60
-    /// How long from the watch opening its approval screen the iPhone's backup waits.
+    /// How long from the watch opening the request's Confirm screen the iPhone's backup waits.
     private static let backupPostponement: TimeInterval = 60
     /// The longest an open screen holds a request past its `expiresAt`. trio-rc's grace covers it, so don't change it.
     private static let openScreenHold: TimeInterval = 10 * 60
@@ -154,7 +154,7 @@ actor AIRequestCoordinator {
 
         let dose = await treatments.dose(forCarbs: request.carbs)
         let units = Self.shownUnits(dose.units)
-        let context = await treatments.context(for: request, units: units)
+        let noDoseReason = await treatments.noDoseReason(units: units)
 
         // Nothing suspends from here to the reports, so no other call sees the swap half done.
         let replaced = takePending(.replaced)
@@ -165,7 +165,7 @@ actor AIRequestCoordinator {
             source: request.source,
             description: request.description,
             shown: shown,
-            context: context
+            noDoseReason: noDoseReason
         )
         let prompt = AIRequestPrompt(
             id: request.id,
@@ -174,8 +174,7 @@ actor AIRequestCoordinator {
             shown: shown,
             title: display.title,
             body: display.body,
-            expiresAt: request.expiresAt,
-            context: context
+            expiresAt: request.expiresAt
         )
         let phoneDelay = askedOn == .phone ? 0 : preferences.phoneBackupDelay
         let pending = PendingAIRequest(
@@ -240,7 +239,7 @@ actor AIRequestCoordinator {
         await reportFinal(.expired, id: pending.request.id, via: pending.channel)
     }
 
-    /// The watch opened the approval screen of the pending request, so the iPhone's backup waits: it's asked a minute
+    /// The watch opened the Confirm screen of the pending request, so the iPhone's backup waits: it's asked a minute
     /// from now instead. It's done once for each request, so a wearer who keeps reopening the screen doesn't put the
     /// backup off for good. Only a request the watch was asked first has a backup to wait.
     func postponePhoneBackup(id: String) {
@@ -624,11 +623,7 @@ actor AIRequestCoordinator {
         .pending(
             askedOn: pending.askedOn,
             shown: pending.prompt.shown,
-            display: AIRequestDisplay(
-                title: pending.prompt.title,
-                body: pending.prompt.body,
-                context: pending.prompt.context
-            )
+            display: AIRequestDisplay(title: pending.prompt.title, body: pending.prompt.body)
         )
     }
 

@@ -41,7 +41,4 @@ struct AIRequestPrompt: Codable, Equatable {
     let title: String
     let body: String
     let expiresAt: Date
-    /// What Trio itself adds to the request: the latest glucose, recent carbs and insulin, and why the dose is 0 U.
-    /// `nil` for a request made before Trio recorded them.
-    var context: AIRequestContext? = nil
 }

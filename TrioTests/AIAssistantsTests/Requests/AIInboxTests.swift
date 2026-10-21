@@ -79,27 +79,15 @@ import Testing
         #expect(!text.contains("approvalStyle") && !text.contains("answerRoute") && !text.contains("mac"))
     }
 
-    @Test func pendingBodyCarriesTheContextInsideTheDisplay() throws {
-        let context = AIRequestContext(
-            glucose: "142 mg/dL ↗",
-            glucoseAgeMinutes: 3,
-            recentCarbs: .init(amount: "20", minutesAgo: 6),
-            recentBolus: .init(amount: "3.00", minutesAgo: 8),
-            noDoseReason: nil
-        )
+    @Test func pendingDisplayHasOnlyTheTitleAndBody() throws {
         let body = AIRequestStateBody(.pending(
             askedOn: .watch,
             shown: Self.shown,
-            display: .init(title: "t", body: "b", context: context)
+            display: .init(title: "t", body: "b")
         ))
+        // The service reads the title and body of the display, and nothing Trio adds to the request.
         let display = try #require(try keys(of: body)["display"] as? [String: Any])
-        #expect(Set(display.keys) == ["title", "body", "context"])
-        let sent = try #require(display["context"] as? [String: Any])
-        // Exactly the keys trio-rc reads: a fact Trio doesn't have is left out, not null.
-        #expect(Set(sent.keys) == ["glucose", "glucoseAgeMinutes", "recentCarbs", "recentBolus"])
-        #expect(sent["glucose"] as? String == "142 mg/dL ↗" && sent["glucoseAgeMinutes"] as? Int == 3)
-        #expect(sent["recentCarbs"] as? [String: AnyHashable] == ["amount": "20", "minutesAgo": 6])
-        #expect(sent["recentBolus"] as? [String: AnyHashable] == ["amount": "3.00", "minutesAgo": 8])
+        #expect(Set(display.keys) == ["title", "body"])
     }
 
     @Test func deliveringAndLoggedBodiesCarryShown() throws {

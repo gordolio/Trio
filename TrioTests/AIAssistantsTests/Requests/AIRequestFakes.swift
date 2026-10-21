@@ -35,15 +35,15 @@ final class FakeTreatments: AIRequestTreatments {
     private var storedMeals: [StoredCarbs] = []
     private var enactedUnits: [Decimal] = []
     private var recordedEvents: [String] = []
-    private var contextUnits: [Decimal] = []
+    private var reasonUnits: [Decimal] = []
     private var storeHook: (() async -> Void)?
     private var enactHook: (() async -> Void)?
 
     var limits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250, maxBolus: 10)
     /// What `dose(forCarbs:)` returns: 1.2 U.
     var doseResult = AIRequestDose(units: 1.2)
-    /// What `context(for:units:)` returns.
-    var contextResult = AIRequestContext()
+    /// What `noDoseReason(units:)` returns.
+    var noDoseReasonResult: String?
     /// What `enactBolus` returns: `nil` means the pump accepted it.
     var enactResult: String?
     var storeError: Error?
@@ -60,8 +60,8 @@ final class FakeTreatments: AIRequestTreatments {
         set { lock.withLock { enactHook = newValue } }
     }
 
-    /// The `units` of each `context(for:units:)` call.
-    var contextedUnits: [Decimal] { lock.withLock { contextUnits } }
+    /// The `units` of each `noDoseReason(units:)` call.
+    var reasonedUnits: [Decimal] { lock.withLock { reasonUnits } }
     var stored: [AIMealRequest] { lock.withLock { storedRequests } }
     /// What each `storeCarbs` stored, with its carbs override applied.
     var storedCarbs: [StoredCarbs] { lock.withLock { storedMeals } }
@@ -73,9 +73,9 @@ final class FakeTreatments: AIRequestTreatments {
         doseResult
     }
 
-    func context(for _: AIMealRequest, units: Decimal) async -> AIRequestContext {
-        lock.withLock { contextUnits.append(units) }
-        return contextResult
+    func noDoseReason(units: Decimal) async -> String? {
+        lock.withLock { reasonUnits.append(units) }
+        return noDoseReasonResult
     }
 
     func storeCarbs(for request: AIMealRequest, carbs: Decimal?) async throws {

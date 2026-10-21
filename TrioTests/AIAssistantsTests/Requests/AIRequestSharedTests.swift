@@ -16,18 +16,20 @@ import Testing
         #expect(shown == AIRequestShown(carbs: "20.01", fat: "0.00", protein: "7.50", units: "1.23"))
     }
 
-    @Test func promptKeepsItsContextThroughJSON() throws {
-        var prompt = Self.prompt
-        prompt.context = AIRequestContext(glucose: "142 mg/dL ↗", recentBolus: .init(amount: "3.00", minutesAgo: 8))
-        let decoded = try JSONDecoder().decode(AIRequestPrompt.self, from: JSONEncoder().encode(prompt))
-        #expect(decoded == prompt)
-        // A prompt saved before the context existed still reads.
-        let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any]
-        #expect(plain?["context"] == nil)
-        #expect(
-            try JSONDecoder().decode(AIRequestPrompt.self, from: JSONSerialization.data(withJSONObject: plain ?? [:])) == Self
-                .prompt
-        )
+    @Test func promptKeepsItsFieldsThroughJSON() throws {
+        let decoded = try JSONDecoder().decode(AIRequestPrompt.self, from: JSONEncoder().encode(Self.prompt))
+        #expect(decoded == Self.prompt)
+        // Nothing but the prompt's own fields is saved: no context.
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any])
+        #expect(Set(object.keys) == ["id", "source", "description", "shown", "title", "body", "expiresAt"])
+    }
+
+    @Test func aPromptSavedWithAContextStillReads() throws {
+        // A pending request saved by an earlier build has the context Trio used to add. It reads as the prompt it was.
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any])
+        object["context"] = ["glucose": "142 mg/dL ↗", "recentBolus": ["amount": "3.00", "minutesAgo": 8]]
+        let decoded = try JSONDecoder().decode(AIRequestPrompt.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(decoded == Self.prompt)
     }
 
     @Test func requestIDReadsTheServicesPush() {
