@@ -547,4 +547,25 @@ import Testing
         #expect(AIRequestWatchRing.success.drainDuration == 1.5)
         #expect(AIRequestWatchRing.neutral.drainDuration == 1.0)
     }
+
+    @Test(
+        "The crown always confirms before watchOS 11, and after it only without an accessibility text size or VoiceOver"
+    ) func crownConfirmsOnlyWhereItIsFree() {
+        // watchOS 10 has no Approve button, so the crown is the only way to approve: nothing takes it away.
+        for isAccessibilitySize in [false, true] {
+            for isVoiceOverOn in [false, true] {
+                #expect(AIRequestWatchFlow.crownConfirms(
+                    hasApproveButton: false,
+                    isAccessibilitySize: isAccessibilitySize,
+                    isVoiceOverOn: isVoiceOverOn
+                ))
+            }
+        }
+
+        // watchOS 11 and later: only the plain case keeps the crown for approving.
+        #expect(AIRequestWatchFlow.crownConfirms(hasApproveButton: true, isAccessibilitySize: false, isVoiceOverOn: false))
+        #expect(!AIRequestWatchFlow.crownConfirms(hasApproveButton: true, isAccessibilitySize: true, isVoiceOverOn: false))
+        #expect(!AIRequestWatchFlow.crownConfirms(hasApproveButton: true, isAccessibilitySize: false, isVoiceOverOn: true))
+        #expect(!AIRequestWatchFlow.crownConfirms(hasApproveButton: true, isAccessibilitySize: true, isVoiceOverOn: true))
+    }
 }

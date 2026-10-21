@@ -172,6 +172,18 @@ struct AIRequestWatchFlow: Equatable {
         }
     }
 
+    /// Whether the crown confirms an approval on the asking screen.
+    ///
+    /// Before watchOS 11 there is no Approve button, so the crown is the only way to approve and always confirms. From
+    /// watchOS 11 Approve exists, and the crown stands down wherever it's needed for something else: at an accessibility
+    /// text size the screen scrolls with it, and with VoiceOver on it navigates. Approve and the double tap confirm there.
+    /// Where the crown confirms, the screen keeps the bar in view; where it doesn't, the screen takes no crown input at
+    /// all, so a turn of the crown can never fill a bar the wearer can't see.
+    static func crownConfirms(hasApproveButton: Bool, isAccessibilitySize: Bool, isVoiceOverOn: Bool) -> Bool {
+        guard hasApproveButton else { return true }
+        return !isAccessibilitySize && !isVoiceOverOn
+    }
+
     /// The haptic for the screen moving from phase `old` to phase `new`, or `nil` for none. It plays after the move, so it
     /// follows what became of sending the answer and never runs ahead of it: committing to an approve is felt only once
     /// the answer was sent or queued, and an answer that couldn't be sent is a failure, never a success.

@@ -162,68 +162,97 @@ struct AIRequestApprovalView: View {
         /// The last resort: the context rows take whatever room is left, and their text shrinks to fit it.
         var squeezesContext = false
 
+        /// Whether the crown bar is part of this layout. At accessibility text sizes it isn't: the screen scrolls, so the
+        /// bar is pinned below the scroll view instead, where it can't be scrolled out of sight.
+        var showsBar = true
+
         /// Accessibility text sizes: nothing is shed, and the screen scrolls instead.
-        static let largeText = Fit(titleLines: nil)
+        static let largeText = Fit(titleLines: nil, showsBar: false)
     }
 
-    /// Whether the crown confirms an approval. On watchOS 11 and later at accessibility text sizes it doesn't: the
-    /// screen scrolls with the crown, and Approve confirms. On watchOS 10 the crown is the only way to approve, so it
-    /// still does.
+    /// Whether the crown confirms an approval, by `AIRequestWatchFlow.crownConfirms`: always before watchOS 11, where
+    /// the crown is the only way to approve, and after it only when the crown isn't needed to scroll (an accessibility
+    /// text size) or to navigate (VoiceOver), where Approve confirms.
     private var crownConfirms: Bool {
+        var hasApproveButton = false
         if #available(watchOS 11, *) {
-            return !dynamicTypeSize.isAccessibilitySize
+            hasApproveButton = true
         }
-        return true
+        return AIRequestWatchFlow.crownConfirms(
+            hasApproveButton: hasApproveButton,
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
+            isVoiceOverOn: isVoiceOverOn
+        )
     }
 
     private var request: some View {
         // On a small screen it sheds, in order: the title's second line, the fat and protein, the hint, the controls'
         // size, and last the context rows' text size. The title, the amounts and Decline always stay, every context row
         // stays, and an amount is never scaled or cut. At accessibility text sizes nothing is shed; the screen scrolls.
-        Group {
-            if dynamicTypeSize.isAccessibilitySize {
-                ScrollView {
-                    asking(.largeText)
+        // Whenever the crown confirms, its bar stays in view: pinned below the scroll view, so the crown, which is also
+        // how one scrolls, can never fill a bar that has been scrolled out of sight.
+        crownApproval(
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 4) {
+                        ScrollView {
+                            asking(.largeText)
+                        }
+                        if crownConfirms {
+                            confirmationBar(showsGlyph: true)
+                        }
+                    }
+                } else {
+                    ViewThatFits(in: .vertical) {
+                        asking(Fit())
+                        asking(Fit(titleLines: 1))
+                        asking(Fit(titleLines: 1, showsFatAndProtein: false))
+                        asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false))
+                        asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false, smallControls: true))
+                        asking(Fit(
+                            titleLines: 1,
+                            showsFatAndProtein: false,
+                            showsHint: false,
+                            smallControls: true,
+                            squeezesContext: true
+                        ))
+                    }
                 }
-            } else {
-                ViewThatFits(in: .vertical) {
-                    asking(Fit())
-                    asking(Fit(titleLines: 1))
-                    asking(Fit(titleLines: 1, showsFatAndProtein: false))
-                    asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false))
-                    asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false, smallControls: true))
-                    asking(Fit(
-                        titleLines: 1,
-                        showsFatAndProtein: false,
-                        showsHint: false,
-                        smallControls: true,
-                        squeezesContext: true
-                    ))
-                }
-            }
-        }
-        .focusable(crownConfirms)
-        .focused($isCrownFocused)
-        // The system's detents are the crown's only haptic. A crown left alone below 100 % eases back to 0 (W5).
-        .digitalCrownRotation(
-            detent: $confirmationProgress,
-            from: 0.0,
-            through: 1.0,
-            by: 0.05,
-            sensitivity: .medium,
-            isContinuous: false,
-            isHapticFeedbackEnabled: true,
-            onIdle: {
-                easeBackIfIdle()
             }
         )
-        .onAppear {
-            isCrownFocused = true
-        }
         .onChange(of: confirmationProgress) { _, newValue in
             if newValue >= 1.0, crownConfirms {
                 approve()
             }
+        }
+    }
+
+    /// Gives `content` the crown, only while the crown confirms. Otherwise `content` has no focus and no crown handler,
+    /// so on watchOS 11 at an accessibility text size or with VoiceOver on, the crown is the system's: it scrolls the
+    /// screen, and nothing about approving rides on it.
+    @ViewBuilder private func crownApproval(_ content: some View) -> some View {
+        if crownConfirms {
+            content
+                .focusable(true)
+                .focused($isCrownFocused)
+                // The system's detents are the crown's only haptic. A crown left alone below 100 % eases back to 0 (W5).
+                .digitalCrownRotation(
+                    detent: $confirmationProgress,
+                    from: 0.0,
+                    through: 1.0,
+                    by: 0.05,
+                    sensitivity: .medium,
+                    isContinuous: false,
+                    isHapticFeedbackEnabled: true,
+                    onIdle: {
+                        easeBackIfIdle()
+                    }
+                )
+                .onAppear {
+                    isCrownFocused = true
+                }
+        } else {
+            content
         }
     }
 
@@ -257,13 +286,14 @@ struct AIRequestApprovalView: View {
             }
             .padding(.horizontal)
 
-            if crownConfirms {
+            if crownConfirms, fit.showsBar {
                 // Without the hint, the crown glyph stays next to the bar to say what the bar is for.
                 confirmationBar(showsGlyph: !fit.showsHint)
             }
 
             if fit.showsHint {
-                hint
+                // The pinned bar has the crown glyph already.
+                hint(showsGlyph: fit.showsBar)
                     .layoutPriority(1)
             }
 
@@ -384,7 +414,7 @@ struct AIRequestApprovalView: View {
     }
 
     /// How to approve, or how long is left once that's under a minute.
-    private var hint: some View {
+    private func hint(showsGlyph: Bool) -> some View {
         TimelineView(.periodic(from: flow.shownAt, by: 1)) { context in
             Group {
                 if let countdown = flow.countdown(at: context.date) {
@@ -394,7 +424,7 @@ struct AIRequestApprovalView: View {
                     ))
                         .foregroundStyle(.orange)
                 } else {
-                    approveHintView
+                    approveHintView(showsGlyph: showsGlyph)
                 }
             }
             .font(.footnote)
@@ -406,9 +436,9 @@ struct AIRequestApprovalView: View {
         }
     }
 
-    @ViewBuilder private var approveHintView: some View {
+    @ViewBuilder private func approveHintView(showsGlyph: Bool) -> some View {
         let howTo = approveHint
-        if howTo.mentionsCrown {
+        if howTo.mentionsCrown, showsGlyph {
             Label {
                 Text(howTo.text)
             } icon: {
@@ -930,6 +960,13 @@ private func previewScreen(
     previewScreen(.lasagne)
         .dynamicTypeSize(.xxxLarge)
         .frame(width: 211, height: 257)
+}
+
+#Preview("40 mm, accessibility5") {
+    // The largest text on the smallest watch: the amounts must still show in full.
+    previewScreen(.lasagne)
+        .dynamicTypeSize(.accessibility5)
+        .frame(width: 162, height: 197)
 }
 
 #Preview("41 mm, accessibility3") {
