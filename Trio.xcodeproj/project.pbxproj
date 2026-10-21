@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BB270F9B52AE45639A49F01C /* AIRequestPhoneApprovalPresenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 379899B50EF045ADA31FDEFC /* AIRequestPhoneApprovalPresenterTests.swift */; };
 		2A2EF9D338FC40AFA8EF819D /* AIRequestContextRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 448CFCADCBEB45C592DDD855 /* AIRequestContextRowsTests.swift */; };
 		8CBE3564F92D4FAC80C86100 /* AIRequestContextRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66425E2B5CB84366A64D6F83 /* AIRequestContextRows.swift */; };
 		B389AB83EA1345E4A5B47F64 /* AIRequestContextRows.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66425E2B5CB84366A64D6F83 /* AIRequestContextRows.swift */; };
@@ -1333,6 +1334,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		379899B50EF045ADA31FDEFC /* AIRequestPhoneApprovalPresenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneApprovalPresenterTests.swift; sourceTree = "<group>"; };
 		448CFCADCBEB45C592DDD855 /* AIRequestContextRowsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestContextRowsTests.swift; sourceTree = "<group>"; };
 		66425E2B5CB84366A64D6F83 /* AIRequestContextRows.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestContextRows.swift; sourceTree = "<group>"; };
 		C9DF80AA5167493BB7EBD225 /* AIRequestWatchFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchFlow.swift; sourceTree = "<group>"; };
@@ -2673,6 +2675,7 @@
 		7ADFEF598A034B3EAB259796 /* Requests */ = {
 			isa = PBXGroup;
 			children = (
+				379899B50EF045ADA31FDEFC /* AIRequestPhoneApprovalPresenterTests.swift */,
 				448CFCADCBEB45C592DDD855 /* AIRequestContextRowsTests.swift */,
 				C27F559271E8458E9FE9AE8C /* AIRequestWatchFlowTests.swift */,
 				252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */,
@@ -6910,6 +6913,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BB270F9B52AE45639A49F01C /* AIRequestPhoneApprovalPresenterTests.swift in Sources */,
 				2A2EF9D338FC40AFA8EF819D /* AIRequestContextRowsTests.swift in Sources */,
 				8B603C4677D1481AAA564BF3 /* AIRequestWatchFlowTests.swift in Sources */,
 				3F4DC5F2F4DE4EEE9846B260 /* AIRequestContextTests.swift in Sources */,

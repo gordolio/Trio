@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 import Testing
 import UserNotifications
@@ -54,7 +53,7 @@ final class FakeNotificationCenter: AIRequestNotificationScheduling {
     }
 }
 
-private func samplePrompt(id: String) -> AIRequestPrompt {
+func samplePrompt(id: String) -> AIRequestPrompt {
     AIRequestPrompt(
         id: id,
         source: "ChatGPT",
@@ -70,7 +69,7 @@ private func samplePrompt(id: String) -> AIRequestPrompt {
     )
 }
 
-private func samplePending(
+func samplePending(
     id: String,
     askedOn: AIRequestAskedOn = .phone,
     phoneAskAt: Date? = nil
@@ -238,141 +237,6 @@ private func samplePending(
 }
 
 @Suite("AI request phone approval") @MainActor struct AIRequestPhoneApprovalTests {
-    /// Lets the presenter see what the subject sent, which it receives on the main queue.
-    private func flushMainQueue() async {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.main.async { continuation.resume() }
-        }
-    }
-
-    @Test func tappedNotificationPresentsThePendingRequest() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r1"))
-        let presenter = AIRequestPhoneApprovalPresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        await flushMainQueue()
-        presenter.open(requestID: "r1")
-        #expect(presenter.presented?.request.id == "r1")
-    }
-
-    @Test func tapBeforeTheCoordinatorHasTheRequestWaitsForIt() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(nil)
-        let presenter = AIRequestPhoneApprovalPresenter()
-        presenter.open(requestID: "r1") // a cold launch from the notification, before anything is followed
-        presenter.follow(current.eraseToAnyPublisher())
-        await flushMainQueue()
-        #expect(presenter.presented == nil)
-        current.send(samplePending(id: "r1"))
-        await flushMainQueue()
-        #expect(presenter.presented?.request.id == "r1")
-    }
-
-    @Test func tapForAnotherRequestPresentsNothing() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r2"))
-        let presenter = AIRequestPhoneApprovalPresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        await flushMainQueue()
-        presenter.open(requestID: "r1")
-        #expect(presenter.presented == nil)
-    }
-
-    @Test func answeredOrExpiredRequestDismissesTheSheet() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r1"))
-        let presenter = AIRequestPhoneApprovalPresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        presenter.open(requestID: "r1")
-        await flushMainQueue()
-        #expect(presenter.presented?.request.id == "r1")
-        current.send(nil)
-        await flushMainQueue()
-        #expect(presenter.presented == nil)
-    }
-
-    @Test func replacementRequestDismissesTheSheetWithoutPresentingItself() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r1"))
-        let presenter = AIRequestPhoneApprovalPresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        presenter.open(requestID: "r1")
-        await flushMainQueue()
-        // The coordinator sends nil, then the new request.
-        current.send(nil)
-        current.send(samplePending(id: "r2"))
-        await flushMainQueue()
-        #expect(presenter.presented == nil)
-    }
-
-    @Test func requestStillPendingKeepsTheSheetOpen() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r1"))
-        let presenter = AIRequestPhoneApprovalPresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        presenter.open(requestID: "r1")
-        await flushMainQueue()
-        current.send(samplePending(id: "r1"))
-        await flushMainQueue()
-        #expect(presenter.presented?.request.id == "r1")
-    }
-
-    // MARK: Opening Trio
-
-    private func makePresenter(delivered: [String] = []) -> AIRequestPhoneApprovalPresenter {
-        let center = FakeNotificationCenter()
-        center.delivered = delivered
-        return AIRequestPhoneApprovalPresenter(isBackupDue: {
-            await AIRequestPhoneBackup(center: center).isDue($0, now: Date())
-        })
-    }
-
-    @Test func openingTrioPresentsARequestAskedOnTheIPhone() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r1", askedOn: .phone))
-        let presenter = makePresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        await flushMainQueue()
-        await presenter.presentIfDue(current.value)
-        #expect(presenter.presented?.request.id == "r1")
-    }
-
-    @Test func openingTrioLeavesARequestTheWatchIsStillAskingFor() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r1", askedOn: .watch))
-        let presenter = makePresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        await flushMainQueue()
-        await presenter.presentIfDue(current.value)
-        #expect(presenter.presented == nil)
-    }
-
-    @Test func openingTrioPresentsARequestWhoseBackupWasDelivered() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(samplePending(id: "r1", askedOn: .watch))
-        let presenter = makePresenter(delivered: ["ai-request-r1"])
-        presenter.follow(current.eraseToAnyPublisher())
-        await flushMainQueue()
-        await presenter.presentIfDue(current.value)
-        #expect(presenter.presented?.request.id == "r1")
-    }
-
-    @Test func openingTrioWithNothingPendingPresentsNothing() async {
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(nil)
-        let presenter = makePresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        await flushMainQueue()
-        await presenter.presentIfDue(nil)
-        current.send(samplePending(id: "r1", askedOn: .watch))
-        await flushMainQueue()
-        #expect(presenter.presented == nil)
-    }
-
-    @Test func dueRequestFoundBeforeThePresenterHasItWaitsForIt() async {
-        // A cold launch: the coordinator has read the request, and the presenter hasn't received it yet.
-        let current = CurrentValueSubject<PendingAIRequest?, Never>(nil)
-        let presenter = makePresenter()
-        presenter.follow(current.eraseToAnyPublisher())
-        await presenter.presentIfDue(samplePending(id: "r1", askedOn: .phone))
-        #expect(presenter.presented == nil)
-        current.send(samplePending(id: "r1", askedOn: .phone))
-        await flushMainQueue()
-        #expect(presenter.presented?.request.id == "r1")
-    }
-
-    // MARK: Face ID
-
     /// The answers the flow gave, and how often it asked for Face ID.
     private final class FlowLog {
         private let lock = NSLock()

@@ -6,30 +6,39 @@ extension PendingAIRequest: Identifiable {
     var id: String { request.id }
 }
 
-/// Decides which request the approval screen shows. A tap on the iPhone backup opens the pending request it
-/// was for, and so does opening Trio once the iPhone is asking for it. The screen goes away as soon as that
-/// request is no longer the pending one: it was answered on the watch, expired, withdrawn or replaced.
+/// Decides which request the approval sheet shows, and what it shows for it. A tap on the iPhone backup opens the
+/// pending request it was for, and so does opening Trio once the iPhone is asking for it. The sheet then stays until
+/// the wearer closes it. When the request ends, whether it was answered here or on the watch, expired, withdrawn or
+/// replaced, the coordinator's outcome for it becomes `result`, and the sheet shows that in place of the buttons. Only
+/// `close()` takes the request off, so the wearer always sees how it ended.
 @MainActor final class AIRequestPhoneApprovalPresenter: ObservableObject {
     static let shared = AIRequestPhoneApprovalPresenter()
 
-    /// The request the approval screen shows.
-    @Published var presented: PendingAIRequest?
+    /// The request the approval sheet shows. It stays set after the request leaves pending, until `close()`.
+    @Published private(set) var presented: PendingAIRequest?
+    /// How the presented request ended, once it has.
+    @Published private(set) var result: AIRequestResultMessage?
 
     /// Whether the iPhone is asking for the request now, rather than the watch alone.
     private let isBackupDue: (PendingAIRequest) async -> Bool
+    /// The coordinator, once the runtime has made it.
+    private let coordinator: () -> AIRequestCoordinator?
     /// The request whose notification was tapped, or that was due when Trio opened, until the coordinator has it
     /// as pending. A tap that launched Trio comes before the coordinator has read its pending request from disk.
     private var tappedID: String?
     /// The coordinator's pending request, as last received here.
     private var latest: PendingAIRequest?
     private var subscription: AnyCancellable?
+    private var outcomeSubscription: AnyCancellable?
 
     init(
         isBackupDue: @escaping (PendingAIRequest) async -> Bool = {
             await AIRequestPhoneBackup().isDue($0, now: Date())
-        }
+        },
+        coordinator: @escaping () -> AIRequestCoordinator? = { AIRequestsRuntime.shared?.coordinator }
     ) {
         self.isBackupDue = isBackupDue
+        self.coordinator = coordinator
     }
 
     /// Shows the request a tapped notification was for, once it is the pending one.
@@ -40,48 +49,78 @@ extension PendingAIRequest: Identifiable {
     }
 
     /// Shows the pending request when Trio comes to the front, if the iPhone is asking for it, so it doesn't take a
-    /// tap on a notification that was cleared, grouped or lost on a cold launch.
+    /// tap on a notification that was cleared, grouped or lost on a cold launch. Without a coordinator, it's the
+    /// request last received here.
     func presentDueRequest() async {
-        guard let coordinator = AIRequestsRuntime.shared?.coordinator else { return }
-        followCoordinator()
-        // Reads the pending request from disk first, and drops it if its time is up.
-        await coordinator.expireIfDue()
-        await presentIfDue(coordinator.current.value)
+        var candidate = latest
+        if let coordinator = coordinator() {
+            followCoordinator()
+            // Reads the pending request from disk first, and drops it if its time is up.
+            await coordinator.expireIfDue()
+            candidate = coordinator.current.value
+        }
+        await presentIfDue(candidate)
     }
 
-    /// Shows `pending` as if its notification was tapped, unless the watch is still asking for it alone.
+    /// Shows `pending` as if its notification was tapped, unless the watch is still asking for it alone, or the sheet
+    /// is already showing a request.
     func presentIfDue(_ pending: PendingAIRequest?) async {
         guard let pending, presented == nil, await isBackupDue(pending) else { return }
         open(requestID: pending.request.id)
     }
 
-    /// Follows the coordinator's pending request. Does nothing if it already does, or the coordinator isn't
-    /// there yet.
-    func followCoordinator() {
-        guard subscription == nil, let coordinator = AIRequestsRuntime.shared?.coordinator else { return }
-        follow(coordinator.current.eraseToAnyPublisher())
+    /// Takes the sheet away with its result, then shows the next request that is waiting on the iPhone, if there is
+    /// one: the request that replaced the one the sheet was showing, say. Done comes here, and so does swiping a
+    /// result away. The task is the search for that next request, which the caller needn't wait for.
+    @discardableResult func close() -> Task<Void, Never> {
+        presented = nil
+        result = nil
+        // A tap on the next request's notification, made while the sheet was showing this one.
+        presentTappedRequest()
+        return Task { await presentDueRequest() }
     }
 
-    /// The coordinator publishes on its own executor, and is briefly empty while one request replaces another,
-    /// so the changes are received on the main queue and each one is checked against what is shown.
-    func follow(_ current: AnyPublisher<PendingAIRequest?, Never>) {
+    /// Follows the coordinator's pending request and outcomes. Does nothing if it already does, or the coordinator
+    /// isn't there yet.
+    func followCoordinator() {
+        guard subscription == nil, let coordinator = coordinator() else { return }
+        follow(coordinator.current.eraseToAnyPublisher(), outcomes: coordinator.outcomes.eraseToAnyPublisher())
+    }
+
+    /// The coordinator publishes on its own executor, and is briefly empty while one request replaces another, so the
+    /// changes are received on the main queue and each one is checked against what is shown. A request that leaves
+    /// pending takes nothing off the sheet: its outcome follows, and the sheet shows it.
+    func follow(
+        _ current: AnyPublisher<PendingAIRequest?, Never>,
+        outcomes: AnyPublisher<AIRequestOutcome, Never>
+    ) {
         subscription = current
             .receive(on: DispatchQueue.main)
             .sink { [weak self] pending in
                 MainActor.assumeIsolated { self?.currentChanged(pending) }
             }
+        outcomeSubscription = outcomes
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] outcome in
+                MainActor.assumeIsolated { self?.outcomeArrived(outcome) }
+            }
     }
 
     private func currentChanged(_ pending: PendingAIRequest?) {
         latest = pending
-        if let presented, presented.request.id != pending?.request.id {
-            self.presented = nil
-        }
         presentTappedRequest()
     }
 
+    /// Only the presented request's outcome counts. One for a request the sheet isn't showing has nobody to show it to.
+    private func outcomeArrived(_ outcome: AIRequestOutcome) {
+        guard presented?.request.id == outcome.id else { return }
+        result = AIRequestResultText.message(for: outcome)
+    }
+
+    /// Shows the tapped request once it is the pending one, unless the sheet is showing another: its result stays
+    /// until the wearer closes it, and `close()` comes back here.
     private func presentTappedRequest() {
-        guard let tappedID, let latest, latest.request.id == tappedID else { return }
+        guard presented == nil, let tappedID, let latest, latest.request.id == tappedID else { return }
         presented = latest
         self.tappedID = nil
     }
@@ -122,7 +161,7 @@ struct AIRequestPhoneApprovalFlow {
 
     /// Returns whether it approved. A failed, cancelled or unavailable Face ID answers nothing, and the request
     /// stays pending.
-    func approve() async -> Bool {
+    @discardableResult func approve() async -> Bool {
         do {
             guard try await unlock() else { return false }
         } catch {
@@ -138,65 +177,181 @@ struct AIRequestPhoneApprovalFlow {
     }
 }
 
-/// Asks the wearer to approve or decline a request on the iPhone.
+/// Where the approval sheet is.
+enum AIRequestPhoneApprovalPhase: Equatable {
+    /// The request waits for the wearer's answer.
+    case asking
+    /// Face ID and the answer are under way.
+    case checking
+    /// The request ended, and this is how.
+    case result(AIRequestResultMessage)
+
+    /// A result for another request doesn't count. A result takes over from `isWorking`: the watch can answer while
+    /// Face ID is up.
+    init(result: AIRequestResultMessage?, requestID: String, isWorking: Bool) {
+        if let result, result.id == requestID {
+            self = .result(result)
+        } else {
+            self = isWorking ? .checking : .asking
+        }
+    }
+
+    /// Only a result lets the sheet be swiped away. Until then the request is waiting for an answer, and the sheet
+    /// can only be closed by giving one.
+    var allowsSwipeToDismiss: Bool {
+        if case .result = self { return true }
+        return false
+    }
+}
+
+/// Asks the wearer to approve or decline a request on the iPhone, and then shows how it ended. The sheet stays until
+/// the wearer presses Done or swipes it away, which only a result allows.
 struct AIRequestPhoneApprovalView: View {
     let pending: PendingAIRequest
+    /// How the request ended, once it has. The presenter has it from the coordinator's outcomes, and it can come
+    /// from an answer given on the watch.
+    let result: AIRequestResultMessage?
     let flow: AIRequestPhoneApprovalFlow
+    /// Closes the sheet.
+    let done: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     /// Face ID or the answer is under way, so a second tap doesn't start another.
     @State private var isWorking = false
+
+    private var phase: AIRequestPhoneApprovalPhase {
+        AIRequestPhoneApprovalPhase(result: result, requestID: pending.request.id, isWorking: isWorking)
+    }
 
     var body: some View {
         VStack(spacing: 24) {
             Spacer(minLength: 0)
 
-            VStack(spacing: 12) {
-                Image(systemName: "fork.knife")
-                    .font(.largeTitle)
-                    .foregroundStyle(.tint)
-                    .accessibilityHidden(true)
-                Text(pending.prompt.title)
-                    .font(.title2.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                Text(pending.prompt.body)
-                    .font(.body)
-                    .multilineTextAlignment(.center)
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("Expires in \(Self.countdown(until: pending.prompt.expiresAt, now: context.date))")
-                        .font(.subheadline.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .accessibilityAddTraits(.updatesFrequently)
-                }
+            switch phase {
+            case .asking,
+                 .checking:
+                requestContent
+            case let .result(message):
+                resultContent(message)
             }
 
             Spacer(minLength: 0)
 
-            VStack(spacing: 12) {
-                Button {
-                    approve()
-                } label: {
-                    Label("Approve with Face ID", systemImage: "faceid")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button(role: .destructive) {
-                    decline()
-                } label: {
-                    Text("Decline")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
+            switch phase {
+            case .asking,
+                 .checking:
+                answerButtons
+            case .result:
+                doneButton
             }
-            .controlSize(.large)
-            .disabled(isWorking)
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .interactiveDismissDisabled(isWorking)
+        .animation(.default, value: phase)
+        .interactiveDismissDisabled(!phase.allowsSwipeToDismiss)
         .presentationDetents([.medium, .large])
+    }
+
+    private var requestContent: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "fork.knife")
+                .font(.largeTitle)
+                .foregroundStyle(.tint)
+                .accessibilityHidden(true)
+            Text(pending.prompt.title)
+                .font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(pending.prompt.body)
+                .font(.body)
+                .multilineTextAlignment(.center)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text("Expires in \(Self.countdown(until: pending.prompt.expiresAt, now: context.date))")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+        }
+    }
+
+    /// Approve keeps its full strength while it checks, and shows that it is: only Decline is disabled, and taps on
+    /// Approve are ignored.
+    private var answerButtons: some View {
+        VStack(spacing: 12) {
+            Button {
+                approve()
+            } label: {
+                if phase == .checking {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .tint(.white)
+                        Text("Checking…")
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Label("Approve with Face ID", systemImage: "faceid")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button(role: .destructive) {
+                decline()
+            } label: {
+                Text("Decline")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isWorking)
+        }
+        .controlSize(.large)
+    }
+
+    private var doneButton: some View {
+        Button {
+            done()
+        } label: {
+            Text("Done")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+    }
+
+    /// The icon, the headline and the detail. A request answered on the watch says so above them.
+    private func resultContent(_ message: AIRequestResultMessage) -> some View {
+        let look = Self.look(for: message.tone)
+        return VStack(spacing: 12) {
+            if message.answeredOn == .watch {
+                Text("Answered on your watch")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Image(systemName: look.symbol)
+                .font(.largeTitle)
+                .foregroundStyle(look.color)
+                .accessibilityHidden(true)
+            Text(message.headline)
+                .font(.title2.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(message.detail)
+                .font(.body)
+                .multilineTextAlignment(.center)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The icon of a result, the same as on the watch: only a success is a green check.
+    private static func look(for tone: AIRequestResultMessage.Tone) -> (symbol: String, color: Color) {
+        switch tone {
+        case .success:
+            return ("checkmark.circle.fill", .loopGreen)
+        case .neutral:
+            return ("xmark.circle", .secondary)
+        case .warning:
+            return ("exclamationmark.triangle.fill", .orange)
+        case .failure:
+            return ("exclamationmark.triangle.fill", .loopRed)
+        }
     }
 
     /// The time left as `m:ss`, never below `0:00`.
@@ -205,14 +360,14 @@ struct AIRequestPhoneApprovalView: View {
         return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
-    /// A failed or cancelled Face ID changes nothing: the request stays pending and the screen stays open.
+    /// A failed or cancelled Face ID changes nothing: the request stays pending and the sheet stays as it was. An
+    /// answer that goes through comes back as the result, which the presenter gets from the coordinator.
     private func approve() {
         guard !isWorking else { return }
         isWorking = true
         Task {
             defer { isWorking = false }
-            guard await flow.approve() else { return }
-            dismiss()
+            await flow.approve()
         }
     }
 
@@ -222,7 +377,6 @@ struct AIRequestPhoneApprovalView: View {
         Task {
             defer { isWorking = false }
             await flow.decline()
-            dismiss()
         }
     }
 }
@@ -239,10 +393,26 @@ private struct AIRequestPhoneApprovalModifier: ViewModifier {
     @ObservedObject private var presenter = AIRequestPhoneApprovalPresenter.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    /// The wearer can swipe the sheet away only once it shows a result, and that closes it as Done does. While the
+    /// request is waiting for an answer the sheet isn't let go: the item stays, and so does the sheet.
+    private var sheetItem: Binding<PendingAIRequest?> {
+        Binding(
+            get: { presenter.presented },
+            set: { item in
+                if item == nil, presenter.result != nil { presenter.close() }
+            }
+        )
+    }
+
     func body(content: Content) -> some View {
         content
-            .sheet(item: $presenter.presented) { pending in
-                AIRequestPhoneApprovalView(pending: pending, flow: .live(requestID: pending.request.id))
+            .sheet(item: sheetItem) { pending in
+                AIRequestPhoneApprovalView(
+                    pending: pending,
+                    result: presenter.result,
+                    flow: .live(requestID: pending.request.id),
+                    done: { presenter.close() }
+                )
             }
             // The coordinator is there by the time the app shows, and a tap that launched Trio waits for it. On a
             // cold launch the scene is already active when the app shows, so its phase doesn't change.
