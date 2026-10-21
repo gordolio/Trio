@@ -5,8 +5,12 @@ import WatchConnectivity
 import WatchKit
 
 /// The watch's side of an AI assistant's request: keeps the answer key, shows a request as a notification,
-/// and signs and sends the wearer's answer. It's the notification center's delegate, and passes every
-/// notification that isn't a request on to `WatchNotificationHandler`.
+/// signs and sends the wearer's answer, and keeps the phone's receipts and results for the approval screen. It's the
+/// notification center's delegate, and passes every notification that isn't a request on to `WatchNotificationHandler`.
+///
+/// Threads: `presented`, `receipts` and `results` change on the main queue only, since the screen observes them.
+/// WatchConnectivity and the notification center call in on their own queues, so everything else they share is behind
+/// `lock`, and changes to the request notification's slot go through `slotQueue`.
 @Observable final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WCSessionDelegate {
     /// How a message goes to the phone.
     enum PhoneDelivery {
@@ -14,6 +18,8 @@ import WatchKit
         case queued
         /// Sent now if the phone is reachable, otherwise queued.
         case live
+        /// Sent now if the phone is reachable, otherwise dropped. For a message that's only worth anything now.
+        case liveOnly
         /// Queued, and also sent now if the phone is reachable. For answers from the background: the queued copy
         /// goes out even if the app is suspended before a failed send could fall back to the queue.
         case liveAndQueued
@@ -31,14 +37,33 @@ import WatchKit
     /// How long a notification action keeps the watch app running to send its answer. The service request
     /// itself times out after 10 s.
     private static let backgroundAnswerTimeout: TimeInterval = 15
+    /// How long a change to the request notification's slot waits for the notification center.
+    private static let slotTimeout: TimeInterval = 5
 
     /// The request the approval screen shows.
     var presented: AIRequestPrompt?
+    /// Requests the wearer answered here that the phone has since withdrawn: the phone has taken the answer, or the
+    /// request ended another way. Its result follows.
+    private(set) var receipts: Set<String> = []
+    /// How each request ended, as the phone says. The phone sends each result more than once, and a copy changes
+    /// nothing.
+    private(set) var results: [String: AIRequestResultMessage] = [:]
 
     @ObservationIgnored private let keychain = SystemAIRequestKeychain()
     @ObservationIgnored private let lock = NSLock()
+    /// Runs the changes to the request notification's slot one at a time, so a withdraw that reads the slot can't then
+    /// remove a newer request posted into it in between.
+    @ObservationIgnored private let slotQueue = DispatchQueue(label: "AIRequestWatchCenter.slot", qos: .userInitiated)
     /// Requests the phone withdrew. A prompt queued as user info can arrive after its withdraw.
     @ObservationIgnored private var withdrawnIDs: Set<String> = []
+    /// Requests the wearer answered on the watch, from the screen or a notification. A withdraw of one of these is the
+    /// phone's receipt, and doesn't close the screen.
+    @ObservationIgnored private var answeredIDs: Set<String> = []
+    /// Requests the wearer approved from a notification action, with no screen to show the result. The result is
+    /// posted as a notification.
+    @ObservationIgnored private var approvedFromNotificationIDs: Set<String> = []
+    /// The requests the watch has seen, by ID, so the iPhone's backup can open one. Only unexpired ones are kept.
+    @ObservationIgnored private var knownPrompts: [String: AIRequestPrompt] = [:]
     /// Whether the session has been activated. Before that, WatchConnectivity drops anything sent.
     @ObservationIgnored private var isSessionActive = false
     /// Messages sent before the session was activated.
@@ -48,16 +73,24 @@ import WatchKit
         super.init()
     }
 
-    /// Sets up notifications for requests and glucose alerts, registers for the service's pushes, and asks
-    /// the phone for the answer key if there isn't one yet.
+    /// Sets up notifications for requests on top of upstream's glucose alerts, registers for the service's pushes,
+    /// and asks the phone for the answer key if there isn't one yet.
     func configure() {
+        // Upstream's setup first: it registers the glucose category. The center then takes over as the delegate, and
+        // passes every notification that isn't a request on to `WatchNotificationHandler`.
+        WatchNotificationHandler.shared.configure()
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        let categories = Set([NotificationCategoryFactory.createGlucoseCategory()] + AIRequestIdentifiers.watchCategories())
         // UNUserNotificationCenter and WKApplication methods should be called on main thread
         Task { @MainActor in
-            center.setNotificationCategories(categories)
             WKApplication.shared().registerForRemoteNotifications()
+            // Upstream's handler reads and writes the categories the same way, a moment earlier, and its write may not
+            // have landed when this reads. So the glucose category goes in again, or this write could drop it. An older
+            // version of one of these categories is replaced.
+            let existing = await center.notificationCategories()
+            let ours = AIRequestIdentifiers.watchCategories().union([NotificationCategoryFactory.createGlucoseCategory()])
+            let ourIDs = Set(ours.map(\.identifier))
+            center.setNotificationCategories(existing.filter { !ourIDs.contains($0.identifier) }.union(ours))
         }
         center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             if let error {
@@ -92,6 +125,10 @@ import WatchKit
             handled = true
             withdraw(id)
         }
+        if let result = message[AIRequestIdentifiers.keyResult] {
+            handled = true
+            receiveResult(result)
+        }
         return handled
     }
 
@@ -119,33 +156,157 @@ import WatchKit
             return
         }
 
+        remember(prompt)
+
         let content = UNMutableNotificationContent()
         content.title = prompt.title
         content.body = prompt.body
         content.sound = .default
         content.categoryIdentifier = AIRequestIdentifiers.category(for: prompt.approvalStyle)
         content.interruptionLevel = .timeSensitive
+        content.threadIdentifier = AIRequestIdentifiers.threadID
         content.userInfo = [AIRequestIdentifiers.keyPrompt: data]
 
-        let request = UNNotificationRequest(identifier: prompt.id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error {
-                Task { await WatchLogger.shared.log("AI requests: couldn't show \(prompt.id): \(error)") }
-            }
-        }
+        postInSlot(content, for: prompt.id)
     }
 
+    /// The phone has stopped asking for the request. If the wearer answered it here, that's the phone's receipt, and
+    /// the screen stays for the result. Otherwise the screen closes, if it shows this request.
     private func withdraw(_ id: String) {
-        lock.withLock { _ = withdrawnIDs.insert(id) }
-        let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [id])
-        center.removeDeliveredNotifications(withIdentifiers: [id])
+        lock.withLock {
+            _ = withdrawnIDs.insert(id)
+            knownPrompts[id] = nil
+        }
+        removeNotifications(of: id)
+        // On the main queue, where the screen answers, so an answer given before this runs counts.
         DispatchQueue.main.async {
-            if self.presented?.id == id {
+            if self.isAnswered(id) {
+                if !self.receipts.contains(id) {
+                    self.receipts.insert(id)
+                }
+            } else if self.presented?.id == id {
                 self.presented = nil
             }
         }
         Task { await WatchLogger.shared.log("AI requests: \(id) was withdrawn") }
+    }
+
+    /// Reads the phone's result, and keeps one for each request.
+    private func receiveResult(_ value: Any) {
+        guard let data = value as? Data, let message = try? JSONDecoder().decode(AIRequestResultMessage.self, from: data) else {
+            Task { await WatchLogger.shared.log("AI requests: couldn't read a result from the phone") }
+            return
+        }
+        DispatchQueue.main.async {
+            self.record(message)
+        }
+    }
+
+    /// Keeps the result for the screen. A copy of a result already kept changes nothing, and posts nothing. A result
+    /// for a request that isn't on screen is posted as a notification when there's no other way for the wearer to hear
+    /// it: the request was approved from a notification, or the watch approved it and it failed.
+    private func record(_ message: AIRequestResultMessage) {
+        guard results[message.id] != message else { return }
+        results[message.id] = message
+        Task { await WatchLogger.shared.log("AI requests: \(message.id) ended: \(message.tone.rawValue)") }
+
+        guard presented?.id != message.id else { return }
+        let approvedFromNotification = lock.withLock { approvedFromNotificationIDs.contains(message.id) }
+        let failedAfterWatchApproval: Bool
+        switch message.tone {
+        case .neutral,
+             .success:
+            failedAfterWatchApproval = false
+        case .failure,
+             .warning:
+            // Only an approval can fail, so a failure answered on the watch is one the watch approved.
+            failedAfterWatchApproval = message.answeredOn == .watch
+        }
+        if approvedFromNotification || failedAfterWatchApproval {
+            notify(message)
+        }
+    }
+
+    /// Posts a result in its own slot, in the requests' thread. A failure breaks through Focus, as the request did.
+    private func notify(_ message: AIRequestResultMessage) {
+        let content = UNMutableNotificationContent()
+        content.title = message.headline
+        content.subtitle = message.title
+        content.body = message.detail
+        content.sound = .default
+        content.threadIdentifier = AIRequestIdentifiers.threadID
+        switch message.tone {
+        case .neutral,
+             .success:
+            content.interruptionLevel = .active
+        case .failure,
+             .warning:
+            content.interruptionLevel = .timeSensitive
+        }
+
+        let request = UNNotificationRequest(
+            identifier: AIRequestIdentifiers.resultNotificationSlot,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                Task { await WatchLogger.shared.log("AI requests: couldn't post the result of \(message.id): \(error)") }
+            }
+        }
+    }
+
+    // MARK: The request notification's slot
+
+    /// Posts a request's notification in the slot, where it takes the place of whichever request was there.
+    private func postInSlot(_ content: UNNotificationContent, for id: String) {
+        let request = UNNotificationRequest(identifier: AIRequestIdentifiers.notificationSlot, content: content, trigger: nil)
+        inSlotQueue { done in
+            UNUserNotificationCenter.current().add(request) { error in
+                if let error {
+                    Task { await WatchLogger.shared.log("AI requests: couldn't post \(id): \(error)") }
+                }
+                done()
+            }
+        }
+    }
+
+    /// Removes a request's notifications: the one in the slot only while it's still this request's, and any under the
+    /// request's own ID, which a watch build from before the slot posted, or a service without it pushed.
+    private func removeNotifications(of id: String) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+        center.removeDeliveredNotifications(withIdentifiers: [id])
+
+        let slot = AIRequestIdentifiers.notificationSlot
+        func isThisRequest(_ request: UNNotificationRequest) -> Bool {
+            request.identifier == slot && AIRequestIdentifiers.requestID(in: request.content.userInfo) == id
+        }
+        // Pending first: a notification that is delivered in between is still found among the delivered ones.
+        inSlotQueue { done in
+            center.getPendingNotificationRequests { pending in
+                if pending.contains(where: isThisRequest) {
+                    center.removePendingNotificationRequests(withIdentifiers: [slot])
+                }
+                center.getDeliveredNotifications { delivered in
+                    if delivered.contains(where: { isThisRequest($0.request) }) {
+                        center.removeDeliveredNotifications(withIdentifiers: [slot])
+                    }
+                    done()
+                }
+            }
+        }
+    }
+
+    /// Runs `work` on the slot queue, which waits until `work` calls `done`, or for `slotTimeout`.
+    private func inSlotQueue(_ work: @escaping (_ done: @escaping () -> Void) -> Void) {
+        slotQueue.async {
+            let finished = DispatchSemaphore(value: 0)
+            work { finished.signal() }
+            if finished.wait(timeout: .now() + Self.slotTimeout) == .timedOut {
+                Task { await WatchLogger.shared.log("AI requests: the notification center didn't answer in time") }
+            }
+        }
     }
 
     // MARK: Messages to the phone
@@ -159,14 +320,21 @@ import WatchKit
         sendToPhone([AIRequestIdentifiers.keyRequest: true])
     }
 
+    /// Tells the phone the approval screen for `id` is open, so its backup waits. Only now is it worth anything: a
+    /// copy that reached the phone later would put off a backup that may already be asking.
+    func screenDidOpen(_ id: String) {
+        sendToPhone([AIRequestIdentifiers.keyViewing: id], delivery: .liveOnly)
+    }
+
     /// Sends a message to the phone, as `delivery` says. `handedOff` runs once WatchConnectivity has it. A message
     /// sent before the session is active (as at launch, before `WatchState` has activated it) waits for the
-    /// activation or the phone's first message.
-    func sendToPhone(
+    /// activation or the phone's first message. Returns whether it went to the phone live now: the session was active,
+    /// the phone was reachable, and `delivery` sends live.
+    @discardableResult func sendToPhone(
         _ message: [String: Any],
         delivery: PhoneDelivery = .queued,
         handedOff: @escaping () -> Void = {}
-    ) {
+    ) -> Bool {
         let item = WaitingMessage(message: message, delivery: delivery, handedOff: handedOff)
         let isActive = lock.withLock {
             if !isSessionActive {
@@ -174,9 +342,7 @@ import WatchKit
             }
             return isSessionActive
         }
-        if isActive {
-            hand(item)
-        }
+        return isActive && hand(item)
     }
 
     /// Marks the session active and sends the messages held back until now. Safe to call more than once.
@@ -186,16 +352,20 @@ import WatchKit
             defer { waitingForSession = [] }
             return waitingForSession
         }
-        waiting.forEach(hand)
+        for item in waiting {
+            hand(item)
+        }
     }
 
-    private func hand(_ item: WaitingMessage) {
+    /// Hands the message to WatchConnectivity. Returns whether it was sent live, because the phone was reachable.
+    @discardableResult private func hand(_ item: WaitingMessage) -> Bool {
         let session = WCSession.default
+        let isReachable = session.isReachable
         switch item.delivery {
         case .queued:
             session.transferUserInfo(item.message)
         case .live:
-            if session.isReachable {
+            if isReachable {
                 session.sendMessage(item.message, replyHandler: nil) { error in
                     Task { await WatchLogger.shared.log("AI requests: couldn't message the phone, so it's queued: \(error)") }
                     session.transferUserInfo(item.message)
@@ -203,15 +373,24 @@ import WatchKit
             } else {
                 session.transferUserInfo(item.message)
             }
+        case .liveOnly:
+            if isReachable {
+                session.sendMessage(item.message, replyHandler: nil) { error in
+                    Task { await WatchLogger.shared.log("AI requests: couldn't message the phone, so it isn't sent: \(error)") }
+                }
+            } else {
+                Task { await WatchLogger.shared.log("AI requests: the phone isn't reachable, so a message isn't sent") }
+            }
         case .liveAndQueued:
             session.transferUserInfo(item.message)
-            if session.isReachable {
+            if isReachable {
                 session.sendMessage(item.message, replyHandler: nil) { error in
                     Task { await WatchLogger.shared.log("AI requests: couldn't message the phone; it's queued too: \(error)") }
                 }
             }
         }
         item.handedOff()
+        return isReachable && item.delivery != .queued
     }
 
     /// An answer from a notification can launch the app in the background, before `WatchState` exists to
@@ -230,33 +409,47 @@ import WatchKit
 
     // MARK: Answering
 
-    /// Signs the wearer's answer with the shared key and sends it along the request's answer route. A
-    /// decline says how it was declined.
-    func answer(_ prompt: AIRequestPrompt, _ decision: AIRequestDecision, declinedBy: AIRequestDeclinedBy?) {
+    /// Signs the wearer's answer with the shared key and sends it along the request's answer route, and says what
+    /// became of it: `.notSent` when there's no key to sign it with (or the request has expired or was withdrawn),
+    /// `.queued` when the phone isn't reachable and the route doesn't use the service, and `.sent` otherwise. A
+    /// decline says how it was declined. On the main queue, where the screen's phases are, so the result applies to
+    /// the phase that was asking.
+    @MainActor func answer(
+        _ prompt: AIRequestPrompt,
+        _ decision: AIRequestDecision,
+        declinedBy: AIRequestDeclinedBy?
+    ) -> AIRequestSendResult {
         answer(prompt, decision, declinedBy: declinedBy, inBackground: false, completion: {})
     }
 
-    private func answer(
+    @discardableResult private func answer(
         _ prompt: AIRequestPrompt,
         _ decision: AIRequestDecision,
         declinedBy: AIRequestDeclinedBy?,
         inBackground: Bool,
         completion: @escaping () -> Void
-    ) {
+    ) -> AIRequestSendResult {
         guard isOpen(prompt) else {
             Task { await WatchLogger.shared.log("AI requests: not answering \(prompt.id): it expired or was withdrawn") }
             completion()
-            return
+            return .notSent
+        }
+        // Recorded even if it can't be sent: the phone's withdraw then leaves the screen up for the result.
+        lock.withLock {
+            _ = answeredIDs.insert(prompt.id)
+            if inBackground, decision == .approve {
+                _ = approvedFromNotificationIDs.insert(prompt.id)
+            }
         }
         guard let key = keychain.data(for: Self.keyAccount) else {
             Task { await WatchLogger.shared.log("AI requests: no answer key, so \(prompt.id) isn't answered; asking the phone") }
             requestKey()
             completion()
-            return
+            return .notSent
         }
         let signed = AIRequestSigner.sign(prompt: prompt, decision: decision, declinedBy: declinedBy, at: Date(), key: key)
         Task { await WatchLogger.shared.log("AI requests: answering \(prompt.id): \(decision.rawValue)") }
-        AIRequestAnswerSender.send(signed, prompt: prompt, inBackground: inBackground, completion: completion)
+        return AIRequestAnswerSender.send(signed, prompt: prompt, inBackground: inBackground, completion: completion)
     }
 
     /// A notification action runs in the background, so the watch app asks for time to send the answer. The
@@ -300,12 +493,7 @@ import WatchKit
         // The prompt, so Review opens it.
         content.userInfo = [AIRequestIdentifiers.keyPrompt: data]
 
-        let request = UNNotificationRequest(identifier: AIRequestIdentifiers.notificationSlot, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error {
-                Task { await WatchLogger.shared.log("AI requests: couldn't repost \(prompt.id) for review: \(error)") }
-            }
-        }
+        postInSlot(content, for: prompt.id)
     }
 
     // MARK: Checks
@@ -341,6 +529,25 @@ import WatchKit
         lock.withLock { withdrawnIDs.contains(id) }
     }
 
+    private func isAnswered(_ id: String) -> Bool {
+        lock.withLock { answeredIDs.contains(id) }
+    }
+
+    /// Keeps a request the watch has seen, and forgets the ones that have expired.
+    private func remember(_ prompt: AIRequestPrompt) {
+        let now = Date()
+        lock.withLock {
+            knownPrompts = knownPrompts.filter { $0.value.expiresAt > now }
+            if prompt.expiresAt > now {
+                knownPrompts[prompt.id] = prompt
+            }
+        }
+    }
+
+    private func knownPrompt(_ id: String) -> AIRequestPrompt? {
+        lock.withLock { knownPrompts[id] }
+    }
+
     /// Reads a request from a delivered notification. A subtitle is text the display MAC doesn't cover, so the request
     /// is marked as having unchecked text, as a push with other alert keys is.
     private static func prompt(in content: UNNotificationContent) -> AIRequestPrompt? {
@@ -370,6 +577,11 @@ import WatchKit
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        // A result is posted only when its request isn't on screen, so it shows over the app too.
+        if notification.request.identifier == AIRequestIdentifiers.resultNotificationSlot {
+            completionHandler([.banner, .sound])
+            return
+        }
         let content = notification.request.content
         let requestCategories = [AIRequestIdentifiers.categoryReview, AIRequestIdentifiers.categoryApprove]
         guard requestCategories.contains(content.categoryIdentifier),
@@ -379,6 +591,7 @@ import WatchKit
             completionHandler([])
             return
         }
+        remember(prompt)
         completionHandler([.banner, .sound])
     }
 
@@ -387,6 +600,10 @@ import WatchKit
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        if response.notification.request.content.categoryIdentifier == AIRequestIdentifiers.categoryPhone {
+            openFromPhoneBackup(response, completionHandler: completionHandler)
+            return
+        }
         guard let prompt = Self.prompt(in: response.notification.request.content) else {
             WatchNotificationHandler.shared.userNotificationCenter(
                 center,
@@ -421,12 +638,60 @@ import WatchKit
                 Task { await WatchLogger.shared.log("AI requests: not opening \(prompt.id): it was withdrawn") }
                 return
             }
+            remember(prompt)
             DispatchQueue.main.async {
                 self.presented = prompt
             }
         default:
             Task { await WatchLogger.shared.log("AI requests: unknown action \(response.actionIdentifier) for \(prompt.id)") }
         }
+    }
+
+    /// The iPhone's backup, forwarded to the wrist, opens the watch's own approval screen for its request while that
+    /// request is still open. A request the service pushed while the app wasn't in front never reached the app, so
+    /// it's looked for among the delivered notifications too.
+    private func openFromPhoneBackup(_ response: UNNotificationResponse, completionHandler: @escaping () -> Void) {
+        guard response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+              let id = response.notification.request.content.userInfo[AIRequestIdentifiers.backupRequestIDKey] as? String
+        else {
+            let action = response.actionIdentifier
+            Task { await WatchLogger.shared.log("AI requests: ignored \(action) on the iPhone's notification") }
+            completionHandler()
+            return
+        }
+        if let prompt = knownPrompt(id) {
+            openIfStillOpen(prompt)
+            completionHandler()
+            return
+        }
+        UNUserNotificationCenter.current().getDeliveredNotifications { notifications in
+            let prompt = notifications.lazy
+                .map(\.request.content)
+                .filter { AIRequestIdentifiers.requestID(in: $0.userInfo) == id }
+                .compactMap { Self.prompt(in: $0) }
+                .first
+            if let prompt {
+                self.remember(prompt)
+                self.openIfStillOpen(prompt)
+            } else {
+                Self.logNotOpening(id, because: "the watch hasn't seen it")
+            }
+            completionHandler()
+        }
+    }
+
+    private func openIfStillOpen(_ prompt: AIRequestPrompt) {
+        guard isOpen(prompt) else {
+            Self.logNotOpening(prompt.id, because: "it expired or was withdrawn")
+            return
+        }
+        DispatchQueue.main.async {
+            self.presented = prompt
+        }
+    }
+
+    private static func logNotOpening(_ id: String, because reason: String) {
+        Task { await WatchLogger.shared.log("AI requests: not opening \(id) from the iPhone's notification: \(reason)") }
     }
 
     // MARK: WCSessionDelegate

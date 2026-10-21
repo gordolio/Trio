@@ -109,6 +109,16 @@ private func samplePending(
         #expect(content.userInfo["aiRequestId"] as? String == "r1")
     }
 
+    /// The watch opens the request when the backup is forwarded to it, by the ID under the shared key.
+    @Test func backupHoldsTheRequestIDWhereTheWatchReadsIt() throws {
+        let c = FakeNotificationCenter()
+        AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 15, askedOn: .watch)
+        let content = try #require(c.added.first?.content)
+        #expect(AIRequestPhoneBackup.requestIDKey == AIRequestIdentifiers.backupRequestIDKey)
+        #expect(content.userInfo[AIRequestIdentifiers.backupRequestIDKey] as? String == "r1")
+        #expect(content.categoryIdentifier == AIRequestIdentifiers.categoryPhone)
+    }
+
     @Test func watchFirstBodySaysNotAnsweredOnTheWatch() throws {
         let c = FakeNotificationCenter()
         AIRequestPhoneBackup(center: c).schedule(samplePrompt(id: "r1"), after: 15, askedOn: .watch)

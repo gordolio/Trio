@@ -151,6 +151,37 @@ import Testing
         #expect(review.actions[0].options.contains(.foreground))
     }
 
+    @Test func watchCategoriesIncludeTheIPhoneBackup() throws {
+        let cats = AIRequestIdentifiers.watchCategories()
+        #expect(Set(cats.map(\.identifier)) == ["trio.request.review", "trio.request.approve", "trio.request.phone"])
+        let phone = try #require(cats.first { $0.identifier == "trio.request.phone" })
+        #expect(phone.actions.isEmpty)
+    }
+
+    @Test func requestIDReadsTheWatchsOwnNotification() throws {
+        let data = try JSONEncoder().encode(Self.prompt)
+        #expect(AIRequestIdentifiers.requestID(in: ["aiRequestPrompt": data]) == Self.prompt.id)
+        // Only the ID has to decode, so a prompt from another build still says which request it is.
+        let idOnly = try JSONSerialization.data(withJSONObject: ["id": "r1"])
+        #expect(AIRequestIdentifiers.requestID(in: ["aiRequestPrompt": idOnly]) == "r1")
+        #expect(AIRequestIdentifiers.requestID(in: ["aiRequestPrompt": Data("nope".utf8)]) == nil)
+    }
+
+    @Test func requestIDReadsTheServicesPush() {
+        let push: [AnyHashable: Any] = [
+            "aps": ["alert": ["title": "t", "body": "b"], "category": "trio.request.review"],
+            "trio-rc": ["v": 1, "type": "request", "request": ["id": "r2", "source": "Grok"]]
+        ]
+        #expect(AIRequestIdentifiers.requestID(in: push) == "r2")
+    }
+
+    @Test func requestIDIsNilForOtherNotifications() {
+        #expect(AIRequestIdentifiers.requestID(in: [:]) == nil)
+        #expect(AIRequestIdentifiers.requestID(in: ["aiRequestId": "r1"]) == nil)
+        #expect(AIRequestIdentifiers.requestID(in: ["trio-rc": ["type": "checkIn"]]) == nil)
+        #expect(AIRequestIdentifiers.requestID(in: ["trio-rc": ["request": ["id": 7]]]) == nil)
+    }
+
     @Test func shownRoundsToTwoDecimalsWithAPoint() {
         let shown = AIRequestShown(carbs: Decimal(string: "20.005")!, fat: 0, protein: 7.5, units: Decimal(string: "1.234")!)
         #expect(shown == AIRequestShown(carbs: "20.01", fat: "0.00", protein: "7.50", units: "1.23"))

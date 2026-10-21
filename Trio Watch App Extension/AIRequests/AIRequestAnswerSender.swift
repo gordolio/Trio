@@ -13,39 +13,46 @@ enum AIRequestAnswerSender {
 
     /// `inBackground` is for an answer from a notification action, which also queues the WatchConnectivity copy
     /// as user info. `completion` runs once WatchConnectivity has the answer and the service has responded.
-    static func send(
+    ///
+    /// Returns what it can know as it hands the answer off: `.sent` when the service is sent it or the phone was
+    /// reachable, `.queued` when it can only wait in WatchConnectivity's queue for the phone, and `.notSent` when it
+    /// couldn't be encoded. Whether the service took it isn't known until later: the phone's receipt says so.
+    @discardableResult static func send(
         _ answer: AIRequestAnswer,
         prompt: AIRequestPrompt,
         inBackground: Bool = false,
         completion: @escaping () -> Void = {}
-    ) {
+    ) -> AIRequestSendResult {
         let body: Data
         do {
             body = try JSONEncoder().encode(answer)
         } catch {
             Task { await WatchLogger.shared.log("AI requests: couldn't encode the answer to \(prompt.id): \(error)") }
             completion()
-            return
+            return .notSent
         }
 
         let sent = DispatchGroup()
         let serviceRequest = prompt.answerRoute == .watchOnly ? nil : request(body, prompt: prompt)
+        var reachedPhone = false
         // The answer goes back over WatchConnectivity whenever the service can't take it, whatever the route
         // says. A request that came from the phone over WatchConnectivity has no answer token.
         if prompt.answerRoute != .serviceOnly || serviceRequest == nil {
-            toPhone(body, inBackground: inBackground, sent: sent)
+            reachedPhone = toPhone(body, inBackground: inBackground, sent: sent)
         }
         if let serviceRequest {
             toService(serviceRequest, id: prompt.id, sent: sent)
         }
         sent.notify(queue: .global(qos: .userInitiated), execute: completion)
+        return serviceRequest != nil || reachedPhone ? .sent : .queued
     }
 
-    private static func toPhone(_ body: Data, inBackground: Bool, sent: DispatchGroup) {
+    /// Returns whether the answer went to the phone live, because it was reachable.
+    private static func toPhone(_ body: Data, inBackground: Bool, sent: DispatchGroup) -> Bool {
         let center = AIRequestWatchCenter.shared
         center.activateSessionIfUnowned()
         sent.enter()
-        center.sendToPhone([AIRequestIdentifiers.keyAnswer: body], delivery: inBackground ? .liveAndQueued : .live) {
+        return center.sendToPhone([AIRequestIdentifiers.keyAnswer: body], delivery: inBackground ? .liveAndQueued : .live) {
             sent.leave()
         }
     }

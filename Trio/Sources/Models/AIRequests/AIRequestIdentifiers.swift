@@ -45,10 +45,31 @@ enum AIRequestIdentifiers {
     /// The thread that groups the request, backup and result notifications.
     static let threadID = "trio.ai-request"
 
-    // MARK: Push payload
+    // MARK: Notification payloads
 
     /// The top-level key of the service's push payload.
     static let pushPayloadKey = "trio-rc"
+    /// The `userInfo` key of the iPhone's backup notification that holds the request's ID. The watch reads it when the
+    /// backup is forwarded to the wrist.
+    static let backupRequestIDKey = "aiRequestId"
+
+    /// The ID of the request a request notification is for, from either payload: the watch's own notification holds
+    /// the JSON prompt under `keyPrompt`, and the service's push holds the ID at `trio-rc.request.id`. `nil` for any
+    /// other notification.
+    static func requestID(in userInfo: [AnyHashable: Any]) -> String? {
+        if let data = userInfo[keyPrompt] as? Data {
+            return (try? JSONDecoder().decode(RequestID.self, from: data))?.id
+        }
+        guard let payload = userInfo[pushPayloadKey] as? [String: Any],
+              let request = payload["request"] as? [String: Any]
+        else { return nil }
+        return request["id"] as? String
+    }
+
+    /// Just the ID of a JSON prompt, so a prompt that no longer decodes in full still says which request it is.
+    private struct RequestID: Decodable {
+        let id: String
+    }
 
     static func category(for style: AIRequestApprovalStyle) -> String {
         switch style {
@@ -59,8 +80,9 @@ enum AIRequestIdentifiers {
         }
     }
 
-    /// The two categories the watch registers. Double tap runs the first action that isn't destructive, so
-    /// the action to take comes first and Decline last.
+    /// The categories the watch registers: a request's two, and the iPhone's backup, which the watch opens when it's
+    /// forwarded to the wrist. Double tap runs the first action that isn't destructive, so the action to take comes
+    /// first and Decline last.
     static func watchCategories() -> Set<UNNotificationCategory> {
         let review = UNNotificationAction(
             identifier: actionReview,
@@ -91,7 +113,8 @@ enum AIRequestIdentifiers {
                 actions: [approve, decline],
                 intentIdentifiers: [],
                 options: [.customDismissAction]
-            )
+            ),
+            phoneCategory()
         ]
     }
 
