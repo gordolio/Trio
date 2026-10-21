@@ -54,9 +54,10 @@ final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WC
     /// Sets up notifications for requests on top of upstream's glucose alerts, registers for the service's pushes, and
     /// connects the request flow to the phone.
     func configure() {
-        AIRequestWatchFlowController.shared.connect { [weak self] message in
-            self?.sendFlowMessage(message)
-        }
+        AIRequestWatchFlowController.shared.connect(
+            send: { [weak self] message in self?.sendFlowMessage(message) },
+            log: { Self.log($0) }
+        )
         // Upstream's setup first: it registers the glucose category. The center then takes over as the delegate, and
         // passes every notification that isn't a request on to `WatchNotificationHandler`.
         WatchNotificationHandler.shared.configure()
