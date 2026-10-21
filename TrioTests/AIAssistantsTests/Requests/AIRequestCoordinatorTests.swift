@@ -390,6 +390,98 @@ import Testing
         #expect(h.prompt("r1").context?.noDoseReason == nil)
     }
 
+    // MARK: The display MAC
+
+    @Test func pendingReportCarriesTheDisplayMAC() async throws {
+        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: true, approvalStyle: .oneGesture))
+        let key = try #require(h.keys.rotate())
+        h.treatments.contextResult = Self.pizzaContext
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        guard case let .pending(_, style, _, _, display) = h.reporter.reports.first?.report else {
+            Issue.record("Expected a pending report")
+            return
+        }
+        let mac = try #require(display.mac)
+        #expect(h.prompt("r1").displayMac == mac)
+        // It covers the text, the style and the context the watch gets.
+        #expect(AIRequestSigner.isValidDisplayMAC(
+            mac,
+            id: "r1",
+            approvalStyle: style,
+            title: display.title,
+            body: display.body,
+            context: display.context,
+            key: key
+        ))
+        #expect(style == .oneGesture && display.context == Self.pizzaContext)
+        #expect(mac == AIRequestSigner.displayMAC(
+            id: "r1", approvalStyle: .oneGesture, title: display.title, body: display.body,
+            context: Self.pizzaContext, key: key
+        ))
+        // The pending report sent again, and after a relaunch, is the same.
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        guard case let .pending(_, _, _, _, resent) = h.reporter.reports.last?.report else {
+            Issue.record("Expected the pending report again")
+            return
+        }
+        #expect(h.reporter.reports.count == 2 && resent.mac == mac)
+        let relaunched = makeCoordinator(files: h.files)
+        await relaunched.coordinator.start()
+        #expect(relaunched.coordinator.current.value?.prompt.displayMac == mac)
+    }
+
+    @Test func withoutAKeyTheRequestIsNotSigned() async {
+        let h = makeCoordinator(preferences: AIAssistantsPreferences(allowsMealRequests: true, approvalStyle: .oneGesture))
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        guard case let .pending(_, _, _, _, display) = h.reporter.reports.first?.report else {
+            Issue.record("Expected a pending report")
+            return
+        }
+        // The watch then opens the request instead of approving it from the notification.
+        #expect(display.mac == nil && h.prompt("r1").displayMac == nil)
+    }
+
+    @Test func aLocalRequestCarriesTheDisplayMACToTheWatch() async throws {
+        let h = makeCoordinator()
+        let key = try #require(h.keys.rotate())
+        await h.coordinator.receive(meal(id: "r1"), via: .local)
+        let delivered = try #require(h.watch.delivered.first)
+        #expect(AIRequestSigner.isValidDisplayMAC(
+            delivered.displayMac,
+            id: "r1",
+            approvalStyle: .twoStep,
+            title: delivered.title,
+            body: delivered.body,
+            context: delivered.context,
+            key: key
+        ))
+    }
+
+    @Test func aRequestWithALineBreakInItsIDOrSourceIsNotSigned() async throws {
+        // The watch would refuse it anyway; signed, its lines could be read as other fields.
+        let h = makeCoordinator()
+        _ = try #require(h.keys.rotate())
+        await h.coordinator.receive(meal(id: "r1\noneGesture"), via: .service)
+        let base = meal(id: "r2")
+        let multiLineSource = AIMealRequest(
+            id: base.id,
+            source: "ChatGPT\noneGesture",
+            description: base.description,
+            carbs: base.carbs,
+            fat: base.fat,
+            protein: base.protein,
+            createdAt: base.createdAt,
+            expiresAt: base.expiresAt
+        )
+        await h.coordinator.receive(multiLineSource, via: .service)
+        let displays: [AIRequestDisplay] = h.reporter.reports.compactMap {
+            guard case let .pending(_, _, _, _, display) = $0.report else { return nil }
+            return display
+        }
+        #expect(displays.count == 2)
+        #expect(displays.allSatisfy { $0.mac == nil })
+    }
+
     // MARK: The watch is open
 
     @Test func viewingPostponesTheBackupOnce() async {

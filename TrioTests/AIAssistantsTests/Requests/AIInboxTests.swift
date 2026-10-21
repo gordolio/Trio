@@ -112,6 +112,20 @@ import Testing
         #expect(sent["recentBolus"] as? [String: AnyHashable] == ["amount": "3.00", "minutesAgo": 8])
     }
 
+    @Test func pendingBodyCarriesTheDisplayMACInsideTheDisplay() throws {
+        let mac = "3rIvGEpt8j9Zt1cE86ABd7Uh8vYWR3J-U5Tqfzo2zLM"
+        let body = AIRequestStateBody(.pending(
+            askedOn: .watch,
+            approvalStyle: .oneGesture,
+            answerRoute: .both,
+            shown: Self.shown,
+            display: .init(title: "t", body: "b", mac: mac)
+        ))
+        let display = try #require(try keys(of: body)["display"] as? [String: Any])
+        #expect(Set(display.keys) == ["title", "body", "mac"])
+        #expect(display["mac"] as? String == mac)
+    }
+
     @Test func deliveringAndLoggedBodiesCarryShown() throws {
         for (report, state) in [
             (AIRequestReport.delivering(shown: Self.shown), "delivering"),

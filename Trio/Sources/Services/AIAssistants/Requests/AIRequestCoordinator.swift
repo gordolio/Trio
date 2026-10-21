@@ -41,7 +41,7 @@ actor AIRequestCoordinator {
     private let finalReportsURL: URL
     /// The approval being carried out, kept next to the pending file until its final report.
     private let carryOutMarkerURL: URL
-    /// The key the watch signs its answers with.
+    /// The key the watch signs its answers with, and Trio the text the watch shows.
     private let keys: AIRequestKeyStore
     private let preferences: () -> AIAssistantsPreferences
     private let treatments: AIRequestTreatments
@@ -179,7 +179,7 @@ actor AIRequestCoordinator {
         let preferences = self.preferences()
         let askedOn: AIRequestAskedOn = watch.isWatchAvailable ? .watch : .phone
         let shown = AIRequestShown(carbs: request.carbs, fat: request.fat, protein: request.protein, units: units)
-        let display = AIRequestDisplayText.display(
+        var display = AIRequestDisplayText.display(
             source: request.source,
             description: request.description,
             shown: shown,
@@ -187,6 +187,7 @@ actor AIRequestCoordinator {
             style: preferences.approvalStyle,
             testKind: request.testKind
         )
+        display.mac = Self.displayMAC(id: request.id, style: preferences.approvalStyle, display: display, key: keys.current)
         let prompt = AIRequestPrompt(
             id: request.id,
             source: request.source,
@@ -200,7 +201,8 @@ actor AIRequestCoordinator {
             answerToken: nil,
             answerURL: nil,
             context: context,
-            testKind: request.testKind
+            testKind: request.testKind,
+            displayMac: display.mac
         )
         let phoneDelay = askedOn == .phone ? 0 : preferences.phoneBackupDelay
         let pending = PendingAIRequest(
@@ -648,8 +650,30 @@ actor AIRequestCoordinator {
             display: AIRequestDisplay(
                 title: pending.prompt.title,
                 body: pending.prompt.body,
-                context: pending.prompt.context
+                context: pending.prompt.context,
+                mac: pending.prompt.displayMac
             )
+        )
+    }
+
+    /// Trio's MAC over what the watch shows: the text, the approval style and the context. The watch approves from
+    /// the notification, and shows the context rows, only when it checks out. `nil` without a key, and for an ID or a
+    /// title with a line break, which the watch never trusts: the watch then opens the request instead.
+    private static func displayMAC(
+        id: String,
+        style: AIRequestApprovalStyle,
+        display: AIRequestDisplay,
+        key: Data?
+    ) -> String? {
+        guard let key, AIRequestSigner.hasSingleLineDisplayFields(id: id, title: display.title, context: display.context)
+        else { return nil }
+        return AIRequestSigner.displayMAC(
+            id: id,
+            approvalStyle: style,
+            title: display.title,
+            body: display.body,
+            context: display.context,
+            key: key
         )
     }
 

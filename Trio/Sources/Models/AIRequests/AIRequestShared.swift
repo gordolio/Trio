@@ -76,6 +76,9 @@ struct AIRequestPrompt: Codable, Equatable {
     var context: AIRequestContext? = nil
     /// Set only on the iPhone's test requests, which the approval says.
     var testKind: AIRequestTestKind? = nil
+    /// Trio's MAC over the title, the body, the approval style and the context: see
+    /// `AIRequestSigner.displayMAC`. `nil` when Trio had no key to sign with, or the service sent none.
+    var displayMac: String? = nil
 
     /// Reads the service's watch push. Returns `nil` unless it is a well-formed request.
     static func fromPush(_ userInfo: [AnyHashable: Any]) -> AIRequestPrompt? {
@@ -111,7 +114,8 @@ struct AIRequestPrompt: Codable, Equatable {
             answerRoute: (payload["answerRoute"] as? String).flatMap(AIRequestAnswerRoute.init(rawValue:)) ?? .both,
             answerToken: payload["answerToken"] as? String,
             answerURL: (payload["answerUrl"] as? String).flatMap(URL.init(string:)),
-            context: context(from: request["context"])
+            context: context(from: request["context"]),
+            displayMac: payload["displayMac"] as? String
         )
     }
 
@@ -198,6 +202,82 @@ enum AIRequestSigner {
     static func isValid(_ answer: AIRequestAnswer, key: Data) -> Bool {
         guard let mac = data(fromBase64URL: answer.mac) else { return false }
         return HMAC<SHA256>.isValidAuthenticationCode(mac, authenticating: message(answer), using: SymmetricKey(data: key))
+    }
+
+    // MARK: Display MAC
+
+    /// The bytes the display MAC covers: the contract's twelve lines joined with `\n`. A missing value is an empty
+    /// line. The body comes last because it's the only field that may have line breaks.
+    static func displayMessage(
+        id: String,
+        approvalStyle: AIRequestApprovalStyle,
+        title: String,
+        body: String,
+        context: AIRequestContext?
+    ) -> Data {
+        let lines = [
+            "trio-display/v1",
+            id,
+            approvalStyle.rawValue,
+            title,
+            context?.glucose ?? "",
+            context?.glucoseAgeMinutes.map { String($0) } ?? "",
+            context?.recentCarbs?.amount ?? "",
+            context?.recentCarbs.map { String($0.minutesAgo) } ?? "",
+            context?.recentBolus?.amount ?? "",
+            context?.recentBolus.map { String($0.minutesAgo) } ?? "",
+            context?.noDoseReason ?? "",
+            body
+        ]
+        return Data(lines.joined(separator: "\n").utf8)
+    }
+
+    /// Trio's MAC over the notification text, the approval style and the context, so the watch can tell they came
+    /// from Trio: base64url HMAC-SHA256 without padding. The style is signed so a server can't turn a two-step
+    /// request into a one-tap approval, and the context so it can't forge or drop the warning rows.
+    static func displayMAC(
+        id: String,
+        approvalStyle: AIRequestApprovalStyle,
+        title: String,
+        body: String,
+        context: AIRequestContext?,
+        key: Data
+    ) -> String {
+        let message = displayMessage(id: id, approvalStyle: approvalStyle, title: title, body: body, context: context)
+        let code = HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: key))
+        return base64URL(Data(code))
+    }
+
+    /// Whether every field but the body is on one line, so the message can only be split into its fields one way.
+    /// Trio signs only such a display, and the watch trusts only such a display.
+    static func hasSingleLineDisplayFields(id: String, title: String, context: AIRequestContext?) -> Bool {
+        let fields = [
+            id,
+            title,
+            context?.glucose,
+            context?.recentCarbs?.amount,
+            context?.recentBolus?.amount,
+            context?.noDoseReason
+        ]
+        return !fields.contains { $0?.contains(where: \.isNewline) == true }
+    }
+
+    /// Recomputes the display MAC and compares it in constant time. `false` for a missing MAC, and for a line
+    /// break in any field but the body: a line break there could move text into another field.
+    static func isValidDisplayMAC(
+        _ mac: String?,
+        id: String,
+        approvalStyle: AIRequestApprovalStyle,
+        title: String,
+        body: String,
+        context: AIRequestContext?,
+        key: Data
+    ) -> Bool {
+        guard let mac, let code = data(fromBase64URL: mac),
+              hasSingleLineDisplayFields(id: id, title: title, context: context)
+        else { return false }
+        let message = displayMessage(id: id, approvalStyle: approvalStyle, title: title, body: body, context: context)
+        return HMAC<SHA256>.isValidAuthenticationCode(code, authenticating: message, using: SymmetricKey(data: key))
     }
 
     private static func base64URL(_ data: Data) -> String {

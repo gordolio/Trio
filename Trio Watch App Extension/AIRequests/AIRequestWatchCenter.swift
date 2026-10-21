@@ -276,7 +276,59 @@ import WatchKit
         }
     }
 
+    /// Posts the request again for review, when its one-gesture Approve couldn't be checked: the wearer opens it to
+    /// approve. A request that has expired or was withdrawn isn't posted.
+    private func askToOpen(_ prompt: AIRequestPrompt) {
+        guard isOpen(prompt) else {
+            Task { await WatchLogger.shared.log("AI requests: not reposting \(prompt.id): it expired or was withdrawn") }
+            return
+        }
+        guard let data = try? JSONEncoder().encode(prompt) else {
+            Task { await WatchLogger.shared.log("AI requests: couldn't repost \(prompt.id) for review") }
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = prompt.title
+        content.body = String(
+            localized: "Couldn't check this request. Open it to approve.",
+            comment: "Watch notification when an AI assistant's request can't be approved from the notification, because its text couldn't be checked as Trio's"
+        )
+        content.sound = .default
+        content.categoryIdentifier = AIRequestIdentifiers.categoryReview
+        content.interruptionLevel = .timeSensitive
+        content.threadIdentifier = AIRequestIdentifiers.threadID
+        // The prompt, so Review opens it.
+        content.userInfo = [AIRequestIdentifiers.keyPrompt: data]
+
+        let request = UNNotificationRequest(identifier: AIRequestIdentifiers.notificationSlot, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                Task { await WatchLogger.shared.log("AI requests: couldn't repost \(prompt.id) for review: \(error)") }
+            }
+        }
+    }
+
     // MARK: Checks
+
+    /// Whether Trio signed the request's title, body, approval style and context with the shared key, so the
+    /// approval screen can show its context rows.
+    func isDisplayVerified(_ prompt: AIRequestPrompt) -> Bool {
+        isDisplayVerified(prompt, as: prompt.approvalStyle)
+    }
+
+    /// Whether Trio signed the request's title, body and context for `style`. `false` without a key.
+    private func isDisplayVerified(_ prompt: AIRequestPrompt, as style: AIRequestApprovalStyle) -> Bool {
+        guard let key = keychain.data(for: Self.keyAccount) else { return false }
+        return AIRequestSigner.isValidDisplayMAC(
+            prompt.displayMac,
+            id: prompt.id,
+            approvalStyle: style,
+            title: prompt.title,
+            body: prompt.body,
+            context: prompt.context,
+            key: key
+        )
+    }
 
     /// Whether a request can still be shown and answered: it hasn't expired and the phone hasn't withdrawn it.
     private func isOpen(_ prompt: AIRequestPrompt) -> Bool {
@@ -335,6 +387,16 @@ import WatchKit
 
         switch response.actionIdentifier {
         case AIRequestIdentifiers.actionApprove:
+            // Only the Approve category has this action, so it's checked as one-gesture: a request Trio signed as
+            // two-step never approves from the notification, and neither does text Trio didn't write.
+            guard isDisplayVerified(prompt, as: .oneGesture) else {
+                Task { await WatchLogger.shared.log("AI requests: couldn't check \(prompt.id)'s text, so it isn't approved") }
+                if keychain.data(for: Self.keyAccount) == nil {
+                    requestKey()
+                }
+                askToOpen(prompt)
+                return
+            }
             answerInBackground(prompt, .approve, declinedBy: nil)
         case AIRequestIdentifiers.actionDecline:
             answerInBackground(prompt, .decline, declinedBy: .button)

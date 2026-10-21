@@ -213,4 +213,148 @@ import Testing
         #expect(AIRequestIdentifiers.category(for: .twoStep) == "trio.request.review")
         #expect(AIRequestIdentifiers.category(for: .oneGesture) == "trio.request.approve")
     }
+
+    // MARK: Display MAC
+
+    /// The contract's "Display MAC" test vector. The spaces before `2.10`, `U` and `g` are U+00A0; the ones around
+    /// `·` are ordinary.
+    private enum Display {
+        static let id = "8f14e45f-ea6b-4c1d-9a2f-6d1b2c3a4e5f"
+        static let title = "ChatGPT: slice of pizza"
+        static let body = "Bolus\u{00A0}2.10\u{00A0}U · 35\u{00A0}g carbs"
+        static let context = AIRequestContext(
+            glucose: "142 mg/dL \u{2197}",
+            glucoseAgeMinutes: 3,
+            recentCarbs: .init(amount: "20", minutesAgo: 6)
+        )
+        static let mac = "3rIvGEpt8j9Zt1cE86ABd7Uh8vYWR3J-U5Tqfzo2zLM"
+    }
+
+    /// Checks `mac` against the vector's inputs, with any of them changed.
+    private static func isValidDisplay(
+        _ mac: String?,
+        id: String = Display.id,
+        style: AIRequestApprovalStyle = .oneGesture,
+        title: String = Display.title,
+        body: String = Display.body,
+        context: AIRequestContext? = Display.context,
+        key: Data = key
+    ) -> Bool {
+        AIRequestSigner.isValidDisplayMAC(
+            mac,
+            id: id,
+            approvalStyle: style,
+            title: title,
+            body: body,
+            context: context,
+            key: key
+        )
+    }
+
+    @Test func displayMACMatchesTheContractVector() {
+        let mac = AIRequestSigner.displayMAC(
+            id: Display.id,
+            approvalStyle: .oneGesture,
+            title: Display.title,
+            body: Display.body,
+            context: Display.context,
+            key: Self.key
+        )
+        #expect(mac == Display.mac)
+        #expect(Self.isValidDisplay(Display.mac))
+    }
+
+    @Test func displayMACRejectsChangedBody() {
+        #expect(!Self.isValidDisplay(Display.mac, body: "Bolus\u{00A0}9.10\u{00A0}U · 35\u{00A0}g carbs"))
+        // A line added to the end of the body is a change too.
+        #expect(!Self.isValidDisplay(Display.mac, body: Display.body + "\n"))
+        #expect(!Self.isValidDisplay(Display.mac, title: "ChatGPT: two slices of pizza"))
+        #expect(!Self.isValidDisplay(Display.mac, id: "8f14e45f-ea6b-4c1d-9a2f-6d1b2c3a4e50"))
+    }
+
+    @Test func displayMACRejectsChangedStyle() {
+        let twoStep = AIRequestSigner.displayMAC(
+            id: Display.id,
+            approvalStyle: .twoStep,
+            title: Display.title,
+            body: Display.body,
+            context: Display.context,
+            key: Self.key
+        )
+        #expect(Self.isValidDisplay(twoStep, style: .twoStep))
+        #expect(!Self.isValidDisplay(twoStep, style: .oneGesture))
+    }
+
+    @Test func displayMACRejectsChangedContext() {
+        var withoutCarbs = Display.context
+        withoutCarbs.recentCarbs = nil
+        #expect(!Self.isValidDisplay(Display.mac, context: withoutCarbs))
+        // Nor can rows be added, a value changed, or the context dropped.
+        var withBolus = Display.context
+        withBolus.recentBolus = .init(amount: "3.00", minutesAgo: 8)
+        #expect(!Self.isValidDisplay(Display.mac, context: withBolus))
+        var older = Display.context
+        older.glucoseAgeMinutes = 30
+        #expect(!Self.isValidDisplay(Display.mac, context: older))
+        #expect(!Self.isValidDisplay(Display.mac, context: nil))
+    }
+
+    @Test func displayMACRejectsALineBreakInAContextField() {
+        // Signed as is, but checked never: a line break there could move the text into another field.
+        let multiLine: [(title: String, context: AIRequestContext)] = [
+            (Display.title, AIRequestContext(glucose: "142 mg/dL\n3")),
+            (Display.title, AIRequestContext(recentCarbs: .init(amount: "20\n6", minutesAgo: 6))),
+            (Display.title, AIRequestContext(recentBolus: .init(amount: "3.00\r", minutesAgo: 8))),
+            (Display.title, AIRequestContext(noDoseReason: "glucose is low\u{2028}(52 mg/dL)")),
+            ("ChatGPT\noneGesture", Display.context)
+        ]
+        for (title, context) in multiLine {
+            let mac = AIRequestSigner.displayMAC(
+                id: Display.id,
+                approvalStyle: .oneGesture,
+                title: title,
+                body: Display.body,
+                context: context,
+                key: Self.key
+            )
+            #expect(!Self.isValidDisplay(mac, title: title, context: context), "\(title) \(context)")
+        }
+        // The request ID too: the service picks it.
+        let id = "8f14e45f\noneGesture"
+        let idMAC = AIRequestSigner.displayMAC(
+            id: id, approvalStyle: .twoStep, title: Display.title, body: Display.body, context: Display.context, key: Self.key
+        )
+        #expect(!Self.isValidDisplay(idMAC, id: id, style: .twoStep))
+        // The body is the one field that may have line breaks.
+        let body = "Bolus\u{00A0}2.10\u{00A0}U\n142 mg/dL"
+        let mac = AIRequestSigner.displayMAC(
+            id: Display.id, approvalStyle: .oneGesture, title: Display.title, body: body, context: Display.context, key: Self.key
+        )
+        #expect(Self.isValidDisplay(mac, body: body))
+    }
+
+    @Test func displayMACRejectsNil() {
+        #expect(!Self.isValidDisplay(nil))
+        #expect(!Self.isValidDisplay(""))
+        #expect(!Self.isValidDisplay("!!"))
+        #expect(!Self.isValidDisplay(Display.mac, key: Data(repeating: 7, count: 32)))
+    }
+
+    @Test func pushDisplayMACIsReadFromTheTopLevel() throws {
+        var userInfo = Self.push()
+        var payload = try #require(userInfo["trio-rc"] as? [String: Any])
+        payload["displayMac"] = Display.mac
+        userInfo["trio-rc"] = payload
+        #expect(try #require(AIRequestPrompt.fromPush(userInfo)).displayMac == Display.mac)
+        #expect(try #require(AIRequestPrompt.fromPush(Self.push())).displayMac == nil)
+    }
+
+    @Test func promptKeepsItsDisplayMACThroughJSON() throws {
+        var prompt = Self.prompt
+        prompt.displayMac = Display.mac
+        let decoded = try JSONDecoder().decode(AIRequestPrompt.self, from: JSONEncoder().encode(prompt))
+        #expect(decoded.displayMac == Display.mac)
+        let plain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Self.prompt)) as? [String: Any]
+        #expect(plain?["displayMac"] == nil)
+    }
 }

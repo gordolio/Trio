@@ -112,6 +112,9 @@ struct AIRequestDisplay: Codable, Equatable {
     let body: String
     /// What Trio itself adds to the request, sent to the service so it can relay it to the watch.
     var context: AIRequestContext? = nil
+    /// Trio's MAC over the title, the body, the approval style and the context, which the service relays to the watch
+    /// as `displayMac`. `nil` when Trio had no key to sign with.
+    var mac: String? = nil
 }
 
 /// The wearer's max carbs, fat and protein, in grams.
