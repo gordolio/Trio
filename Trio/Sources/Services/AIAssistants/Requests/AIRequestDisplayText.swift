@@ -3,14 +3,17 @@ import Foundation
 /// The notification text the wearer sees for a request, for example "ChatGPT: slice of pizza" over
 ///
 ///     Bolus 2.10 U · 35 g carbs
+///     10 g fat · 12 g protein
 ///
 /// and, when Trio's dose is 0 U, over
 ///
 ///     No bolus · 35 g carbs
+///     10 g fat · 12 g protein
 ///     Trio suggests no insulin now: glucose is low (52 mg/dL)
 ///
-/// Each amount in grams or units sits next to its unit with a no-break space (U+00A0), so a line never wraps between
-/// them. Nothing else about the wearer's glucose, carbs or insulin is in it: the screens the request opens show them.
+/// The fat and protein line is there only when the request has fat or protein, and shows the parts above 0. Each
+/// amount in grams or units sits next to its unit with a no-break space (U+00A0), so a line never wraps between them.
+/// Nothing about the wearer's glucose, carbs or insulin is in it: the screens the request opens show them.
 enum AIRequestDisplayText {
     /// The service refuses notification text longer than this many UTF-16 code units, which is what its
     /// JavaScript string length counts, so an emoji takes two.
@@ -57,8 +60,9 @@ enum AIRequestDisplayText {
         }
     }
 
-    /// The title and body of a request: the dose line, and for a 0 U dose why. `noDoseReason` is a reason Trio knows is
-    /// true, for example "glucose is low (52 mg/dL)", or `nil` when it knows none.
+    /// The title and body of a request: the dose line, the fat and protein when there are any, and for a 0 U dose why.
+    /// `noDoseReason` is a reason Trio knows is true, for example "glucose is low (52 mg/dL)", or `nil` when it knows
+    /// none.
     static func display(
         source: String,
         description: String,
@@ -88,6 +92,23 @@ enum AIRequestDisplayText {
                 )
         )
 
+        var details: [String] = []
+        if let fat = positive(shown.fat) {
+            details.append(String(
+                localized: "\(fat)\u{00A0}g fat",
+                comment: "Request notification: the fat in grams. The no-break space keeps the number with its unit."
+            ))
+        }
+        if let protein = positive(shown.protein) {
+            details.append(String(
+                localized: "\(protein)\u{00A0}g protein",
+                comment: "Request notification: the protein in grams. The no-break space keeps the number with its unit."
+            ))
+        }
+        if !details.isEmpty {
+            lines.append(details.joined(separator: " · "))
+        }
+
         if let reason = noDoseReason, !reason.isEmpty {
             lines.append(String(
                 localized: "Trio suggests no insulin now: \(reason)",
@@ -111,6 +132,12 @@ enum AIRequestDisplayText {
     /// A number as text without trailing zeros: "35.00" is "35", "12.50" is "12.5".
     private static func trimmed(_ amount: String) -> String {
         Decimal(string: amount)?.description ?? amount
+    }
+
+    /// The amount without trailing zeros when it is above 0, otherwise `nil`.
+    private static func positive(_ amount: String) -> String? {
+        guard let value = Decimal(string: amount), value > 0 else { return nil }
+        return value.description
     }
 
     /// Text over `maxLength` is cut short, at a whole character, and ends with "…".

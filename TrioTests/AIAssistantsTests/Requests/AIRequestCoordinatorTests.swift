@@ -311,7 +311,7 @@ import Testing
 
     // MARK: The text
 
-    @Test func promptAndReportCarryTheDoseLineOnly() async {
+    @Test func promptAndReportCarryTheDoseAndFatAndProtein() async {
         let h = makeCoordinator(dose: 1.2)
         await h.coordinator.receive(meal(id: "r1"), via: .service)
         guard case let .pending(_, _, display) = h.reporter.reports.first?.report else {
@@ -319,7 +319,7 @@ import Testing
             return
         }
         #expect(display.title == "ChatGPT: slice of pizza")
-        #expect(display.body == "Bolus 1.20\u{00A0}U · 20\u{00A0}g carbs")
+        #expect(display.body == "Bolus 1.20\u{00A0}U · 20\u{00A0}g carbs\n10\u{00A0}g fat · 8\u{00A0}g protein")
         #expect(h.prompt("r1").title == display.title)
         #expect(h.prompt("r1").body == display.body)
         // Trio asked about the dose it shows, and the fake has no reason to give.
