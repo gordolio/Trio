@@ -97,9 +97,39 @@ import Testing
         )
     }
 
-    @Test func zeroDoseWithoutAReasonHasNoReasonLine() {
+    @Test func zeroDoseWithoutAKnownReasonSaysSoPlainly() {
+        // Trio gave no reason, so the line has no colon and nothing after it.
         let shown = AIRequestShown(carbs: 35, fat: 0, protein: 0, units: 0)
-        #expect(display(shown: shown, context: AIRequestContext()).body == "No bolus · 35\u{00A0}g carbs")
+        #expect(
+            display(shown: shown, context: AIRequestContext()).body == """
+            No bolus · 35\u{00A0}g carbs
+            Trio suggests no insulin now
+            """
+        )
+        // It sits where the reason does: after the food and glucose, before the recent carbs and insulin.
+        let context = AIRequestContext(
+            glucose: "142 mg/dL ↗",
+            recentCarbs: .init(amount: "20", minutesAgo: 6),
+            recentBolus: .init(amount: "3.00", minutesAgo: 8)
+        )
+        #expect(
+            display(shown: shown, context: context).body == """
+            No bolus · 35\u{00A0}g carbs
+            142 mg/dL ↗
+            Trio suggests no insulin now
+            Carbs 20\u{00A0}g logged 6 min ago
+            Bolus 3.00\u{00A0}U given 8 min ago
+            """
+        )
+        // An empty reason is no reason.
+        #expect(
+            display(shown: shown, context: AIRequestContext(noDoseReason: "")).body
+                == "No bolus · 35\u{00A0}g carbs\nTrio suggests no insulin now"
+        )
+    }
+
+    @Test func aDoseHasNoNoInsulinLineWithoutAReason() {
+        #expect(!display(context: AIRequestContext()).body.contains("no insulin"))
     }
 
     @Test func approveNeverPromisesABolusThatIsNotComing() {

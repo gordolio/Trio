@@ -24,12 +24,15 @@ import Testing
         .bolus(date: now - minutesAgo * 60, units: units, isSMB: smb, isExternal: false)
     }
 
-    /// The context for a dose of `units`, a minute-old loop run and a forecast that's fine, unless said otherwise.
+    /// The context for a dose of `units`, a minute-old loop run, a forecast that's fine and no determination, so no
+    /// insulin on board, unless said otherwise.
     private func make(
         glucose: StatusSnapshot.LatestGlucose? = nil,
         treatments: [StatusSnapshot.Treatment] = [],
         loopMinutesAgo: Double = 1,
         minPredBG: Decimal = 100,
+        iob: Decimal? = nil,
+        maxIOB: Decimal = 5,
         displayUnits: String = "mg/dL",
         units: Decimal = 1.2
     ) -> AIRequestContext {
@@ -38,6 +41,8 @@ import Testing
             recentTreatments: treatments,
             lastLoopDate: now - loopMinutesAgo * 60,
             minPredBG: minPredBG,
+            iob: iob,
+            maxIOB: maxIOB,
             displayUnits: displayUnits,
             units: units,
             now: now
@@ -183,19 +188,48 @@ import Testing
         #expect(context.noDoseReason == "the loop hasn't run for 22 min")
     }
 
-    @Test func otherwiseInsulinOnBoardIsAtItsMax() {
-        let context = make(glucose: reading(mgdl: 120), loopMinutesAgo: 5, minPredBG: 100, units: 0)
-        #expect(context.noDoseReason == "insulin on board is at your max")
-        // No reading and no forecast problem: the same.
-        #expect(make(glucose: nil, units: 0).noDoseReason == "insulin on board is at your max")
+    @Test func noReadingIsTheFourthReason() {
+        let context = make(glucose: nil, units: 0)
+        #expect(context.noDoseReason == "there's no recent glucose reading")
+        // A reading Trio couldn't read is the same as none: the context gets no reading either way.
+        #expect(context.glucose == nil)
+        // It comes after a forecast low and a stale loop, and before insulin on board.
+        #expect(make(glucose: nil, minPredBG: 30, iob: 9, units: 0).noDoseReason == "glucose is forecast to go low")
+        #expect(make(glucose: nil, loopMinutesAgo: 20, iob: 9, units: 0).noDoseReason == "the loop hasn't run for 20 min")
+        #expect(make(glucose: nil, iob: 9, units: 0).noDoseReason == "there's no recent glucose reading")
+    }
+
+    @Test func insulinOnBoardAtItsMaxIsTheFifthReason() {
+        let steady = reading(mgdl: 120)
+        // At the max is the boundary: the calculator allows max less insulin on board, which is nothing.
+        #expect(make(glucose: steady, iob: 5, maxIOB: 5, units: 0).noDoseReason == "insulin on board is at your max")
+        #expect(make(glucose: steady, iob: 5.01, maxIOB: 5, units: 0).noDoseReason == "insulin on board is at your max")
+        #expect(make(glucose: steady, iob: 7, maxIOB: 5, units: 0).noDoseReason == "insulin on board is at your max")
+        // A max of 0 with no insulin on board leaves nothing to give either.
+        #expect(make(glucose: steady, iob: 0, maxIOB: 0, units: 0).noDoseReason == "insulin on board is at your max")
+        // Every earlier reason comes first.
+        #expect(make(glucose: reading(mgdl: 52), iob: 9, maxIOB: 5, units: 0).noDoseReason == "glucose is low (52 mg/dL)")
+        #expect(make(glucose: steady, minPredBG: 30, iob: 9, maxIOB: 5, units: 0).noDoseReason == "glucose is forecast to go low")
+        #expect(
+            make(glucose: steady, loopMinutesAgo: 20, iob: 9, maxIOB: 5, units: 0).noDoseReason
+                == "the loop hasn't run for 20 min"
+        )
+    }
+
+    @Test func noReasonIsGivenWhenTrioDoesNotKnowOne() {
+        let steady = reading(mgdl: 120)
+        // Insulin on board under the max: the dose can still be 0 U because it works out to 0, or to less than one
+        // increment of the pump, and neither is worth a made-up reason.
+        #expect(make(glucose: steady, iob: 4.99, maxIOB: 5, units: 0).noDoseReason == nil)
+        #expect(make(glucose: steady, iob: 0, maxIOB: 5, units: 0).noDoseReason == nil)
+        // No determination from the last 30 minutes means no insulin on board to compare.
+        #expect(make(glucose: steady, iob: nil, maxIOB: 0, units: 0).noDoseReason == nil)
+        #expect(make(glucose: steady, units: 0).noDoseReason == nil)
     }
 
     @Test func theLimitsAreTheBolusCalculatorsOwn() {
         // 54 mg/dL is not low, and 15 min is not stale: the calculator uses < 54 and > 15 min.
-        #expect(
-            make(glucose: reading(mgdl: 54), loopMinutesAgo: 15, minPredBG: 54, units: 0).noDoseReason
-                == "insulin on board is at your max"
-        )
+        #expect(make(glucose: reading(mgdl: 54), loopMinutesAgo: 15, minPredBG: 54, units: 0).noDoseReason == nil)
         #expect(make(glucose: reading(mgdl: 53), units: 0).noDoseReason == "glucose is low (53 mg/dL)")
         #expect(make(glucose: reading(mgdl: 54), minPredBG: 53.9, units: 0).noDoseReason == "glucose is forecast to go low")
         #expect(make(loopMinutesAgo: 15.1, units: 0).noDoseReason == "the loop hasn't run for 15 min")
@@ -209,6 +243,8 @@ import Testing
             recentTreatments: [],
             lastLoopDate: .distantPast,
             minPredBG: 100,
+            iob: nil,
+            maxIOB: 5,
             displayUnits: "mg/dL",
             units: 0,
             now: now

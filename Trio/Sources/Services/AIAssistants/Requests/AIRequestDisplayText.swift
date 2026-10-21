@@ -128,6 +128,12 @@ enum AIRequestDisplayText {
                 localized: "Trio suggests no insulin now: \(reason)",
                 comment: "Request notification: why Trio's dose is 0 U. The placeholder is the reason, for example 'glucose is low (52 mg/dL)'."
             ))
+        } else if givesNoBolus {
+            // Trio only says a reason it knows is true.
+            lines.append(String(
+                localized: "Trio suggests no insulin now",
+                comment: "Request notification: Trio's dose is 0 U and there's no reason to give"
+            ))
         }
         if let carbs = context.recentCarbs {
             lines.append(String(

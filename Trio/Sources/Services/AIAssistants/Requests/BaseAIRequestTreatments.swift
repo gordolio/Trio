@@ -110,13 +110,15 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         } catch {
             debug(.service, "AI requests: couldn't read glucose and treatments for the approval: \(error)")
         }
-        // Only a 0 U dose needs the forecast.
-        let minPredBG = units > 0 ? Self.defaultMinPredBG : await latestDetermination().minPredBG
+        // Only a 0 U dose needs the forecast and the insulin on board.
+        let determination = units > 0 ? nil : await latestDetermination()
         return Self.context(
             glucose: glucose,
             recentTreatments: treatments,
             lastLoopDate: apsManager.lastLoopDate,
-            minPredBG: minPredBG,
+            minPredBG: determination?.minPredBG ?? Self.defaultMinPredBG,
+            iob: determination?.iob,
+            maxIOB: settingsManager.preferences.maxIOB,
             displayUnits: displayUnits,
             units: units,
             now: now
@@ -131,13 +133,18 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     ///   - recentTreatments: Carbs entries and boluses, in any order.
     ///   - lastLoopDate: When the loop last ran, `.distantPast` if it never did.
     ///   - minPredBG: The forecast low the dose was worked out with, in mg/dL.
+    ///   - iob: The insulin on board the dose was worked out with, from the same determination as `minPredBG`, or `nil`
+    ///     when there was none.
+    ///   - maxIOB: The wearer's max insulin on board.
     ///   - displayUnits: A `GlucoseUnits` raw value.
-    ///   - units: Trio's dose. The 0 U reason is set only when it is 0.
+    ///   - units: Trio's dose. The 0 U reason is set only when it is 0, and only when Trio knows it is true.
     static func context(
         glucose: StatusSnapshot.LatestGlucose?,
         recentTreatments: [StatusSnapshot.Treatment],
         lastLoopDate: Date,
         minPredBG: Decimal,
+        iob: Decimal?,
+        maxIOB: Decimal,
         displayUnits: String,
         units: Decimal,
         now: Date
@@ -181,6 +188,8 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
                 glucose: glucose,
                 minPredBG: minPredBG,
                 lastLoopDate: lastLoopDate,
+                iob: iob,
+                maxIOB: maxIOB,
                 displayUnits: displayUnits,
                 now: now
             ).flatMap { AIRequestContext.fitted($0, toUTF16Units: AIRequestContext.Limit.noDoseReason) }
@@ -208,12 +217,16 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         return AIRequestContext.Recent(amount: newest.amount, minutesAgo: minutes)
     }
 
-    /// Why Trio's dose is 0 U, using the bolus calculator's own limits and its order: low glucose, a forecast low, a
-    /// loop that hasn't run, and otherwise insulin on board at its max.
+    /// Why Trio's dose is 0 U, but only a reason Trio knows is true, in this order: low glucose, a forecast low, a loop
+    /// that hasn't run (the bolus calculator's own limits), no glucose reading, and insulin on board at its max. The
+    /// calculator also gives 0 U when the dose it works out is 0 or under the pump's increment, which has no reason
+    /// worth saying, so then there is `nil`.
     private static func noDoseReason(
         glucose: StatusSnapshot.LatestGlucose?,
         minPredBG: Decimal,
         lastLoopDate: Date,
+        iob: Decimal?,
+        maxIOB: Decimal,
         displayUnits: String,
         now: Date
     ) -> String? {
@@ -239,10 +252,21 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
                 comment: "Why Trio's dose is 0 U: the placeholder is how many minutes ago the loop last ran"
             )
         }
-        return String(
-            localized: "insulin on board is at your max",
-            comment: "Why Trio's dose is 0 U: the insulin Trio has already given is at the max insulin on board"
-        )
+        // The calculator reads glucose as 0 when there is none, which is under 54 too.
+        if glucose == nil {
+            return String(
+                localized: "there's no recent glucose reading",
+                comment: "Why Trio's dose is 0 U: Trio has no glucose reading"
+            )
+        }
+        // The calculator limits the dose to what is left under the max: the max less the insulin on board.
+        if let iob, iob >= maxIOB {
+            return String(
+                localized: "insulin on board is at your max",
+                comment: "Why Trio's dose is 0 U: the insulin Trio has already given is at the max insulin on board"
+            )
+        }
+        return nil
     }
 
     /// Trio's bolus safety checks, with the recent-insulin window starting at `since`, as Trio Remote Control starts
@@ -325,23 +349,25 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     // MARK: - Helpers
 
     /// The newest determination from the last 30 minutes, the one Trio's bolus calculator reads: its `minPredBG`, read
-    /// as the watch's bolus recommendation reads it, and its `deliverAt`, which is `nil` when there's none.
-    private func latestDetermination() async -> (minPredBG: Decimal, deliverAt: Date?) {
+    /// as the watch's bolus recommendation reads it, its `deliverAt`, which is `nil` when there's none, and its insulin
+    /// on board, which is `nil` when there's none.
+    private func latestDetermination() async -> (minPredBG: Decimal, deliverAt: Date?, iob: Decimal?) {
         do {
             let context = CoreDataStack.shared.newTaskContext()
             context.name = "AIRequestTreatments.latestDetermination"
             let ids = try await determinationStorage.fetchLastDeterminationObjectID(
                 predicate: NSPredicate.predicateFor30MinAgoForDetermination
             )
-            let latest = try await context.perform { [context] () -> (minPredBG: Decimal?, deliverAt: Date?)? in
+            let latest = try await context.perform { [context] () -> (minPredBG: Decimal?, deliverAt: Date?, iob: Decimal)? in
                 guard let id = ids.first, let determination = try context.existingObject(with: id) as? OrefDetermination
                 else { return nil }
-                return (determination.minPredBGFromReason, determination.deliverAt)
+                // As the calculator reads it: no insulin on board is 0.
+                return (determination.minPredBGFromReason, determination.deliverAt, (determination.iob ?? 0) as Decimal)
             }
-            return (latest?.minPredBG ?? Self.defaultMinPredBG, latest?.deliverAt)
+            return (latest?.minPredBG ?? Self.defaultMinPredBG, latest?.deliverAt, latest?.iob)
         } catch {
             debug(.service, "AI requests: couldn't read the last determination, using \(Self.defaultMinPredBG): \(error)")
-            return (Self.defaultMinPredBG, nil)
+            return (Self.defaultMinPredBG, nil, nil)
         }
     }
 

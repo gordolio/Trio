@@ -383,6 +383,13 @@ import Testing
         #expect(h.prompt("r1").shown.units == "0.00")
     }
 
+    @Test func aZeroDoseRequestWithoutAKnownReasonSaysSoPlainly() async {
+        let h = makeCoordinator(dose: 0)
+        await h.coordinator.receive(meal(id: "r1", carbs: 35, fat: 0, protein: 0), via: .service)
+        #expect(h.prompt("r1").body == "No bolus · 35\u{00A0}g carbs\nTrio suggests no insulin now")
+        #expect(h.prompt("r1").context?.noDoseReason == nil)
+    }
+
     // MARK: The watch is open
 
     @Test func viewingPostponesTheBackupOnce() async {

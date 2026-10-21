@@ -22,7 +22,8 @@ struct AIRequestContext: Codable, Equatable {
     var recentCarbs: Recent?
     /// The newest bolus that wasn't an automatic microbolus, from the last 30 minutes.
     var recentBolus: Recent?
-    /// Why Trio's dose is 0 U, for example "glucose is low (52 mg/dL)". Set only when the dose is 0 U.
+    /// Why Trio's dose is 0 U, for example "glucose is low (52 mg/dL)". Set only when the dose is 0 U and Trio knows the
+    /// reason is true; a 0 U dose can also come from the calculator's own arithmetic, which has no reason to give.
     var noDoseReason: String?
 
     /// A recent entry: its amount, as grams or units, and how long ago it was.
