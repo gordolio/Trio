@@ -22,6 +22,25 @@ private final class FakeRouter: Router {
     }
 }
 
+/// Trio's pump history, standing in for `PumpHistoryStorage` and its Core Data rows.
+private final class FakePumpHistory {
+    let updates = PassthroughSubject<Void, Never>()
+    private let lock = NSLock()
+    private var stored: [AIRequestPumpBolusEvent] = []
+
+    /// Stores the bolus and sends the update, as `PumpHistoryStorage` does once it has saved.
+    func store(_ event: AIRequestPumpBolusEvent, sendingUpdate: Bool = true) {
+        lock.withLock { stored.append(event) }
+        if sendingUpdate {
+            updates.send()
+        }
+    }
+
+    func boluses(since date: Date) -> [AIRequestPumpBolusEvent] {
+        lock.withLock { stored.filter { $0.timestamp >= date } }
+    }
+}
+
 /// A request for 82.5 g of pizza with 10 g fat and 5 g protein, created at `coordinatorTestStart`.
 private func pizza(id: String = "r1") -> AIMealRequest {
     AIMealRequest(
@@ -64,6 +83,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
     private let deadline: PassthroughSubject<Void, Never>
     /// The seconds of each deadline the session set.
     private let deadlines: TestBox<[TimeInterval]>
+    private let history: FakePumpHistory
     /// Whether the key window shows a sheet, a cover or an alert outside Trio's router.
     private let keyWindowPresents: TestBox<Bool>
     private let session: AIRequestTreatmentsSession
@@ -80,6 +100,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         let signalStops = TestBox(0)
         let deadline = PassthroughSubject<Void, Never>()
         let deadlines = TestBox<[TimeInterval]>([])
+        let history = FakePumpHistory()
         let keyWindowPresents = TestBox(false)
         let session = AIRequestTreatmentsSession(
             coordinator: { h.coordinator },
@@ -91,13 +112,16 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
                     failures: failures.eraseToAnyPublisher(),
                     lastErrorText: { lastError.value },
                     roundBolus: { rounding.value($0) },
+                    historyUpdates: history.updates.eraseToAnyPublisher(),
+                    boluses: { history.boluses(since: $0) },
                     stop: { signalStops.value += 1 }
                 )
             },
             deadline: { seconds in
                 deadlines.value.append(seconds)
                 return deadline.eraseToAnyPublisher()
-            }
+            },
+            now: { h.now }
         )
         self.h = h
         self.router = router
@@ -109,6 +133,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         self.signalStops = signalStops
         self.deadline = deadline
         self.deadlines = deadlines
+        self.history = history
         self.keyWindowPresents = keyWindowPresents
         self.session = session
         opener = AIRequestTreatmentsOpener(
@@ -139,11 +164,31 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         return state
     }
 
-    /// The wearer presses Log with `amount` in the Bolus field.
+    /// The wearer presses Log with `amount` in the Bolus field, for now.
     private func submit(_ state: Treatments.StateModel, amount: Decimal, external: Bool = false) {
         state.amount = amount
         state.externalInsulin = external
+        state.date = h.now
         session.willSubmit(from: state)
+    }
+
+    /// The pump took this bolus, `seconds` after Log, and Trio stored it.
+    private func storeOwnBolus(_ amount: Decimal?, after seconds: TimeInterval = 5) async {
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now + seconds, amount: amount, isSMB: false, isExternal: false))
+        await settle()
+    }
+
+    /// The loop gave an SMB, `seconds` after Log, and Trio stored it.
+    private func storeSMB(_ amount: Decimal, after seconds: TimeInterval = 5) async {
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now + seconds, amount: amount, isSMB: true, isExternal: false))
+        await settle()
+    }
+
+    /// Lets the session read the pump history it was told of, and act on it.
+    private func settle() async {
+        await flushMainQueue()
+        try? await Task.sleep(for: .milliseconds(20))
+        await flushMainQueue()
     }
 
     /// Face ID passed: upstream shows its progress just before it gives the insulin.
@@ -375,6 +420,25 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(session.requestID == nil)
     }
 
+    @Test func routerResetBeforeTheSheetAppearsIsNotADecline() async {
+        // On a cold launch, Main sends the router nil as it starts, before the sheet has appeared.
+        await h.coordinator.receive(pizza(), via: .service)
+        await opener.open(requestID: "r1").value
+        await flushMainQueue()
+        router.mainModalScreen.send(nil)
+        await flushMainQueue()
+        #expect(session.requestID == nil)
+        #expect(session.gramFormatter == nil)
+        await expectNoFinalReport()
+        #expect(h.left.isEmpty)
+
+        // The request keeps waiting, and opens again.
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        await opener.open(requestID: "r1").value
+        #expect(router.sent == [.treatmentView, nil, .treatmentView])
+        #expect(session.requestID == "r1")
+    }
+
     @Test func submittingNothingDeclines() async {
         // "Continue Without Treatment" with every field cleared logs nothing, so it's the same as closing.
         let state = await openSheet()
@@ -401,7 +465,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         submit(state, amount: 2)
         await unlock(state)
         progress.send(0)
-        await flushMainQueue()
+        await storeOwnBolus(2)
         await closeSheet()
         #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.phone), source: "ChatGPT")])
@@ -410,8 +474,18 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(center.added.isEmpty)
     }
 
+    @Test func ownPumpEventReportsTheBolus() async {
+        // A loop run closes the sheet while Face ID is up; the pump then takes what it can deliver.
+        let state = await openSheet()
+        submit(state, amount: d("2.17"))
+        await closeSheet()
+        await unlock(state)
+        await storeOwnBolus(d("2.15"))
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: d("2.15"))))
+    }
+
     @Test func pumpUnitsAreReportedRounded() async {
-        // The pump gives whole tenths of a unit, at most.
+        // The pump's event has no amount, so the units are what the pump gives for the bolus field.
         rounding.value = { amount in
             var value = amount * 10
             var rounded = Decimal()
@@ -421,7 +495,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         let state = await openSheet()
         submit(state, amount: d("2.17"))
         await unlock(state)
-        progress.send(0)
+        await storeOwnBolus(nil)
         await closeSheet()
         #expect(await finalReport() == .delivering(shown: pizzaShown(units: d("2.1"))))
     }
@@ -437,7 +511,91 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
 
         await unlock(state)
         progress.send(0)
+        await storeOwnBolus(2)
         #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
+    }
+
+    @Test func progressAloneIsNotAStart() async {
+        // The pump's progress says a bolus started, but no bolus of this sheet's is in the pump history.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
+        progress.send(0)
+        await settle()
+        await closeSheet()
+        await expectNoFinalReport()
+    }
+
+    @Test func smbProgressAfterUnlockIsNotThisBolus() async {
+        // An SMB goes in after Face ID passed, and then this bolus fails.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
+        progress.send(0)
+        await storeSMB(d("0.3"))
+        await closeSheet()
+        await expectNoFinalReport()
+
+        lastError.value = "Pump Error (Occlusion)."
+        failures.send()
+        #expect(await finalReport() == .failed(reason: "Pump Error (Occlusion).", carbsLogged: true))
+    }
+
+    @Test func otherBolusFailureAfterOwnEventDoesNotOverride() async {
+        // This bolus is in the pump history; a failure broadcast after it, with the sheet open, is another's.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
+        await storeOwnBolus(2)
+        failures.send()
+        await settle()
+        await closeSheet()
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
+    }
+
+    @Test func failureAfterOwnEventWithTheSheetClosedDoesNotOverride() async {
+        // The sheet closed first, so this bolus is reported as soon as its event is stored; a failure after it is
+        // another's.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await closeSheet()
+        await unlock(state)
+        await storeOwnBolus(2)
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
+        failures.send()
+        await settle()
+        #expect(h.reporter.states == ["r1:pending", "r1:delivering"])
+    }
+
+    @Test func failureWithItsOwnEventStoredReportsTheBolus() async {
+        // The pump stored this bolus before the failure broadcast was heard: the bolus is what the pump took.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now + 5, amount: 2, isSMB: false, isExternal: false))
+        failures.send()
+        await settle()
+        await closeSheet()
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
+    }
+
+    @Test func missedFlagFlipStillReportsFromThePumpEvent() async {
+        // The sheet's progress flag went by unseen, but this bolus is in the pump history.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await storeOwnBolus(2)
+        await closeSheet()
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
+    }
+
+    @Test func bolusesBeforeLogAreNotThisBolus() async {
+        // A bolus stored before Log, by hand on the watch say, isn't this sheet's.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
+        await storeOwnBolus(2, after: -30)
+        await closeSheet()
+        await expectNoFinalReport()
     }
 
     @Test func failedBolusReportsFailedWithCarbs() async {
@@ -446,7 +604,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         await unlock(state)
         lastError.value = "Pump Error (Occlusion)."
         failures.send()
-        await flushMainQueue()
+        await settle()
         await closeSheet()
         #expect(await finalReport() == .failed(reason: "Pump Error (Occlusion).", carbsLogged: true))
     }
@@ -456,7 +614,20 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         submit(state, amount: 2)
         await unlock(state)
         failures.send()
+        await settle()
+        await closeSheet()
+        #expect(await finalReport() == .failed(reason: "Bolus failed", carbsLogged: true))
+    }
+
+    @Test func unlockStaysPassedOnceSeen() async {
+        // The progress flag goes back to false once the loop has run; Face ID still passed, so the failure counts.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
+        state.isAwaitingDeterminationResult = false
         await flushMainQueue()
+        failures.send()
+        await settle()
         await closeSheet()
         #expect(await finalReport() == .failed(reason: "Bolus failed", carbsLogged: true))
     }
@@ -476,14 +647,14 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         submit(state, amount: 2)
         // An SMB starts while Face ID is up, before it passes.
         progress.send(0)
-        await flushMainQueue()
+        await storeSMB(d("0.3"))
         await failFaceID(state)
         await closeSheet()
         #expect(await finalReport() == .failed(reason: "The bolus wasn't started", carbsLogged: true))
     }
 
     @Test func unknownOutcomeSendsNoReport() async {
-        // Face ID passed, but neither the pump's start nor a failure is heard.
+        // Face ID passed, but neither this bolus's event nor a failure is heard.
         let state = await openSheet()
         submit(state, amount: 2)
         #expect(deadlines.value == [120])
@@ -491,13 +662,26 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         await closeSheet()
         await expectNoFinalReport()
 
-        // Two minutes pass: nothing is reported, and a late signal changes nothing.
+        // Two minutes pass: nothing is reported, and a late event changes nothing.
         deadline.send()
-        await flushMainQueue()
-        progress.send(0)
-        await flushMainQueue()
+        await settle()
+        await storeOwnBolus(2)
         await expectNoFinalReport()
         #expect(signalStops.value == 1)
+    }
+
+    @Test func deadlineFindsAnEventTheUpdatesMissed() async {
+        // The pump history was stored without its update reaching the session.
+        let state = await openSheet()
+        submit(state, amount: 2)
+        await unlock(state)
+        await closeSheet()
+        history.store(
+            AIRequestPumpBolusEvent(timestamp: h.now + 5, amount: 2, isSMB: false, isExternal: false),
+            sendingUpdate: false
+        )
+        deadline.send()
+        #expect(await finalReport() == .delivering(shown: pizzaShown(units: 2)))
     }
 
     // MARK: External insulin
@@ -506,8 +690,52 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         let state = await openSheet()
         submit(state, amount: 3, external: true)
         await unlock(state)
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now, amount: 3, isSMB: false, isExternal: true))
+        await settle()
         await closeSheet()
         #expect(await finalReport() == .logged(shown: pizzaShown(units: 3)))
+    }
+
+    @Test func externalWaitsForItsPumpEvent() async {
+        // Face ID passed and the sheet closed, but the external insulin isn't stored yet.
+        let state = await openSheet()
+        submit(state, amount: 3, external: true)
+        await unlock(state)
+        await closeSheet()
+        await expectNoFinalReport()
+
+        // Another external dose isn't this one.
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now, amount: 1, isSMB: false, isExternal: true))
+        await settle()
+        await expectNoFinalReport()
+
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now, amount: 3, isSMB: false, isExternal: true))
+        #expect(await finalReport() == .logged(shown: pizzaShown(units: 3)))
+    }
+
+    @Test func backdatedExternalInsulinIsFound() async {
+        // The wearer set the sheet's time 15 minutes back, so the external insulin is stored then.
+        let state = await openSheet()
+        state.amount = 3
+        state.externalInsulin = true
+        state.date = h.now - 15 * 60
+        session.willSubmit(from: state)
+        await unlock(state)
+        history.store(AIRequestPumpBolusEvent(timestamp: h.now - 15 * 60, amount: 3, isSMB: false, isExternal: true))
+        await settle()
+        await closeSheet()
+        #expect(await finalReport() == .logged(shown: pizzaShown(units: 3)))
+    }
+
+    @Test func externalWithoutItsEventSendsNoReport() async {
+        // Face ID passed, but saving the external insulin failed: nothing was stored.
+        let state = await openSheet()
+        submit(state, amount: 3, external: true)
+        await unlock(state)
+        await closeSheet()
+        deadline.send()
+        await settle()
+        await expectNoFinalReport()
     }
 
     @Test func externalWithFaceIDCancelIsNotLogged() async {
@@ -532,8 +760,7 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(await h.coordinator.claim(id: "r1", on: .watch))
         submit(state, amount: 2)
         await unlock(state)
-        progress.send(0)
-        await flushMainQueue()
+        await storeOwnBolus(2)
         await closeSheet()
         await expectNoFinalReport()
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT")])

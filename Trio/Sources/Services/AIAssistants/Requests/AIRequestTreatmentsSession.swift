@@ -38,6 +38,7 @@ import UserNotifications
     private let bolusSignals: @MainActor() -> AIRequestBolusSignals?
     /// Sends once the seconds have passed.
     private let deadline: (TimeInterval) -> AnyPublisher<Void, Never>
+    private let now: () -> Date
 
     private var active: Active?
     /// The coordinator whose `left` the session follows.
@@ -75,13 +76,15 @@ import UserNotifications
         bolusSignals: @escaping @MainActor() -> AIRequestBolusSignals? = { AIRequestBolusSignals.live() },
         deadline: @escaping (TimeInterval) -> AnyPublisher<Void, Never> = { seconds in
             Just(()).delay(for: .seconds(seconds), scheduler: DispatchQueue.main).eraseToAnyPublisher()
-        }
+        },
+        now: @escaping () -> Date = Date.init
     ) {
         self.coordinator = coordinator
         self.router = router
         self.notifications = notifications
         self.bolusSignals = bolusSignals
         self.deadline = deadline
+        self.now = now
     }
 
     // MARK: Opening
@@ -149,14 +152,14 @@ import UserNotifications
 
         let id = active.pending.request.id
         let claim = Task { await coordinator.claim(id: id, on: .phone) }
-        let submission = Submission(id: id, state: state, claim: claim, coordinator: coordinator)
+        let submission = Submission(id: id, state: state, submittedAt: now(), claim: claim, coordinator: coordinator)
         let key = ObjectIdentifier(submission)
         watched[key] = submission
         submission.onEnd = { [weak self] in self?.watched[key] = nil }
         // Watched from now, before Face ID or the pump can answer.
         if submission.amount > 0 {
             submission.watchState()
-            if !submission.isExternal, let signals = bolusSignals() {
+            if let signals = bolusSignals() {
                 submission.watch(signals)
             }
             submission.giveUp(at: deadline(Self.outcomeWait))
@@ -224,13 +227,19 @@ import UserNotifications
     }
 
     /// The request's sheet closed. A submit goes on being watched until its outcome is known; without one, the wearer
-    /// declined. A request that left pending some other way gets nothing.
+    /// declined. A request that left pending some other way gets nothing, and so does a sheet that never appeared: on a
+    /// cold launch, Main resets the router as it starts, before the sheet can appear. That request keeps waiting, and
+    /// the next tap or the next time Trio comes to the front opens it again.
     private func sheetClosed() {
         guard let active else { return }
         self.active = nil
         gramFormatter = nil
         routerSubscription = nil
         guard !active.leftElsewhere else { return }
+        guard active.appeared else {
+            debug(.service, "AI requests: the Treatments sheet for \(active.pending.request.id) went before it appeared")
+            return
+        }
         if let submission = active.submission {
             submission.sheetClosed()
         } else if let coordinator = coordinator() {
@@ -274,17 +283,26 @@ import UserNotifications
 
 // MARK: - Submission
 
-/// What the wearer submitted on a request's sheet, the iPhone's claim on the request, and what came of it, read from the
-/// sheet's own state:
-/// - Face ID passed when the sheet's `isAwaitingDeterminationResult` turns true after Log. Upstream sets it right after
-///   the unlock, for a pump bolus and for external insulin alike, and before then only for a meal with no insulin.
-/// - Face ID failed or was canceled when `showDeterminationFailureAlert` turns true before that. Nothing was given.
-/// - Only after Face ID passed, the pump starting the bolus (progress `0`) or failing it counts. A progress `0` before
-///   then is another bolus, such as an SMB. A failure counts over a start.
-/// - External insulin is logged once Face ID passed.
+/// What the wearer submitted on a request's sheet, the iPhone's claim on the request, and what came of it.
 ///
-/// The outcome is reported once the sheet has closed and it's known, or when `outcomeWait` passes if it's known by
-/// then. An outcome still unknown then isn't reported, so the service says Trio didn't confirm what happened.
+/// What the pump took is confirmed from Trio's pump history: the bolus this sheet gave is a stored bolus that the loop
+/// didn't give and isn't external, timestamped at or after Log, and its amount is the units reported. External insulin
+/// is confirmed the same way, from the external insulin stored at the sheet's time with the sheet's amount. The pump's
+/// progress alone never confirms a bolus: an SMB sends it too. It only prompts another look at the history.
+///
+/// Face ID is followed through the sheet's state:
+/// - It passed once `isAwaitingDeterminationResult` turns true after Log. Upstream sets it right after the unlock, for a
+///   pump bolus and for external insulin alike, and before then only for a meal with no insulin. Once seen, it stays
+///   passed. This sheet's own stored bolus counts as passed too, in case the flag's turn was missed.
+/// - It failed or was canceled when `showDeterminationFailureAlert` turns true before it passed. Nothing was given.
+///
+/// A pump failure counts only after Face ID passed, and only when the pump history, read after the failure, doesn't hold
+/// this sheet's bolus. A Face ID failure is checked against the history the same way. This sheet's stored bolus wins
+/// over both.
+///
+/// The outcome is reported once the sheet has closed and it's known. When `outcomeWait` passes, the history is read
+/// once more, and an outcome known then is reported whether or not the sheet has closed. An outcome still unknown then
+/// isn't reported, so the service says Trio didn't confirm what happened.
 @MainActor private final class Submission {
     let id: String
     let carbs: Decimal
@@ -295,6 +313,10 @@ import UserNotifications
     /// Called once, when the submit has been reported or given up.
     var onEnd: (() -> Void)?
 
+    /// When the wearer pressed Log.
+    private let submittedAt: Date
+    /// The time the sheet logs the treatment at, which the wearer can move.
+    private let treatmentDate: Date
     /// Whether the iPhone claimed the request.
     private let claim: Task<Bool, Never>
     private let coordinator: AIRequestCoordinator
@@ -302,8 +324,13 @@ import UserNotifications
     private let state: Treatments.StateModel
 
     private var faceIDPassed = false
+    /// Face ID failed, waiting for the pump history to confirm that nothing of this sheet's was given.
+    private var faceIDFailureHeard = false
     private var faceIDFailed = false
-    private var bolusStarted = false
+    /// This sheet's bolus or external insulin, as stored in the pump history.
+    private var ownEvent: AIRequestPumpBolusEvent?
+    /// A pump failure, waiting for the pump history to confirm that this sheet's bolus isn't there.
+    private var failureHeard: String?
     private var bolusFailure: String?
     private var sheetIsClosed = false
     private var ended = false
@@ -311,13 +338,21 @@ import UserNotifications
     private var signals: AIRequestBolusSignals?
     private var watching: Set<AnyCancellable> = []
 
-    init(id: String, state: Treatments.StateModel, claim: Task<Bool, Never>, coordinator: AIRequestCoordinator) {
+    init(
+        id: String,
+        state: Treatments.StateModel,
+        submittedAt: Date,
+        claim: Task<Bool, Never>,
+        coordinator: AIRequestCoordinator
+    ) {
         self.id = id
         carbs = state.carbs
         fat = state.fat
         protein = state.protein
         amount = state.amount
         isExternal = state.externalInsulin
+        treatmentDate = state.date
+        self.submittedAt = submittedAt
         self.state = state
         self.claim = claim
         self.coordinator = coordinator
@@ -329,13 +364,26 @@ import UserNotifications
             AIRequestPhoneResult(carbs: carbs, fat: fat, protein: protein, units: units, bolus: bolus)
         }
         if amount <= 0 { return result(.none) }
-        if faceIDFailed { return result(.notStarted) }
-        guard faceIDPassed else { return nil }
-        if isExternal { return result(.external, units: amount) }
+        if let ownEvent {
+            if isExternal { return result(.external, units: ownEvent.amount ?? amount) }
+            // What the pump took, or else what it gives for the amount.
+            return result(.started, units: ownEvent.amount ?? roundBolus(amount))
+        }
         if let bolusFailure { return result(.failed(reason: bolusFailure)) }
-        // The units the pump gives for the amount.
-        if bolusStarted { return result(.started, units: roundBolus(amount)) }
+        if faceIDFailed { return result(.notStarted) }
         return nil
+    }
+
+    /// Whether `event` is what this sheet gave.
+    private func isOwn(_ event: AIRequestPumpBolusEvent) -> Bool {
+        guard !event.isSMB else { return false }
+        if isExternal {
+            guard event.isExternal, event.amount == amount else { return false }
+            // Stored at the sheet's time, or at the moment it was stored when that time was ahead.
+            return abs(event.timestamp.timeIntervalSince(treatmentDate)) <= 1
+                || (treatmentDate > submittedAt && event.timestamp >= submittedAt)
+        }
+        return !event.isExternal && event.timestamp >= submittedAt
     }
 
     /// Follows Face ID through the sheet's state.
@@ -352,17 +400,25 @@ import UserNotifications
         }
     }
 
-    /// Follows the pump. Its progress's current value is from before Log, so it doesn't count.
+    /// Follows the pump history, and for a pump bolus the pump's progress and failures.
     func watch(_ signals: AIRequestBolusSignals) {
         self.signals = signals
         roundBolus = signals.roundBolus
+        signals.historyUpdates
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in
+                MainActor.assumeIsolated { self?.readHistory() }
+            }
+            .store(in: &watching)
+        guard !isExternal else { return }
         let lastErrorText = signals.lastErrorText
+        // Its current value is from before Log.
         signals.progress
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] progress in
                 guard progress == 0 else { return }
-                MainActor.assumeIsolated { self?.pumpStartedABolus() }
+                MainActor.assumeIsolated { self?.pumpReportedProgress() }
             }
             .store(in: &watching)
         signals.failures
@@ -375,7 +431,7 @@ import UserNotifications
             .store(in: &watching)
     }
 
-    /// When the outcome still isn't known at `deadline`, nothing is reported.
+    /// When `deadline` sends, the outcome is reported if it's known, and otherwise given up.
     func giveUp(at deadline: AnyPublisher<Void, Never>) {
         deadline
             .receive(on: DispatchQueue.main)
@@ -397,30 +453,69 @@ import UserNotifications
 
     private func stateChanged() {
         guard !ended else { return }
-        if !faceIDPassed, !faceIDFailed {
-            if state.isAwaitingDeterminationResult {
-                faceIDPassed = true
-            } else if state.showDeterminationFailureAlert {
-                faceIDFailed = true
-            }
+        if !faceIDPassed, state.isAwaitingDeterminationResult {
+            faceIDPassed = true
+        } else if !faceIDPassed, !faceIDFailureHeard, state.showDeterminationFailureAlert {
+            faceIDFailureHeard = true
+            readHistory()
         }
-        reportIfKnown()
         watchState()
     }
 
-    private func pumpStartedABolus() {
+    /// A bolus started, maybe this sheet's: the pump history says.
+    private func pumpReportedProgress() {
         guard faceIDPassed, !ended else { return }
-        bolusStarted = true
-        reportIfKnown()
+        readHistory()
     }
 
     private func pumpFailedABolus(_ reason: String) {
         guard faceIDPassed, !ended else { return }
-        bolusFailure = reason
+        failureHeard = reason
+        readHistory()
+    }
+
+    /// Reads the pump history from the earlier of Log and the sheet's time. The failures heard before the read are
+    /// confirmed by it.
+    private func readHistory(then decide: ((Submission) -> Void)? = nil) {
+        guard !ended else { return }
+        let failure = failureHeard
+        let faceIDFailure = faceIDFailureHeard
+        guard let boluses = signals?.boluses else {
+            historyRead([], confirming: failure, faceIDFailure: faceIDFailure)
+            decide?(self)
+            return
+        }
+        let since = min(submittedAt, treatmentDate).addingTimeInterval(-1)
+        Task { [weak self] in
+            let events = await boluses(since)
+            guard let self else { return }
+            historyRead(events, confirming: failure, faceIDFailure: faceIDFailure)
+            decide?(self)
+        }
+    }
+
+    private func historyRead(_ events: [AIRequestPumpBolusEvent], confirming failure: String?, faceIDFailure: Bool) {
+        guard !ended else { return }
+        if ownEvent == nil, let event = events.first(where: isOwn) {
+            ownEvent = event
+            faceIDPassed = true
+        }
+        if let failure {
+            bolusFailure = failure
+        }
+        if faceIDFailure {
+            faceIDFailed = true
+        }
         reportIfKnown()
     }
 
     private func deadlinePassed() {
+        readHistory { submission in
+            submission.reportOrGiveUp()
+        }
+    }
+
+    private func reportOrGiveUp() {
         guard !ended else { return }
         if let outcome {
             report(outcome)
