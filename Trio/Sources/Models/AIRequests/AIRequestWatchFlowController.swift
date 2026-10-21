@@ -53,6 +53,9 @@ import Observation
     @ObservationIgnored var onIntercepted: () -> Void = {}
     /// The watch's bolus increment, which upstream's Confirm screen floors its dose to.
     @ObservationIgnored var bolusIncrement: Decimal = 0.05
+    /// The bolus on upstream's Confirm screen, the Double it floors to show its dose. Read as its bolus send is caught,
+    /// before upstream zeroes it. Without it, the amount upstream passes is used.
+    @ObservationIgnored var screenBolus: (() -> Double)?
 
     @ObservationIgnored private var send: ([String: Any]) -> Void
     @ObservationIgnored private var log: (String) -> Void
@@ -64,6 +67,10 @@ import Observation
     /// Whether a flow's screens are up: from the first report of them while its request is active, until a report that
     /// they're gone.
     @ObservationIgnored private var screensUp = false
+    /// Set when another request is opened while a flow's screens are up: their sends (upstream's Confirm sends 0.1 s
+    /// after the crown) are dropped until the new request's screens are up, or the path is empty once it's no longer
+    /// opening.
+    @ObservationIgnored private var holdsSends = false
     /// Counts the flows, so a wait or a turn left by an earlier one does nothing.
     @ObservationIgnored private var flow = 0
     @ObservationIgnored private var notices = 0
@@ -105,6 +112,9 @@ import Observation
     /// The wearer opened the request: the phone is asked for its details, and has 5 s to send them. The phone sends
     /// none for a request that isn't pending any more.
     func open(id: String) {
+        if screensUp {
+            holdsSends = true
+        }
         flow += 1
         let flow = flow
         recordedCarbs = nil
@@ -126,6 +136,15 @@ import Observation
 
     // MARK: Upstream's screens
 
+    /// The bolus the flow loads into the watch's screens for Trio's dose: a millionth of a step above it, so that
+    /// Confirm's floor in Double lands on the dose rather than a step below (2.15 / 0.05 is 42.999… in Double). The
+    /// floor keeps it from ever showing or sending more than the dose.
+    func loadedBolus(for units: Decimal) -> Double {
+        let bolus = Double(truncating: units as NSNumber)
+        guard bolus > 0 else { return 0 }
+        return bolus + Double(truncating: bolusIncrement as NSNumber) * 1E-6
+    }
+
     /// The Confirm screen's carbs, as the request's exact grams while the watch's whole grams are the request's own;
     /// `nil` otherwise, for upstream's own text.
     func carbsText(forAmount amount: Int) -> String? {
@@ -142,13 +161,13 @@ import Observation
     /// upstream's Confirm makes right after; without one (Log Carbs), they go on their own on the next main-queue turn.
     /// Returns `false` without a request, for upstream to send them itself.
     func interceptCarbs(_ amount: Int) -> Bool {
-        guard case let .active(details) = phase else { return drops("carbs") }
+        guard case let .active(details) = phase, !holdsSends else { return drops("carbs") }
         recordedCarbs = RecordedCarbs(grams: amount == requestedCarbs ? nil : Decimal(amount))
         onIntercepted()
         let flow = flow
         nextTurn { [weak self] in
             guard let self, self.flow == flow, self.phase == .active(details), let carbs = self.recordedCarbs else { return }
-            self.confirm(details, units: 0, carbs: carbs.grams)
+            self.confirm(details, units: 0, carbs: carbs.grams, carbsSent: true)
         }
         return true
     }
@@ -157,7 +176,8 @@ import Observation
     /// and returns `true`. The dose sent is the one upstream's Confirm screen shows. Returns `false` without a request,
     /// for upstream to send it itself.
     func interceptBolus(_ amount: Decimal) -> Bool {
-        guard case let .active(details) = phase else { return drops("bolus") }
+        guard case let .active(details) = phase, !holdsSends else { return drops("bolus") }
+        let carbsSent = recordedCarbs != nil
         let carbs: Decimal?
         if let recorded = recordedCarbs {
             carbs = recorded.grams
@@ -169,7 +189,8 @@ import Observation
             carbs = 0
         }
         onIntercepted()
-        confirm(details, units: shownDose(amount), carbs: carbs)
+        let bolus = screenBolus?() ?? Double(truncating: amount as NSNumber)
+        confirm(details, units: shownDose(bolus), carbs: carbs, carbsSent: carbsSent)
         return true
     }
 
@@ -182,6 +203,14 @@ import Observation
         if pathIsEmpty {
             let wereUp = screensUp
             screensUp = false
+            switch phase {
+            case .active,
+                 .loading:
+                // Another request is opening: the earlier screens' last send may still come.
+                break
+            default:
+                holdsSends = false
+            }
             if case .closing = phase {
                 phase = .idle
             } else if wereUp {
@@ -191,6 +220,7 @@ import Observation
         }
         if case .active = phase {
             screensUp = true
+            holdsSends = false
         }
         if screensUp, carbs == 0, bolus == 0 {
             valuesZeroed()
@@ -241,11 +271,11 @@ import Observation
 
     // MARK: Helpers
 
-    /// Sends the confirmation. Values zeroed under the Confirm screen (both 0 for a request that had carbs or a dose)
-    /// are neither logged nor declined: the flow ends, and the request keeps waiting.
-    private func confirm(_ details: AIRequestWatchDetails, units: Decimal, carbs: Decimal?) {
+    /// Sends the confirmation. A confirm of 0 U with no carbs send, from a Confirm screen that had shown a dose or carbs,
+    /// is values zeroed under it: neither logged nor declined. The flow ends, and the request keeps waiting.
+    private func confirm(_ details: AIRequestWatchDetails, units: Decimal, carbs: Decimal?, carbsSent: Bool) {
         recordedCarbs = nil
-        if units <= 0, (carbs ?? details.carbs) <= 0, hasAmounts(details) {
+        if units <= 0, !carbsSent, hasAmounts(details) {
             end(details.id, notice: Self.openAgainText, isSuccess: false)
             return
         }
@@ -257,25 +287,35 @@ import Observation
     }
 
     /// Whether a send from upstream's screens is dropped: it is while the screens of a flow that ended, or was
-    /// confirmed, are still up. Otherwise it's upstream's own, and goes to the phone as it always does.
+    /// confirmed, are still up, and while another request is opening over them. Otherwise it's upstream's own, and goes
+    /// to the phone as it always does.
     private func drops(_ kind: String) -> Bool {
-        guard screensUp else { return false }
+        guard screensUp || holdsSends else { return false }
         log("dropped a \(kind) send from the screens of a request whose flow has ended")
         return true
     }
 
-    /// The dose upstream's Confirm screen shows for `amount`: floored to the bolus increment as the screen floors it,
-    /// in Double, then made a whole number of increments, rounded to the two places the screen shows, so no binary
-    /// tail goes with it.
-    private func shownDose(_ amount: Decimal) -> Decimal {
+    /// The dose upstream's Confirm screen shows for its `bolus`: `floor(bolus / increment) * increment`, the expression
+    /// it uses, in Double, then as a Decimal rounded to the increment's decimals, so no binary tail goes with it.
+    private func shownDose(_ bolus: Double) -> Decimal {
         let increment = Double(truncating: bolusIncrement as NSNumber)
-        guard increment > 0 else { return amount }
-        let steps = (Double(truncating: amount as NSNumber) / increment).rounded(.down)
-        guard steps.isFinite, steps > 0 else { return 0 }
-        var dose = Decimal(steps) * bolusIncrement
-        var shown = Decimal()
-        NSDecimalRound(&shown, &dose, 2, .plain)
-        return shown
+        let shown = increment > 0 ? floor(bolus / increment) * increment : bolus
+        guard shown.isFinite, shown > 0 else { return 0 }
+        var dose = Decimal(shown)
+        var clean = Decimal()
+        NSDecimalRound(&clean, &dose, Self.decimals(of: increment), .plain)
+        return clean
+    }
+
+    /// How many decimals the bolus increment has: 2 for 0.05, 1 for 0.1. It may come as a Double, with a tail.
+    private static func decimals(of increment: Double) -> Int {
+        for places in 0 ..< 6 {
+            let scaled = increment * pow(10, Double(places))
+            if abs(scaled - scaled.rounded()) < 1E-9 {
+                return places
+            }
+        }
+        return 6
     }
 
     /// Whether the screens opened with carbs or a dose, so both being 0 means they were zeroed.

@@ -47,7 +47,7 @@ private struct AIRequestFlowModifier: ViewModifier {
             .onChange(of: Snapshot(phase: controller.phase, notice: controller.notice), initial: true) { old, new in
                 follow(from: old, to: new)
             }
-            .onChange(of: navigationPath.count) { report() }
+            .onChange(of: navigationPath.count, initial: true) { report() }
             .onChange(of: state.carbsAmount) { report() }
             .onChange(of: state.bolusAmount) { report() }
             .onChange(of: state.bolusIncrement, initial: true) {
@@ -74,8 +74,9 @@ private struct AIRequestFlowModifier: ViewModifier {
         case .idle,
              .loading,
              .unreachable:
-            // The flow ended, or another request is opening: its screens go.
+            // The flow ended, or another request is opening: its screens and their values go.
             if case .active = old.phase {
+                clearScreens()
                 navigationPath = NavigationPath()
             }
         case .closing,
@@ -88,10 +89,14 @@ private struct AIRequestFlowModifier: ViewModifier {
     /// carbs screen behind that when there are carbs. Back on the carbs screen, "Proceed" leads on to the bolus screen.
     private func open(_ details: AIRequestWatchDetails) {
         let carbs = controller.requestedCarbs
-        let bolus = Double(truncating: details.units as NSNumber)
+        let bolus = controller.loadedBolus(for: details.units)
         // Upstream's own sends show "Processing…" on the acknowledgement screen that follows; a caught send does too.
         controller.onIntercepted = { [state] in
             state.showCommsAnimation = true
+        }
+        // The confirm sends the dose Confirm shows, from the Double it floors.
+        controller.screenBolus = { [state] in
+            state.bolusAmount
         }
         state.carbsAmount = carbs
         state.recommendedBolus = details.units
@@ -113,14 +118,19 @@ private struct AIRequestFlowModifier: ViewModifier {
     /// when it hides. The flow ended without the watch's confirm, so the screens' values go, and nothing on them can be
     /// sent.
     private func show(_ notice: AIRequestWatchFlowController.Notice) {
-        state.carbsAmount = 0
-        state.bolusAmount = 0
-        state.confirmationProgress = 0
+        clearScreens()
         var path = NavigationPath()
         path.append(NavigationDestinations.acknowledgmentPending)
         navigationPath = path
         state.isMealBolusCombo = false
         state.handleAcknowledgment(success: notice.isSuccess, message: notice.message)
+    }
+
+    /// Zeroes the screens' carbs, bolus and crown progress, so a send still to come from them carries nothing.
+    private func clearScreens() {
+        state.carbsAmount = 0
+        state.bolusAmount = 0
+        state.confirmationProgress = 0
     }
 
     private func report() {

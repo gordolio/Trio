@@ -40,6 +40,13 @@ private final class FlowHarness {
         sent = []
     }
 
+    /// Upstream's Confirm with `bolus` on its screen: the bolus send reads the screen's Double, and passes upstream's
+    /// own `Decimal(bolusAmount)`.
+    func confirm(bolus: Double) -> Bool {
+        controller.screenBolus = { bolus }
+        return controller.interceptBolus(Decimal(bolus))
+    }
+
     var opens: [String] { sent.compactMap { $0[AIRequestIdentifiers.keyOpen] as? String } }
     var confirms: [AIRequestWatchConfirm] { decoded(AIRequestIdentifiers.keyConfirm) }
     var closes: [AIRequestWatchClose] { decoded(AIRequestIdentifiers.keyClose) }
@@ -59,6 +66,18 @@ private final class FlowHarness {
         units: Decimal(string: "2.2")!,
         expiresAt: Date(timeIntervalSince1970: 1_792_000_300)
     )
+
+    /// A request under half a gram of carbs: the watch's whole grams are 0, so Confirm has no carbs row.
+    private static func subHalfGram(units: Decimal) -> AIRequestWatchDetails {
+        AIRequestWatchDetails(
+            id: "r1",
+            carbs: Decimal(string: "0.4")!,
+            fat: 9,
+            protein: 6,
+            units: units,
+            expiresAt: details.expiresAt
+        )
+    }
 
     /// A harness whose controller shows `details` on the watch's screens, as the modifier puts them up, with the
     /// messages that opened it cleared.
@@ -224,36 +243,70 @@ private final class FlowHarness {
     }
 
     @Test("A request under half a gram, with no carbs row, logs its exact grams") func subHalfGramRequestLogsItsExactGrams() {
-        let small = AIRequestWatchDetails(
-            id: "r1",
-            carbs: Decimal(string: "0.4")!,
-            fat: 9,
-            protein: 6,
-            units: 1,
-            expiresAt: Self.details.expiresAt
-        )
-        let harness = Self.active(small)
+        // Confirm shows nothing but 0.00 U: it can still be confirmed.
+        let harness = Self.active(Self.subHalfGram(units: 0))
         #expect(harness.controller.requestedCarbs == 0)
 
-        #expect(harness.controller.interceptBolus(1))
+        #expect(harness.controller.interceptBolus(0))
 
-        #expect(harness.confirms == [AIRequestWatchConfirm(id: "r1", units: 1, carbs: nil)])
+        #expect(harness.confirms == [AIRequestWatchConfirm(id: "r1", units: 0, carbs: nil)])
+        #expect(harness.controller.notice == nil)
+
+        let withDose = Self.active(Self.subHalfGram(units: 1))
+        #expect(withDose.controller.interceptBolus(1))
+        #expect(withDose.confirms == [AIRequestWatchConfirm(id: "r1", units: 1, carbs: nil)])
+    }
+
+    @Test("A zeroed dose on a request under half a gram ends without answering") func zeroedSubHalfGramDoseEndsWithoutAnswering() {
+        // Confirm showed 1.00 U and no carbs row; zeroed, it shows 0.00 U, and nothing is logged.
+        let harness = Self.active(Self.subHalfGram(units: 1))
+
+        #expect(harness.controller.interceptBolus(0))
+        harness.runTurn()
+
+        #expect(harness.sent.isEmpty)
+        #expect(harness.controller.notice?.message == "Open the request again.")
+        #expect(harness.controller.phase == .closing(id: "r1"))
     }
 
     @Test("The confirm sends the dose the Confirm screen shows, floored to the bolus increment") func confirmSendsTheDoseShown() {
-        // Upstream's Confirm shows floor(bolusAmount / increment) * increment, and sends Decimal(bolusAmount).
-        let tenths = Self.active()
-        tenths.controller.bolusIncrement = Decimal(string: "0.1")!
-        #expect(tenths.controller.interceptBolus(Decimal(Double(2.15))))
-        #expect(tenths.confirms.map(\.units) == [Decimal(string: "2.1")!])
+        // Upstream's Confirm shows floor(bolusAmount / increment) * increment of its Double, and sends
+        // Decimal(bolusAmount), which can round to another step.
+        let cases: [(increment: String, bolus: Double, shown: String)] = [
+            ("0.1", 2.15, "2.1"),
+            ("0.05", 0.05 * 3, "0.15"),
+            ("0.05", 0.8999999999999999, "0.85"),
+            ("0.05", 0.9500000000000001, "0.95"),
+            ("0.1", 1.7999999999999998, "1.7")
+        ]
+        for (increment, bolus, shown) in cases {
+            let harness = Self.active()
+            harness.controller.bolusIncrement = Decimal(string: increment)!
+            // What Confirm shows, as it computes it.
+            let inc = Double(increment)!
+            #expect(String(format: "%.2f", floor(bolus / inc) * inc) == String(format: "%.2f", Double(shown)!))
 
-        // A dose dialled up in 0.05 U steps carries Double's tail; the confirm doesn't.
-        let twentieths = Self.active()
-        twentieths.controller.bolusIncrement = Decimal(string: "0.05")!
-        #expect(twentieths.controller.interceptBolus(Decimal(0.05 * 3)))
-        let units = twentieths.confirms.map(\.units)
-        #expect(units == [Decimal(string: "0.15")!])
-        #expect(units.first?.description == "0.15")
+            #expect(harness.confirm(bolus: bolus))
+
+            let units = harness.confirms.map(\.units)
+            #expect(units == [Decimal(string: shown)!], "\(bolus) at \(increment)")
+            #expect(units.first?.description == shown, "\(bolus) at \(increment)")
+        }
+    }
+
+    @Test("Trio's dose loads so that Confirm shows it, and sends it") func loadedDoseShowsAndSendsTheRequestsDose() {
+        for (increment, dose) in [("0.05", "2.15"), ("0.1", "1.8")] {
+            let harness = Self.active()
+            harness.controller.bolusIncrement = Decimal(string: increment)!
+            let bolus = harness.controller.loadedBolus(for: Decimal(string: dose)!)
+
+            // In Double, 2.15 / 0.05 is 42.999…, and 1.8 / 0.1 is 17.999…: the loaded value floors to the dose itself.
+            let inc = Double(increment)!
+            #expect(String(format: "%.2f", floor(bolus / inc) * inc) == String(format: "%.2f", Double(dose)!))
+            #expect(harness.confirm(bolus: bolus))
+            #expect(harness.confirms.map(\.units) == [Decimal(string: dose)!], "\(dose) at \(increment)")
+        }
+        #expect(FlowHarness().controller.loadedBolus(for: 0) == 0)
     }
 
     @Test(
@@ -377,6 +430,42 @@ private final class FlowHarness {
         harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
         #expect(!harness.controller.interceptBolus(2))
         #expect(harness.sent.isEmpty)
+    }
+
+    @Test(
+        "Opening another request over an active one sends nothing for the first"
+    ) func openingAnotherRequestOverAnActiveOneSendsNothingForTheFirst() {
+        let harness = Self.active()
+
+        harness.controller.open(id: "r2")
+        // The modifier takes the first request's screens down and zeroes their values.
+        harness.controller.screensChanged(pathIsEmpty: true, carbs: 0, bolus: 0)
+        harness.clearSent()
+        // The first Confirm's send, 0.1 s after its crown.
+        #expect(harness.controller.interceptCarbs(83))
+        #expect(harness.controller.interceptBolus(0))
+        harness.runTurn()
+        #expect(harness.sent.isEmpty)
+
+        // The second request's details come before its screens are up: still nothing.
+        let second = AIRequestWatchDetails(
+            id: "r2",
+            carbs: 30,
+            fat: 0,
+            protein: 0,
+            units: 1,
+            expiresAt: Self.details.expiresAt
+        )
+        harness.controller.receive(second)
+        #expect(harness.controller.interceptBolus(Decimal(string: "2.2")!))
+        harness.runTurn()
+        #expect(harness.sent.isEmpty)
+        #expect(harness.controller.phase == .active(second))
+
+        // Once its screens are up, the sends are the second request's own.
+        harness.controller.screensChanged(pathIsEmpty: false, carbs: 30, bolus: 1)
+        #expect(harness.controller.interceptBolus(1))
+        #expect(harness.confirms == [AIRequestWatchConfirm(id: "r2", units: 1, carbs: 0)])
     }
 
     // MARK: Leaving
