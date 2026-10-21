@@ -75,6 +75,66 @@ import Testing
         )
     }
 
+    @Test func carbsLoggedAfterArrivalRefusesTheApproval() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "a"), via: .service)
+        h.treatments.carbsLoggedResult = true
+        _ = await h.coordinator.answer(.phone(.approve, id: "a"))
+        #expect(h.treatments.carbsLoggedAfter == [coordinatorTestStart])
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(
+            h.reporter.reports(for: "a").last ==
+                .failed(reason: "Carbs were logged after this request arrived", carbsLogged: false)
+        )
+    }
+
+    @Test func zeroDoseAtApprovalRefusesAShownDose() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "a"), via: .service)
+        h.treatments.doseResult = AIRequestDose(units: 0, iobAsOf: coordinatorTestStart)
+        _ = await h.coordinator.answer(.phone(.approve, id: "a"))
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(
+            h.reporter.reports(for: "a").last ==
+                .failed(reason: "Trio no longer suggests insulin for this meal", carbsLogged: false)
+        )
+    }
+
+    @Test func lowerDoseAtApprovalStillGivesTheShownDose() async {
+        // Only a 0 refuses: the signed dose can't change, and max IOB is the validator's job.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "a"), via: .service)
+        h.treatments.doseResult = AIRequestDose(units: 0.9, iobAsOf: coordinatorTestStart)
+        _ = await h.coordinator.answer(.phone(.approve, id: "a"))
+        #expect(h.treatments.enacted == [1.2])
+    }
+
+    @Test func dryRunChecksEverythingAndGivesNothing() async {
+        let h = makeCoordinator()
+        var request = meal(id: "t", carbs: 10, fat: 0, protein: 0)
+        request.testKind = .dryRun
+        await h.coordinator.receive(request, via: .local)
+        _ = await h.coordinator.answer(.phone(.approve, id: "t"))
+        #expect(h.treatments.checkedSince.count == 2)
+        #expect(h.treatments.carbsLoggedAfter == [coordinatorTestStart])
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+        #expect(h.reporter.reports(for: "t").last == .dryRun(shown: h.prompt("t").shown))
+    }
+
+    @Test func dryRunKeepsItsTestKindWhenItsLifetimeIsCapped() async {
+        // A request that asks for more than 5 minutes is asked with a shorter one, and is still a dry run.
+        let h = makeCoordinator()
+        var request = AIMealRequest(
+            id: "t", source: "Test", description: "test request", carbs: 10, fat: 0, protein: 0,
+            createdAt: coordinatorTestStart, expiresAt: coordinatorTestStart + 60 * 60
+        )
+        request.testKind = .dryRun
+        await h.coordinator.receive(request, via: .local)
+        #expect(h.coordinator.current.value?.request.testKind == .dryRun)
+        _ = await h.coordinator.answer(.phone(.approve, id: "t"))
+        #expect(h.treatments.stored.isEmpty && h.treatments.enacted.isEmpty)
+    }
+
     @Test func recentInsulinReasonSaysHowMuchWithTwoDecimals() {
         #expect(
             BaseAIRequestTreatments.reason(for: .recentBolusWithinWindow(totalRecent: 0.5)) ==

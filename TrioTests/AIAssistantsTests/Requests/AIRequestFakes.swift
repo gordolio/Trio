@@ -25,10 +25,12 @@ final class FakeTreatments: AIRequestTreatments {
     private let lock = NSLock()
     private var checkedUnits: [Decimal] = []
     private var checkedSinceDates: [Date] = []
+    private var carbsCheckedAfter: [Date] = []
     private var storedRequests: [AIMealRequest] = []
     private var enactedUnits: [Decimal] = []
     private var recordedEvents: [String] = []
     private var checkHook: (() async -> Void)?
+    private var storeHook: (() async -> Void)?
     private var enactHook: (() async -> Void)?
 
     var limits = AIRequestLimits(maxCarbs: 250, maxFat: 250, maxProtein: 250)
@@ -36,6 +38,8 @@ final class FakeTreatments: AIRequestTreatments {
     var doseResult = AIRequestDose(units: 1.2, iobAsOf: coordinatorTestStart - 60)
     /// What `checkBolus` returns: `nil` allows the bolus.
     var checkResult: String?
+    /// What `carbsLogged(after:)` returns: `true` means carbs were logged after the date.
+    var carbsLoggedResult = false
     /// What `enactBolus` returns: `nil` means the pump accepted it.
     var enactResult: String?
     var storeError: Error?
@@ -44,6 +48,12 @@ final class FakeTreatments: AIRequestTreatments {
     var whileCheckingBolus: (() async -> Void)? {
         get { lock.withLock { checkHook } }
         set { lock.withLock { checkHook = newValue } }
+    }
+
+    /// Runs once, inside the next `storeCarbs`, while the coordinator waits for it.
+    var whileStoringCarbs: (() async -> Void)? {
+        get { lock.withLock { storeHook } }
+        set { lock.withLock { storeHook = newValue } }
     }
 
     /// Runs once, inside the next `enactBolus`, while the coordinator waits for it.
@@ -55,6 +65,8 @@ final class FakeTreatments: AIRequestTreatments {
     var checked: [Decimal] { lock.withLock { checkedUnits } }
     /// The `since` of each `checkBolus` call.
     var checkedSince: [Date] { lock.withLock { checkedSinceDates } }
+    /// The `after` of each `carbsLogged(after:)` call.
+    var carbsLoggedAfter: [Date] { lock.withLock { carbsCheckedAfter } }
     var stored: [AIMealRequest] { lock.withLock { storedRequests } }
     var enacted: [Decimal] { lock.withLock { enactedUnits } }
     /// Every call in order: `check <units>`, `store <id>`, `enact <units>` and, when it returns, `enacted <units>`.
@@ -80,7 +92,17 @@ final class FakeTreatments: AIRequestTreatments {
         return checkResult
     }
 
+    func carbsLogged(after date: Date) async -> Bool {
+        lock.withLock { carbsCheckedAfter.append(date) }
+        return carbsLoggedResult
+    }
+
     func storeCarbs(for request: AIMealRequest) async throws {
+        let hook = lock.withLock {
+            defer { storeHook = nil }
+            return storeHook
+        }
+        await hook?()
         if let storeError { throw storeError }
         lock.withLock {
             storedRequests.append(request)

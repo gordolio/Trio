@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		35B4009837ED40F5B5C90AA4 /* AIRequestContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CF4F285C0E7420D930D6A23 /* AIRequestContext.swift */; };
+		D52FEF721CEF4ECBA2FAE546 /* AIRequestContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CF4F285C0E7420D930D6A23 /* AIRequestContext.swift */; };
+		F4E63F59A0994484BA744CD4 /* AIRequestCarryOutMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A99277089E54EACA79DEEA3 /* AIRequestCarryOutMarker.swift */; };
+		37927C430E4A41EA9424AD39 /* AIRequestCarryOutMarkerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F585A07C504B4CEFB0BB23BA /* AIRequestCarryOutMarkerTests.swift */; };
 		6107468383D74CF1A7B296A7 /* ServiceRequestReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E4FCECAF9594AED8364742A /* ServiceRequestReporter.swift */; };
 		71E36E3AFED1426B860A1BCC /* AIAssistantsCheckIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4287BE11F88430D82875048 /* AIAssistantsCheckIn.swift */; };
 		F21153A53E244F46B14559FB /* AIAssistantsCheckInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */; };
@@ -1315,6 +1319,9 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		2CF4F285C0E7420D930D6A23 /* AIRequestContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestContext.swift; sourceTree = "<group>"; };
+		5A99277089E54EACA79DEEA3 /* AIRequestCarryOutMarker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCarryOutMarker.swift; sourceTree = "<group>"; };
+		F585A07C504B4CEFB0BB23BA /* AIRequestCarryOutMarkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCarryOutMarkerTests.swift; sourceTree = "<group>"; };
 		4E4FCECAF9594AED8364742A /* ServiceRequestReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceRequestReporter.swift; sourceTree = "<group>"; };
 		A4287BE11F88430D82875048 /* AIAssistantsCheckIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsCheckIn.swift; sourceTree = "<group>"; };
 		468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsCheckInTests.swift; sourceTree = "<group>"; };
@@ -2602,6 +2609,7 @@
 		1AC02AB3F3294C59B759E4A3 /* AIRequests */ = {
 			isa = PBXGroup;
 			children = (
+				2CF4F285C0E7420D930D6A23 /* AIRequestContext.swift */,
 				0DF5DBD95A71431EB3EA0CBA /* AIRequestKeychain.swift */,
 				0D9A85DF17FE4FC9B245E7F7 /* AIRequestIdentifiers.swift */,
 				6534401DE9024515AEADDE5E /* AIRequestShared.swift */,
@@ -2612,6 +2620,7 @@
 		F331CE00DCA84A18B10AFE87 /* Requests */ = {
 			isa = PBXGroup;
 			children = (
+				5A99277089E54EACA79DEEA3 /* AIRequestCarryOutMarker.swift */,
 				4E4FCECAF9594AED8364742A /* ServiceRequestReporter.swift */,
 				A4287BE11F88430D82875048 /* AIAssistantsCheckIn.swift */,
 				E70F8B809C6045D3905D019B /* AIInbox.swift */,
@@ -2634,6 +2643,7 @@
 		7ADFEF598A034B3EAB259796 /* Requests */ = {
 			isa = PBXGroup;
 			children = (
+				F585A07C504B4CEFB0BB23BA /* AIRequestCarryOutMarkerTests.swift */,
 				468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */,
 				C39BD404EE2143A18D9889FB /* AIInboxTests.swift */,
 				00EFB0AE3CDE423386F4D18D /* AIRequestPhoneBackupTests.swift */,
@@ -6009,6 +6019,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D52FEF721CEF4ECBA2FAE546 /* AIRequestContext.swift in Sources */,
+				F4E63F59A0994484BA744CD4 /* AIRequestCarryOutMarker.swift in Sources */,
 				6107468383D74CF1A7B296A7 /* ServiceRequestReporter.swift in Sources */,
 				71E36E3AFED1426B860A1BCC /* AIAssistantsCheckIn.swift in Sources */,
 				6BDBA53B6BAA43EFA432E7DE /* AIInbox.swift in Sources */,
@@ -6857,6 +6869,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				37927C430E4A41EA9424AD39 /* AIRequestCarryOutMarkerTests.swift in Sources */,
 				F21153A53E244F46B14559FB /* AIAssistantsCheckInTests.swift in Sources */,
 				6972F71FF2EE43D394392953 /* AIInboxTests.swift in Sources */,
 				DC9C0ECE70544B13BA2851A8 /* AIRequestPhoneBackupTests.swift in Sources */,
@@ -7019,6 +7032,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				35B4009837ED40F5B5C90AA4 /* AIRequestContext.swift in Sources */,
 				B9FB037832464B038056A369 /* AIRequestApprovalView.swift in Sources */,
 				1E741ED1128740B69A0403C4 /* AIRequestAnswerSender.swift in Sources */,
 				7DAC09FE8C7C4F9F8670B8F2 /* AIRequestWatchAppDelegate.swift in Sources */,

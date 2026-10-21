@@ -80,7 +80,9 @@ struct AIRequestStateBody: Encodable, Equatable {
             self.answerRoute = answerRoute
             self.shown = shown
             self.display = display
+        // A dry run is never sent: `ServiceRequestReporter` drops it.
         case let .delivering(shown),
+             let .dryRun(shown),
              let .logged(shown):
             self.shown = shown
         case let .declined(on):

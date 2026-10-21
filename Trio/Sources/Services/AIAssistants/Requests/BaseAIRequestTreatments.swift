@@ -128,6 +128,30 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         }
     }
 
+    /// Whether a meal entry is dated after `date` and not in the future, as Trio Remote Control checks for carbs logged
+    /// since its command. Fat and protein equivalents are dated ahead, so they're left out. If the store can't be
+    /// read, it answers `true`, so the approval is refused rather than given unchecked.
+    func carbsLogged(after date: Date) async -> Bool {
+        let now = Date()
+        let context = CoreDataStack.shared.newTaskContext()
+        context.name = "AIRequestTreatments.carbsLogged"
+        do {
+            return try await context.perform { [context] in
+                let request = CarbEntryStored.fetchRequest()
+                request.predicate = NSPredicate(
+                    format: "date > %@ AND date <= %@ AND isFPU == NO",
+                    date as NSDate,
+                    now as NSDate
+                )
+                request.fetchLimit = 1
+                return try context.count(for: request) > 0
+            }
+        } catch {
+            debug(.service, "AI requests: couldn't check for carbs logged since the request arrived: \(error)")
+            return true
+        }
+    }
+
     /// Stores the meal as Trio's remote meal command does, eaten now, with the description in the note, then checks
     /// the meal entry was saved: `CarbsStorage` doesn't report a failed save.
     func storeCarbs(for request: AIMealRequest) async throws {

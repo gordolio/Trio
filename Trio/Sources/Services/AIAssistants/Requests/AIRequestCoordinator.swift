@@ -36,6 +36,8 @@ actor AIRequestCoordinator {
     private let pendingFileURL: URL
     /// Every final report sent in the last `finalReportRetention`, kept next to the pending file.
     private let finalReportsURL: URL
+    /// The approval being carried out, kept next to the pending file until its final report.
+    private let carryOutMarkerURL: URL
     /// The key the watch signs its answers with.
     private let keys: AIRequestKeyStore
     private let preferences: () -> AIAssistantsPreferences
@@ -50,7 +52,11 @@ actor AIRequestCoordinator {
     /// The latest approval being carried out. Each one waits for the one before it, so a bolus is checked
     /// against every bolus approved before it.
     private var carryingOut: Task<Void, Never>?
-    /// Whether the pending request and the final reports were read from disk.
+    /// The approval being carried out, also on disk at `carryOutMarkerURL` until its final report.
+    private var carryOutMarker: AIRequestCarryOutMarker?
+    /// The approval Trio was carrying out when it stopped, read from disk at launch, until it's reported.
+    private var stoppedCarryOut: AIRequestCarryOutMarker?
+    /// Whether the pending request, the final reports and the carry-out marker were read from disk.
     private var loaded = false
     /// The final reports on record, oldest first, so a repeated ID gets the same report again.
     private var finalReports: [FinalReport] = []
@@ -64,6 +70,14 @@ actor AIRequestCoordinator {
     private static let mealRequestsOffReason = "Meal requests are off in Trio"
     /// Sent when a dose has no loop run from the last 30 minutes, so its insulin on board isn't known.
     private static let noRecentLoopReason = "Trio hasn't looped in the last 30 minutes"
+    /// Sent when carbs were logged after the request arrived, so its dose didn't count them.
+    private static let carbsLoggedSinceArrivalReason = "Carbs were logged after this request arrived"
+    /// Sent when Trio's calculator gives 0 U at approval for a request shown with a dose.
+    private static let noLongerSuggestedReason = "Trio no longer suggests insulin for this meal"
+    /// Sent at launch for an approval Trio stopped carrying out before it started the bolus.
+    private static let stoppedReason = "Trio stopped before it finished"
+    /// Sent at launch for an approval Trio stopped carrying out while it started the bolus.
+    private static let stoppedWhileEnactingReason = "Trio stopped while starting the bolus. It may have been given"
 
     private struct FinalReport: Codable {
         let id: String
@@ -85,6 +99,7 @@ actor AIRequestCoordinator {
         self.seen = seen
         self.pendingFileURL = pendingFileURL
         finalReportsURL = pendingFileURL.deletingLastPathComponent().appendingPathComponent("final-reports.json")
+        carryOutMarkerURL = pendingFileURL.deletingLastPathComponent().appendingPathComponent("carrying-out.json")
         self.keys = keys
         self.preferences = preferences
         self.treatments = treatments
@@ -99,10 +114,12 @@ actor AIRequestCoordinator {
         expiryCheck?.cancel()
     }
 
-    /// Watches the request that was pending when Trio quit, and expires it if its time is up. Its phone
-    /// backup was scheduled with the system, so it isn't scheduled again.
+    /// Reports the approval Trio stopped carrying out, if it did. Then watches the request that was pending when Trio
+    /// quit, and expires it if its time is up. Its phone backup was scheduled with the system, so it isn't scheduled
+    /// again.
     func start() async {
         ensureLoaded()
+        await reportStoppedCarryOut()
         if let pending = current.value {
             scheduleExpiryCheck(at: pending.request.expiresAt)
         }
@@ -133,11 +150,8 @@ actor AIRequestCoordinator {
             return
         }
 
-        // Floored to the hundredths that `shown` has, so what's delivered is the number shown.
         let dose = await treatments.dose(forCarbs: request.carbs)
-        var calculated = dose.units
-        var units = Decimal()
-        NSDecimalRound(&units, &calculated, 2, .down)
+        let units = Self.shownUnits(dose.units)
         // The bolus checks run now as well as at approval: a dose they'd refuse isn't asked about, and the assistant
         // hears why.
         if let reason = await bolusFailure(units: units, iobAsOf: dose.iobAsOf) {
@@ -248,16 +262,19 @@ actor AIRequestCoordinator {
         }
         let answeredID: String
         let decision: AIRequestDecision
+        let side: AIRequestAnswerSide
         let declinedOn: AIRequestDeclinedOn
         switch source {
         case let .watch(answer):
             if let outcome = rejection(of: answer, for: pending) { return outcome }
             answeredID = answer.requestId
             decision = answer.decision
+            side = .watch
             declinedOn = answer.declinedBy == .dismissed ? .dismissed : .watch
         case let .phone(phoneDecision, id):
             answeredID = id
             decision = phoneDecision
+            side = .phone
             declinedOn = .phone
         }
 
@@ -271,7 +288,7 @@ actor AIRequestCoordinator {
             let previous = carryingOut
             let task = Task {
                 await previous?.value
-                await self.carryOut(answered)
+                await self.carryOut(answered, approvedOn: side)
             }
             carryingOut = task
             await task.value
@@ -312,20 +329,35 @@ actor AIRequestCoordinator {
         return nil
     }
 
-    /// Carries out an approved request. Every check runs before anything is stored, then the carbs are stored,
-    /// then exactly the units shown are enacted. A failed bolus keeps the carbs, because the food was eaten.
-    private func carryOut(_ pending: PendingAIRequest) async {
+    /// Carries out an approved request. A marker on disk says how far it got until the final report. Every check runs
+    /// again before anything is stored, then the carbs are stored, then exactly the units shown are enacted. A failed
+    /// bolus keeps the carbs, because the food was eaten. A dry run stops after the checks.
+    private func carryOut(_ pending: PendingAIRequest, approvedOn: AIRequestAnswerSide) async {
+        // Before this approval's marker replaces it on disk.
+        await reportStoppedCarryOut()
         let id = pending.request.id
         let units = pending.units
-        var failure = limitFailure(for: pending.request)
-        if failure == nil {
-            failure = await bolusFailure(units: units, iobAsOf: pending.iobAsOf)
-        }
-        if let failure {
+        mark(AIRequestCarryOutMarker(
+            id: id,
+            channel: pending.channel,
+            title: pending.prompt.title,
+            source: pending.request.source,
+            shown: pending.prompt.shown,
+            askedOn: pending.askedOn,
+            approvedOn: approvedOn,
+            stage: .checking
+        ))
+
+        if let failure = await approvalFailure(for: pending) {
             await reportFinal(.failed(reason: failure, carbsLogged: false), for: id, via: pending.channel)
             return
         }
+        if pending.request.testKind == .dryRun {
+            await reportFinal(.dryRun(shown: pending.prompt.shown), for: id, via: pending.channel)
+            return
+        }
 
+        mark(.storingCarbs)
         do {
             try await treatments.storeCarbs(for: pending.request)
         } catch {
@@ -341,11 +373,29 @@ actor AIRequestCoordinator {
             await reportFinal(.logged(shown: pending.prompt.shown), for: id, via: pending.channel)
             return
         }
+        mark(.enacting)
         if let reason = await treatments.enactBolus(units) {
             await reportFinal(.failed(reason: reason, carbsLogged: true), for: id, via: pending.channel)
         } else {
             await reportFinal(.delivering(shown: pending.prompt.shown), for: id, via: pending.channel)
         }
+    }
+
+    /// Why the approved request can't be carried out now, or `nil` if it can: its amounts are over the limits, carbs
+    /// were logged after it arrived, Trio's calculator now gives 0 U for a dose it showed, or the bolus checks refuse
+    /// the units shown. A lower dose than shown still gives the units shown, which the wearer approved.
+    private func approvalFailure(for pending: PendingAIRequest) async -> String? {
+        if let reason = limitFailure(for: pending.request) { return reason }
+        // A pending file from before Trio recorded `receivedAt` has the service's `createdAt` instead.
+        if await treatments.carbsLogged(after: pending.receivedAt ?? pending.request.createdAt) {
+            return Self.carbsLoggedSinceArrivalReason
+        }
+        if pending.units > 0 {
+            let dose = await treatments.dose(forCarbs: pending.request.carbs)
+            if Self.shownUnits(dose.units) <= 0 { return Self.noLongerSuggestedReason }
+        }
+        // The units shown were worked out on the arrival's loop run, so insulin is counted from that run.
+        return await bolusFailure(units: pending.units, iobAsOf: pending.iobAsOf)
     }
 
     /// Why Trio can't give `units` now, or `nil` if it can. Only insulin given after the loop run the dose was worked
@@ -355,6 +405,58 @@ actor AIRequestCoordinator {
         guard units > 0 else { return nil }
         guard let iobAsOf else { return Self.noRecentLoopReason }
         return await treatments.checkBolus(units, since: iobAsOf)
+    }
+
+    /// The dose floored to the hundredths that `shown` has, so what's delivered is the number shown.
+    private static func shownUnits(_ dose: Decimal) -> Decimal {
+        var dose = dose
+        var units = Decimal()
+        NSDecimalRound(&units, &dose, 2, .down)
+        return units
+    }
+
+    // MARK: Carry-out marker
+
+    /// Saves a new marker for the approval being carried out.
+    private func mark(_ marker: AIRequestCarryOutMarker) {
+        carryOutMarker = marker
+        marker.save(to: carryOutMarkerURL)
+    }
+
+    /// Moves the approval's marker on to `stage`.
+    private func mark(_ stage: AIRequestCarryOutMarker.Stage) {
+        guard var marker = carryOutMarker else { return }
+        marker.stage = stage
+        mark(marker)
+    }
+
+    /// Removes the marker if it's for `id`. The final report of another request, such as one replaced while this
+    /// approval is carried out, leaves it.
+    private func removeCarryOutMarker(for id: String) {
+        guard carryOutMarker?.id == id else { return }
+        carryOutMarker = nil
+        AIRequestCarryOutMarker.remove(at: carryOutMarkerURL)
+    }
+
+    /// Reports the approval Trio stopped carrying out, once, if a launch found its marker. Once the carbs' save had
+    /// started, they're counted as logged. A request whose final report is on record was reported before Trio
+    /// stopped, so its marker is only removed.
+    private func reportStoppedCarryOut() async {
+        guard let stopped = stoppedCarryOut else { return }
+        stoppedCarryOut = nil
+        // Approvals are carried out one at a time, and each reports this first, so no other marker is held now.
+        carryOutMarker = stopped
+        if finalReports.contains(where: { $0.id == stopped.id }) {
+            removeCarryOutMarker(for: stopped.id)
+            return
+        }
+        let reason = stopped.stage == .enacting ? Self.stoppedWhileEnactingReason : Self.stoppedReason
+        debug(.service, "AI requests: Trio stopped while carrying out \(stopped.id), at \(stopped.stage.rawValue)")
+        await reportFinal(
+            .failed(reason: reason, carbsLogged: stopped.stage != .checking),
+            for: stopped.id,
+            via: stopped.channel
+        )
     }
 
     // MARK: Requests
@@ -405,7 +507,8 @@ actor AIRequestCoordinator {
             fat: request.fat,
             protein: request.protein,
             createdAt: request.createdAt,
-            expiresAt: expiresAt
+            expiresAt: expiresAt,
+            testKind: request.testKind
         )
     }
 
@@ -446,6 +549,8 @@ actor AIRequestCoordinator {
     private func reportFinal(_ report: AIRequestReport, for id: String, via channel: AIRequestChannel) async {
         seen.setOutcome(report.state, for: id)
         saveFinalReport(report, for: id)
+        // After the final report is saved, so a launch that finds the marker can tell it was reported.
+        removeCarryOutMarker(for: id)
         debug(.service, "AI requests: \(id) is \(report.state.rawValue)")
         await reporters[channel]?.report(report, for: id)
     }
@@ -483,12 +588,14 @@ actor AIRequestCoordinator {
 
     // MARK: Files
 
-    /// Reads the pending request and the final reports, once, before the first call uses them.
+    /// Reads the pending request, the final reports and the carry-out marker, once, before the first call uses them,
+    /// so the marker read is the one Trio left, not a new approval's.
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
         finalReports = loadFinalReports()
         dropOldFinalReports()
+        stoppedCarryOut = AIRequestCarryOutMarker.load(from: carryOutMarkerURL)
         if let pending = loadPending() {
             current.send(pending)
         }

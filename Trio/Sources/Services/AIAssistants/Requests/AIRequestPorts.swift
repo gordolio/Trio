@@ -11,6 +11,8 @@ struct AIMealRequest: Codable, Equatable {
     let protein: Decimal
     let createdAt: Date
     let expiresAt: Date
+    /// Set only on the iPhone's test requests.
+    var testKind: AIRequestTestKind? = nil
 }
 
 /// Where a request came from, and so where its states are reported.
@@ -21,6 +23,12 @@ enum AIRequestChannel: String, Codable {
 }
 
 enum AIRequestAskedOn: String, Codable {
+    case watch
+    case phone
+}
+
+/// Where the wearer answered a request.
+enum AIRequestAnswerSide: String, Codable {
     case watch
     case phone
 }
@@ -64,6 +72,9 @@ enum AIRequestReport: Codable, Equatable {
     case replaced
     /// A check failed and nothing was stored, or the pump failed after the carbs were logged.
     case failed(reason: String, carbsLogged: Bool)
+    /// A dry-run test passed every check, and nothing was logged or given. Only the iPhone's test requests are dry
+    /// runs, so it's reported only on `.local`.
+    case dryRun(shown: AIRequestShown)
 
     var state: AIRequestState {
         switch self {
@@ -71,7 +82,8 @@ enum AIRequestReport: Codable, Equatable {
             return .pending
         case .delivering:
             return .delivering
-        case .logged:
+        case .dryRun,
+             .logged:
             return .logged
         case .declined:
             return .declined
@@ -108,6 +120,8 @@ protocol AIRequestTreatments: AnyObject {
     /// Returns `nil` if the bolus is allowed, otherwise the reason it isn't. Only insulin given after `since` counts
     /// as recent.
     func checkBolus(_ units: Decimal, since: Date) async -> String?
+    /// Whether a meal entry, not a fat and protein equivalent, is dated after `date` and not in the future.
+    func carbsLogged(after date: Date) async -> Bool
     func storeCarbs(for request: AIMealRequest) async throws
     /// Returns `nil` if the pump accepted the bolus, otherwise the reason it didn't.
     func enactBolus(_ units: Decimal) async -> String?

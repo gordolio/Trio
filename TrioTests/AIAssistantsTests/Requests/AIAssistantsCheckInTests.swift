@@ -341,6 +341,14 @@ func makeCheckIn(api: FakeAIAssistantsAPI, isLinked: Bool = true) -> CheckInHarn
         #expect(waits.durations == [.seconds(5)])
     }
 
+    @Test func dryRunIsNeverSent() async {
+        // Only the iPhone's test requests are dry runs, and nothing was logged, so the service never hears "logged".
+        let api = FakeAIAssistantsAPI()
+        let shown = AIRequestShown(carbs: 10, fat: 0, protein: 0, units: 0.9)
+        await ServiceRequestReporter(api: api, sleep: Waits().wait).report(.dryRun(shown: shown), for: "t")
+        #expect(api.calls.isEmpty)
+    }
+
     @Test func retryAfterTheWaitIsSent() async {
         let api = FakeAIAssistantsAPI()
         api.errors["putRequestState"] = .network
