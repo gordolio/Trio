@@ -52,10 +52,12 @@ actor AIRequestCoordinator {
     /// The latest approval being carried out. Each one waits for the one before it, so a bolus is checked
     /// against every bolus approved before it.
     private var carryingOut: Task<Void, Never>?
-    /// The approval being carried out, also on disk at `carryOutMarkerURL` until its final report.
+    /// The approval being carried out. It's also on disk at `carryOutMarkerURL` until its final report, unless a
+    /// leftover marker that can't be read yet holds the file.
     private var carryOutMarker: AIRequestCarryOutMarker?
-    /// The approval Trio was carrying out when it stopped, read from disk at launch, until it's reported.
-    private var stoppedCarryOut: AIRequestCarryOutMarker?
+    /// The marker of the approval Trio was carrying out when it stopped, read from disk at launch, until it's
+    /// reported. One that can't be read yet stays `.unreadable`, and is read again before it's needed.
+    private var leftoverCarryOut: AIRequestCarryOutMarker.Reading = .absent
     /// Whether the pending request, the final reports and the carry-out marker were read from disk.
     private var loaded = false
     /// The final reports on record, oldest first, so a repeated ID gets the same report again.
@@ -417,9 +419,14 @@ actor AIRequestCoordinator {
 
     // MARK: Carry-out marker
 
-    /// Saves a new marker for the approval being carried out.
+    /// Saves a new marker for the approval being carried out. While a leftover marker can't be read yet, the new one
+    /// is kept in memory only, so it isn't written over the leftover.
     private func mark(_ marker: AIRequestCarryOutMarker) {
         carryOutMarker = marker
+        guard leftoverCarryOut == .absent else {
+            debug(.service, "AI requests: kept \(marker.id)'s carry-out marker in memory, an older one can't be read yet")
+            return
+        }
         marker.save(to: carryOutMarkerURL)
     }
 
@@ -430,22 +437,28 @@ actor AIRequestCoordinator {
         mark(marker)
     }
 
-    /// Removes the marker if it's for `id`. The final report of another request, such as one replaced while this
-    /// approval is carried out, leaves it.
+    /// Removes the marker file if the marker in it is for `id`. It's read from disk, so the final report of another
+    /// request, such as one replaced while this approval is carried out, leaves it, and so does a leftover marker
+    /// that can't be read yet.
     private func removeCarryOutMarker(for id: String) {
-        guard carryOutMarker?.id == id else { return }
-        carryOutMarker = nil
+        if carryOutMarker?.id == id {
+            carryOutMarker = nil
+        }
+        guard case let .found(marker) = AIRequestCarryOutMarker.read(from: carryOutMarkerURL), marker.id == id
+        else { return }
         AIRequestCarryOutMarker.remove(at: carryOutMarkerURL)
     }
 
     /// Reports the approval Trio stopped carrying out, once, if a launch found its marker. Once the carbs' save had
     /// started, they're counted as logged. A request whose final report is on record was reported before Trio
-    /// stopped, so its marker is only removed.
+    /// stopped, so its marker is only removed. A marker that couldn't be read is read again first: no approval
+    /// writes over it meanwhile, so the file is still the one Trio left.
     private func reportStoppedCarryOut() async {
-        guard let stopped = stoppedCarryOut else { return }
-        stoppedCarryOut = nil
-        // Approvals are carried out one at a time, and each reports this first, so no other marker is held now.
-        carryOutMarker = stopped
+        if leftoverCarryOut == .unreadable {
+            leftoverCarryOut = AIRequestCarryOutMarker.read(from: carryOutMarkerURL)
+        }
+        guard case let .found(stopped) = leftoverCarryOut else { return }
+        leftoverCarryOut = .absent
         if finalReports.contains(where: { $0.id == stopped.id }) {
             removeCarryOutMarker(for: stopped.id)
             return
@@ -589,13 +602,14 @@ actor AIRequestCoordinator {
     // MARK: Files
 
     /// Reads the pending request, the final reports and the carry-out marker, once, before the first call uses them,
-    /// so the marker read is the one Trio left, not a new approval's.
+    /// so the marker read is the one Trio left, not a new approval's. A marker that can't be read yet is read again
+    /// by `reportStoppedCarryOut()`.
     private func ensureLoaded() {
         guard !loaded else { return }
         loaded = true
         finalReports = loadFinalReports()
         dropOldFinalReports()
-        stoppedCarryOut = AIRequestCarryOutMarker.load(from: carryOutMarkerURL)
+        leftoverCarryOut = AIRequestCarryOutMarker.read(from: carryOutMarkerURL)
         if let pending = loadPending() {
             current.send(pending)
         }

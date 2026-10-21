@@ -121,6 +121,57 @@ import Testing
         #expect(AIRequestCarryOutMarker.load(from: markerURL(files)) == nil)
         #expect(!FileManager.default.fileExists(atPath: markerURL(files).path))
     }
+
+    @Test func markerThatCantBeReadYetIsKeptAndReportedOnceItCanBe() async throws {
+        // Before the first unlock, an intact protected file can't be read.
+        let files = CoordinatorFiles.temporary()
+        let url = markerURL(files)
+        _ = try AIRequestSeenStore(fileURL: files.seen, now: { coordinatorTestStart }).observe("a")
+        leftoverMarker(id: "a", stage: .enacting).save(to: url)
+        try setReadable(url, false)
+        #expect(AIRequestCarryOutMarker.read(from: url) == .unreadable)
+        let service = RecordingReporter()
+        let h = makeCoordinator(files: files, serviceReporter: service)
+        await h.coordinator.start()
+        #expect(service.reports(for: "a").isEmpty)
+        #expect(FileManager.default.fileExists(atPath: url.path))
+
+        try setReadable(url, true)
+        await h.coordinator.start()
+        let failed = AIRequestReport.failed(
+            reason: "Trio stopped while starting the bolus. It may have been given",
+            carbsLogged: true
+        )
+        #expect(service.reports(for: "a") == [failed])
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
+    @Test func approvalWhileTheMarkerCantBeReadKeepsItForTheNextApproval() async throws {
+        let files = CoordinatorFiles.temporary()
+        let url = markerURL(files)
+        leftoverMarker(id: "a", stage: .enacting).save(to: url)
+        try setReadable(url, false)
+        let h = makeCoordinator(files: files)
+        await h.coordinator.start()
+        // b is carried out with its marker in memory only, so the one Trio left isn't written over.
+        await h.coordinator.receive(meal(id: "b"), via: .service)
+        _ = await h.coordinator.answer(.phone(.approve, id: "b"))
+        #expect(h.reporter.states == ["b:pending", "b:delivering"])
+        try setReadable(url, true)
+        #expect(AIRequestCarryOutMarker.load(from: url) == leftoverMarker(id: "a", stage: .enacting))
+
+        // The next approval reads it again, and reports it before its own marker takes the file.
+        await h.coordinator.receive(meal(id: "c"), via: .service)
+        _ = await h.coordinator.answer(.phone(.approve, id: "c"))
+        #expect(h.reporter.states == ["b:pending", "b:delivering", "c:pending", "a:failed", "c:delivering"])
+        #expect(h.treatments.enacted == [1.2, 1.2])
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+}
+
+/// Makes the file readable to Trio or not, as protected data is after and before the first unlock.
+private func setReadable(_ url: URL, _ readable: Bool) throws {
+    try FileManager.default.setAttributes([.posixPermissions: readable ? 0o644 : 0o000], ofItemAtPath: url.path)
 }
 
 /// Where the coordinator keeps its carry-out marker: next to the pending file.
