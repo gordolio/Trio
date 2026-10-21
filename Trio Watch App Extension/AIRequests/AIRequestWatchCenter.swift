@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 import UserNotifications
 import WatchConnectivity
 import WatchKit
@@ -721,7 +722,13 @@ import WatchKit
             closingIDs.insert(shown.id)
         }
         closingIDs.remove(id)
-        presented = prompt
+        // Without an animation: the screen opens from a notification, and on a cold launch it should simply be there,
+        // not flash the main screen and then slide up over it.
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            presented = prompt
+        }
     }
 
     /// Closes the approval screen if it shows `id`, and notes that Trio closed it, so the screen doesn't count it as

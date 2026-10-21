@@ -11,9 +11,13 @@ import WatchKit
 /// it for. The context rows are Trio's own (`AIRequestContextRows`, as in the notification), and show only when Trio's
 /// signature over them checks out.
 ///
-/// `AIRequestWatchFlow` holds the phases and the rules for each: how it ends, and when the countdown shows. The phone's
-/// receipt and result move it on, and the clock only expires a request nobody has answered. Nothing sleeps:
-/// `TimelineView`s tell the time, and the closing ring is an animation whose completion closes the screen.
+/// `AIRequestWatchFlow` holds the phases and the rules for each: how it ends, when the countdown shows, and which
+/// haptic a move between phases plays. The phone's receipt and result move it on, and the clock only expires a request
+/// nobody has answered. Nothing sleeps: `TimelineView`s tell the time, a phase change is an animation and a transition,
+/// and the closing ring is an animation whose completion closes the screen.
+///
+/// Motion follows the UI review's spec (W2 to W12). Reduce Motion drops the scale and the bounce, and keeps the fades
+/// and the ring, because the ring's completion is what closes the screen.
 struct AIRequestApprovalView: View {
     let prompt: AIRequestPrompt
 
@@ -22,8 +26,14 @@ struct AIRequestApprovalView: View {
     /// How much of the closing ring is left, from 1 to 0. The screen closes when it runs out.
     @State private var ringLeft = 1.0
     @State private var isClosing = false
+    /// Changes each time the icon should bounce, so the symbol effect has something to react to.
+    @State private var bounceCount = 0
     @FocusState private var isCrownFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var isVoiceOverOn
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Whether Trio signed what the screen shows, so it can show the context rows. Worked out once: it reads the key.
     private let isDisplayVerified: Bool
@@ -59,24 +69,27 @@ struct AIRequestApprovalView: View {
 
     var body: some View {
         Group {
-            switch flow.phase {
-            case .asking:
+            if flow.phase == .asking {
                 request
-            case let .sending(_, since, _):
-                // Every second, so the wording turns to "No reply" 15 s after the answer.
-                TimelineView(.periodic(from: since, by: 1)) { context in
+                    .transition(phaseTransition)
+            } else {
+                // One view for every phase after the answer, so its icon is replaced rather than rebuilt. Every second,
+                // so the wording turns to "No reply" 15 s after the answer.
+                TimelineView(.periodic(from: flow.shownAt, by: 1)) { context in
                     outcome(at: context.date)
                 }
-            default:
-                outcome(at: Date())
+                .transition(phaseTransition)
             }
         }
+        // W6 to W11: the request fades into the outcome, and each outcome into the next.
+        .animation(phaseAnimation, value: flow.phase)
         .toolbar(.hidden, for: .navigationBar)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(trioBackgroundColor)
         .background {
-            // Expires a request nobody has answered when its time is up.
-            TimelineView(.explicit([prompt.expiresAt])) { context in
+            // Expires a request nobody has answered when its time is up. The second date is a backstop, should the first
+            // update come a moment early. The hint's own timeline is gone from the layouts that drop the hint.
+            TimelineView(.explicit([prompt.expiresAt, prompt.expiresAt.addingTimeInterval(1)])) { context in
                 Color.clear.onChange(of: context.date, initial: true) {
                     flow.expireIfDue(at: Date())
                 }
@@ -102,6 +115,13 @@ struct AIRequestApprovalView: View {
                 flow.resultArrived(result)
             }
         }
+        // The one haptic map. It reads the phase after the answer was sent, so a success is never felt for an answer that
+        // couldn't be sent.
+        .onChange(of: flow.phase) { old, new in
+            if let haptic = AIRequestWatchFlow.haptic(from: old, to: new) {
+                WKInterfaceDevice.current().play(haptic.type)
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 flow.expireIfDue(at: Date())
@@ -111,56 +131,98 @@ struct AIRequestApprovalView: View {
                 confirmationProgress = 0
             }
         }
-        .onChange(of: closesBySelf, initial: true) { _, closes in
-            if closes {
-                startClosing()
+        .onChange(of: closingRing, initial: true) { _, ring in
+            if let ring {
+                startClosing(ring)
             }
         }
+    }
+
+    // MARK: Motion
+
+    /// W6 to W10 take a quarter of a second, and the expiry (W11) a little longer.
+    private var phaseAnimation: Animation {
+        flow.phase == .expired ? .smooth(duration: 0.3) : .smooth(duration: 0.25)
+    }
+
+    /// A fade, with a slight scale unless the wearer has asked for less motion.
+    private var phaseTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.94))
     }
 
     // MARK: Asking
 
     /// How much of the asking screen fits. Each step down sheds one more thing.
     private struct Fit {
-        var titleLines = 2
+        /// `nil` for no limit.
+        var titleLines: Int? = 2
         var showsFatAndProtein = true
         var showsHint = true
         var smallControls = false
         /// The last resort: the context rows take whatever room is left, and their text shrinks to fit it.
         var squeezesContext = false
+
+        /// Accessibility text sizes: nothing is shed, and the screen scrolls instead.
+        static let largeText = Fit(titleLines: nil)
+    }
+
+    /// Whether the crown confirms an approval. On watchOS 11 and later at accessibility text sizes it doesn't: the
+    /// screen scrolls with the crown, and Approve confirms. On watchOS 10 the crown is the only way to approve, so it
+    /// still does.
+    private var crownConfirms: Bool {
+        if #available(watchOS 11, *) {
+            return !dynamicTypeSize.isAccessibilitySize
+        }
+        return true
     }
 
     private var request: some View {
         // On a small screen it sheds, in order: the title's second line, the fat and protein, the hint, the controls'
         // size, and last the context rows' text size. The title, the amounts and Decline always stay, every context row
-        // stays, and an amount is never scaled or cut.
-        ViewThatFits(in: .vertical) {
-            asking(Fit())
-            asking(Fit(titleLines: 1))
-            asking(Fit(titleLines: 1, showsFatAndProtein: false))
-            asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false))
-            asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false, smallControls: true))
-            asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false, smallControls: true, squeezesContext: true))
+        // stays, and an amount is never scaled or cut. At accessibility text sizes nothing is shed; the screen scrolls.
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                ScrollView {
+                    asking(.largeText)
+                }
+            } else {
+                ViewThatFits(in: .vertical) {
+                    asking(Fit())
+                    asking(Fit(titleLines: 1))
+                    asking(Fit(titleLines: 1, showsFatAndProtein: false))
+                    asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false))
+                    asking(Fit(titleLines: 1, showsFatAndProtein: false, showsHint: false, smallControls: true))
+                    asking(Fit(
+                        titleLines: 1,
+                        showsFatAndProtein: false,
+                        showsHint: false,
+                        smallControls: true,
+                        squeezesContext: true
+                    ))
+                }
+            }
         }
-        .focusable(true)
+        .focusable(crownConfirms)
         .focused($isCrownFocused)
+        // The system's detents are the crown's only haptic. A crown left alone below 100 % eases back to 0 (W5).
         .digitalCrownRotation(
-            $confirmationProgress,
+            detent: $confirmationProgress,
             from: 0.0,
             through: 1.0,
             by: 0.05,
             sensitivity: .medium,
             isContinuous: false,
-            isHapticFeedbackEnabled: true
+            isHapticFeedbackEnabled: true,
+            onIdle: {
+                easeBackIfIdle()
+            }
         )
         .onAppear {
             isCrownFocused = true
         }
         .onChange(of: confirmationProgress) { _, newValue in
-            if newValue >= 1.0 {
+            if newValue >= 1.0, crownConfirms {
                 approve()
-            } else if newValue > 0 {
-                WKInterfaceDevice.current().play(.click)
             }
         }
     }
@@ -178,9 +240,9 @@ struct AIRequestApprovalView: View {
                 .layoutPriority(1)
 
             VStack(alignment: .leading, spacing: 2) {
-                amountRow("Bolus", value: units, color: Color.insulin)
+                amountRow("Bolus", value: units, color: Color.insulin, spoken: spokenUnitsRow)
                     .layoutPriority(1)
-                amountRow("Carbs:", value: carbs, color: .orange)
+                amountRow("Carbs:", value: carbs, color: .orange, spoken: spokenCarbsRow)
                     .layoutPriority(1)
 
                 contextRowsView(squeezed: fit.squeezesContext)
@@ -195,34 +257,49 @@ struct AIRequestApprovalView: View {
             }
             .padding(.horizontal)
 
-            ProgressView(value: confirmationProgress, total: 1.0)
-                .tint(confirmationProgress > 0 ? Color.loopGreen : Color.gray)
-                .padding(.horizontal)
-                .layoutPriority(1)
+            if crownConfirms {
+                // Without the hint, the crown glyph stays next to the bar to say what the bar is for.
+                confirmationBar(showsGlyph: !fit.showsHint)
+            }
 
             if fit.showsHint {
                 hint
                     .layoutPriority(1)
             }
 
-            HStack {
-                Button("Decline") {
-                    answer(.decline, declinedBy: .button)
-                }
-                .buttonStyle(.bordered)
-
-                approveButton
-            }
-            .controlSize(fit.smallControls ? .small : .regular)
-            .layoutPriority(1)
+            buttons(smallControls: fit.smallControls)
         }
     }
 
-    /// A label and its amount. The amount is never scaled or cut: the label gives way first.
-    private func amountRow(_ label: LocalizedStringKey, value: String, color: Color) -> some View {
-        HStack {
+    /// Decline and Approve side by side, or stacked at accessibility text sizes. The padding keeps the capsules clear of
+    /// the bezel's curve.
+    private func buttons(smallControls: Bool) -> some View {
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout())
+        return layout {
+            Button("Decline") {
+                answer(.decline, declinedBy: .button)
+            }
+            .buttonStyle(.bordered)
+
+            approveButton
+        }
+        .controlSize(smallControls ? .small : .regular)
+        .scenePadding(.horizontal)
+        .layoutPriority(1)
+    }
+
+    /// A label and its amount, with the amount never scaled or cut: the label gives way first. At accessibility text
+    /// sizes the label sits over its amount. VoiceOver reads the row as one element, as `spoken`.
+    private func amountRow(_ label: LocalizedStringKey, value: String, color: Color, spoken: String) -> some View {
+        let layout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0)) :
+            AnyLayout(HStackLayout())
+        return layout {
             Text(label)
-            Spacer()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            if !dynamicTypeSize.isAccessibilitySize {
+                Spacer()
+            }
             Text(value)
                 .bold()
                 .foregroundStyle(color)
@@ -230,6 +307,8 @@ struct AIRequestApprovalView: View {
                 .fixedSize()
                 .layoutPriority(1)
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(spoken)
     }
 
     /// Trio's context, never dropped. It wraps rather than being cut, except in the last resort, where it shrinks to the
@@ -258,6 +337,52 @@ struct AIRequestApprovalView: View {
         }
     }
 
+    /// The crown bar. It fills in green from the first detent, quickly, and steps never show as jumps (W4). A reset by the
+    /// idle crown keeps its own slower animation (W5). Dimmed when the screen is always on.
+    private func confirmationBar(showsGlyph: Bool) -> some View {
+        HStack(spacing: 4) {
+            if showsGlyph {
+                crownGlyph
+                    .font(.caption2)
+            }
+            ProgressView(value: confirmationProgress, total: 1.0)
+                .tint(confirmationProgress > 0 ? Color.loopGreen.opacity(isLuminanceReduced ? 0.55 : 1) : Color.gray)
+                // Not `.animation(_, value:)`, which would override the idle reset's own animation: this fills in only
+                // where nothing set one, which is a crown detent.
+                .transaction(value: confirmationProgress) { transaction in
+                    if transaction.animation == nil {
+                        transaction.animation = .snappy(duration: 0.15)
+                    }
+                }
+                .accessibilityLabel("Crown confirmation")
+                .accessibilityValue(Text(confirmationProgress, format: .percent.precision(.fractionLength(0))))
+        }
+        .opacity(isLuminanceReduced ? 0.6 : 1)
+        .padding(.horizontal)
+        .layoutPriority(1)
+    }
+
+    /// The crown the wearer turns, on the side it's on, pointing the way. The bolus screen's glyph, still when the wearer
+    /// has asked for less motion.
+    private var crownGlyph: some View {
+        Image(
+            systemName: WKInterfaceDevice.current()
+                .wristLocation == .left ? "digitalcrown.arrow.clockwise.fill" : "digitalcrown.arrow.counterclockwise.fill"
+        )
+        .symbolRenderingMode(.palette)
+        .foregroundStyle(Color.insulin, Color.primary)
+        .symbolEffect(.variableColor.iterative.reversing, options: .repeating, isActive: !reduceMotion)
+        .accessibilityHidden(true)
+    }
+
+    /// A crown left alone below 100 % eases back to 0, so a half turn doesn't sit there as if half approved.
+    private func easeBackIfIdle() {
+        guard confirmationProgress > 0, confirmationProgress < 1 else { return }
+        withAnimation(.easeOut(duration: 0.5)) {
+            confirmationProgress = 0
+        }
+    }
+
     /// How to approve, or how long is left once that's under a minute.
     private var hint: some View {
         TimelineView(.periodic(from: flow.shownAt, by: 1)) { context in
@@ -269,7 +394,7 @@ struct AIRequestApprovalView: View {
                     ))
                         .foregroundStyle(.orange)
                 } else {
-                    Text(Self.approveHint)
+                    approveHintView
                 }
             }
             .font(.footnote)
@@ -281,14 +406,54 @@ struct AIRequestApprovalView: View {
         }
     }
 
-    private static var approveHint: String {
+    @ViewBuilder private var approveHintView: some View {
+        let howTo = approveHint
+        if howTo.mentionsCrown {
+            Label {
+                Text(howTo.text)
+            } icon: {
+                crownGlyph
+            }
+            .labelStyle(.titleAndIcon)
+        } else {
+            Text(howTo.text)
+        }
+    }
+
+    /// How to approve. With VoiceOver on, the double tap is VoiceOver's: on Approve. At accessibility text sizes the
+    /// crown scrolls, so Approve is the way. Before watchOS 11 there is no Approve, and the crown is the only way.
+    private var approveHint: (text: String, mentionsCrown: Bool) {
         if #available(watchOS 11, *) {
-            return String(
-                localized: "Turn the crown or double tap to approve",
-                comment: "Watch approval: how to approve, on watchOS 11 and later"
+            if isVoiceOverOn {
+                return (
+                    String(
+                        localized: "Double tap Approve to confirm.",
+                        comment: "Watch approval: how to approve with VoiceOver on, on watchOS 11 and later"
+                    ),
+                    false
+                )
+            }
+            if dynamicTypeSize.isAccessibilitySize {
+                return (
+                    String(
+                        localized: "Tap Approve to confirm",
+                        comment: "Watch approval: how to approve at the largest text sizes, on watchOS 11 and later"
+                    ),
+                    false
+                )
+            }
+            return (
+                String(
+                    localized: "Turn the crown or double tap to approve",
+                    comment: "Watch approval: how to approve, on watchOS 11 and later"
+                ),
+                true
             )
         }
-        return String(localized: "Turn the crown to approve", comment: "Watch approval: how to approve, on watchOS 10")
+        return (
+            String(localized: "Turn the crown to approve", comment: "Watch approval: how to approve, on watchOS 10"),
+            true
+        )
     }
 
     /// The double tap presses this button. There's none on watchOS 10, which approves with the crown only.
@@ -298,8 +463,9 @@ struct AIRequestApprovalView: View {
                 approve()
             }
             .buttonStyle(.bordered)
-            .tint(Color.loopGreen)
+            .tint(Color.loopGreen.opacity(isLuminanceReduced ? 0.55 : 1))
             .handGestureShortcut(.primaryAction)
+            .accessibilityHint(approveAccessibilityHint)
         }
     }
 
@@ -315,12 +481,14 @@ struct AIRequestApprovalView: View {
             Text(text.headline)
                 .font(.headline)
                 .multilineTextAlignment(.center)
+                .contentTransition(.opacity)
 
             if let detail = text.detail {
                 Text(detail)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+                    .contentTransition(.opacity)
             }
 
             endButton(ending)
@@ -335,22 +503,43 @@ struct AIRequestApprovalView: View {
         }
     }
 
-    @ViewBuilder private func icon(_ look: Look, ring: AIRequestWatchRing?) -> some View {
-        if let symbol = look.symbol {
-            ZStack {
-                if let ring {
-                    Circle()
-                        .trim(from: 0, to: ringLeft)
-                        .stroke(Self.color(of: ring), style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                }
-                Image(systemName: symbol)
-                    .font(.system(size: 40))
-                    .foregroundStyle(look.color)
+    /// The phase's icon, or a spinner while the answer is on its way. The symbol is one view throughout, so a new symbol
+    /// replaces the old (W7) and it can bounce (W7, W10). Under Reduce Motion it fades instead, and never bounces.
+    private func icon(_ look: Look, ring: AIRequestWatchRing?) -> some View {
+        ZStack {
+            if let ring {
+                Circle()
+                    .trim(from: 0, to: ringLeft)
+                    .stroke(Self.color(of: ring), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
             }
-            .frame(width: 52, height: 52)
-        } else {
-            ProgressView()
+            Image(systemName: look.symbol ?? Self.spinnerSymbol)
+                .font(.system(size: 44))
+                .foregroundStyle(look.color)
+                .opacity(look.symbol == nil ? 0 : 1)
+                .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
+                .symbolEffect(.bounce, value: bounceCount)
+                .onAppear {
+                    bounce(if: look)
+                }
+                .onChange(of: look.symbol) {
+                    bounce(if: look)
+                }
+                .accessibilityHidden(true)
+            if look.symbol == nil {
+                ProgressView()
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: 56, height: 56)
+    }
+
+    /// Stands in for the symbol while the spinner shows, so the symbol view is there to be replaced.
+    private static let spinnerSymbol = "circle"
+
+    private func bounce(if look: Look) {
+        if look.bounces, !reduceMotion {
+            bounceCount += 1
         }
     }
 
@@ -384,6 +573,8 @@ struct AIRequestApprovalView: View {
         /// The SF Symbol, or `nil` for a spinner.
         let symbol: String?
         let color: Color
+        /// Whether the symbol bounces as it arrives: a success the phone reported, or something that went wrong.
+        var bounces = false
     }
 
     /// The phase's icon. Only a success the phone reported is a green check: "Sent to Trio" is a paper plane, as the
@@ -395,7 +586,7 @@ struct AIRequestApprovalView: View {
             return Look(symbol: nil, color: .secondary)
         case let .sending(_, _, queued):
             if flow.isNoReply(at: now) {
-                return Look(symbol: warning, color: .orange)
+                return Look(symbol: warning, color: .orange, bounces: true)
             }
             return Look(symbol: queued ? "clock.arrow.circlepath" : nil, color: .secondary)
         case .received(.approve):
@@ -403,36 +594,37 @@ struct AIRequestApprovalView: View {
         case .received(.decline):
             return Look(symbol: "xmark.circle", color: .secondary)
         case .notSent:
-            return Look(symbol: warning, color: .loopRed)
+            return Look(symbol: warning, color: .loopRed, bounces: true)
         case .expired:
             return Look(symbol: "clock.badge.xmark", color: .secondary)
         case let .result(message):
             switch message.tone {
             case .success:
-                return Look(symbol: "checkmark.circle.fill", color: .loopGreen)
+                return Look(symbol: "checkmark.circle.fill", color: .loopGreen, bounces: true)
             case .neutral:
                 return Look(symbol: "xmark.circle", color: .secondary)
             case .warning:
-                return Look(symbol: warning, color: .orange)
+                return Look(symbol: warning, color: .orange, bounces: true)
             case .failure:
-                return Look(symbol: warning, color: .loopRed)
+                return Look(symbol: warning, color: .loopRed, bounces: true)
             }
         }
     }
 
-    /// Whether the phase closes the screen by itself, as the flow says.
-    private var closesBySelf: Bool {
-        flow.ending(at: Date()).ring != nil
+    /// The ring of a phase that closes the screen by itself, as the flow says, or `nil` for one that doesn't.
+    private var closingRing: AIRequestWatchRing? {
+        flow.ending(at: Date()).ring
     }
 
-    /// Drains the ring, then closes the screen, unless the phase has since moved on to one that waits for Close.
-    private func startClosing() {
+    /// Drains the ring, then closes the screen, unless the phase has since moved on to one that waits for Close. The ring
+    /// is linear, and Reduce Motion leaves it so: its completion is what closes the screen.
+    private func startClosing(_ ring: AIRequestWatchRing) {
         guard !isClosing else { return }
         isClosing = true
-        withAnimation(.linear(duration: 1.5), completionCriteria: .logicallyComplete) {
+        withAnimation(.linear(duration: ring.drainDuration), completionCriteria: .logicallyComplete) {
             ringLeft = 0
         } completion: {
-            if closesBySelf {
+            if closingRing != nil {
                 close()
             }
         }
@@ -452,16 +644,13 @@ struct AIRequestApprovalView: View {
     }
 
     /// Sends the answer, unless the request has expired or has stopped being the one on screen, and shows what became
-    /// of sending it.
+    /// of sending it. The haptic follows from the phase it moves to, so it never plays before the answer is out.
     private func answer(_ decision: AIRequestDecision, declinedBy: AIRequestDeclinedBy?) {
         guard flow.phase == .asking, center.presented?.id == prompt.id else { return }
         let now = Date()
         guard now < prompt.expiresAt else {
             flow.expireIfDue(at: now)
             return
-        }
-        if decision == .approve {
-            WKInterfaceDevice.current().play(.success)
         }
         let result = center.answer(prompt, decision, declinedBy: declinedBy)
         flow.answered(decision, result, at: now)
@@ -517,6 +706,51 @@ struct AIRequestApprovalView: View {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    // MARK: VoiceOver
+
+    /// "Bolus, 2.1 units".
+    private var spokenUnitsRow: String {
+        let amount = Self.trimmed(prompt.shown.units)
+        let spoken = Self.amount(prompt.shown.units) == 1
+            ? String(localized: "\(amount) unit", comment: "VoiceOver: one unit of insulin")
+            : String(localized: "\(amount) units", comment: "VoiceOver: an amount of insulin, in units")
+        return String(localized: "Bolus, \(spoken)", comment: "VoiceOver: the bolus row of the watch approval screen")
+    }
+
+    /// "Carbs, 35 grams".
+    private var spokenCarbsRow: String {
+        String(
+            localized: "Carbs, \(Self.spokenGrams(prompt.shown.carbs))",
+            comment: "VoiceOver: the carbs row of the watch approval screen"
+        )
+    }
+
+    /// What Approve does, for VoiceOver: "Logs 35 grams of carbs and starts a 2.1 unit bolus." A request with no dose logs
+    /// the carbs only. It says what the signed amounts would do, and takes nothing from the unsigned test flag, so a dry
+    /// run is described as if it were real.
+    private var approveAccessibilityHint: String {
+        let grams = Self.spokenGrams(prompt.shown.carbs)
+        guard Self.positive(prompt.shown.units) != nil else {
+            return String(
+                localized: "Logs \(grams) of carbs. No bolus is started.",
+                comment: "VoiceOver: what Approve does for a request with no dose"
+            )
+        }
+        return String(
+            localized: "Logs \(grams) of carbs and starts a \(Self.trimmed(prompt.shown.units)) unit bolus.",
+            comment: "VoiceOver: what Approve does, with the carbs and the dose"
+        )
+    }
+
+    /// "35 grams", or "1 gram".
+    private static func spokenGrams(_ shown: String) -> String {
+        let grams = trimmed(shown)
+        if amount(shown) == 1 {
+            return String(localized: "\(grams) gram", comment: "VoiceOver: one gram")
+        }
+        return String(localized: "\(grams) grams", comment: "VoiceOver: an amount in grams")
+    }
+
     /// The amounts are strings with a `.` separator, whatever the wearer's locale.
     private static func amount(_ shown: String) -> Decimal? {
         Decimal(string: shown, locale: Locale(identifier: "en_US_POSIX"))
@@ -541,6 +775,19 @@ private extension AIRequestWatchEnding {
             return ring
         }
         return nil
+    }
+}
+
+private extension AIRequestWatchHaptic {
+    var type: WKHapticType {
+        switch self {
+        case .success:
+            return .success
+        case .failure:
+            return .failure
+        case .directionDown:
+            return .directionDown
+        }
     }
 }
 
@@ -596,6 +843,24 @@ private extension AIRequestPrompt {
     }
 }
 
+private extension AIRequestPrompt {
+    /// The worst case for a small watch: a long title, fat and protein, and every row Trio can add at once.
+    static var lasagne: AIRequestPrompt {
+        .preview(
+            title: "Claude: lasagne with a side salad and garlic bread",
+            shown: AIRequestShown(carbs: "82.50", fat: "28.00", protein: "31.25", units: "0.00"),
+            context: AIRequestContext(
+                glucose: "61 mg/dL ↘",
+                glucoseAgeMinutes: 4,
+                recentCarbs: AIRequestContext.Recent(amount: "20", minutesAgo: 6),
+                recentBolus: AIRequestContext.Recent(amount: "3.00", minutesAgo: 8),
+                noDoseReason: "glucose is forecast to go low"
+            ),
+            testKind: .real
+        )
+    }
+}
+
 private extension AIRequestResultMessage {
     static func preview(headline: String, detail: String, tone: Tone, answeredOn: AIRequestAnswerSide? = .watch)
         -> AIRequestResultMessage
@@ -627,19 +892,50 @@ private func previewScreen(
 }
 
 #Preview("Asking: every context row, long title, fat and protein") {
-    // The worst case for a 41 mm watch: every row Trio can add at once.
-    previewScreen(.preview(
-        title: "Claude: lasagne with a side salad and garlic bread",
-        shown: AIRequestShown(carbs: "82.50", fat: "28.00", protein: "31.25", units: "0.00"),
-        context: AIRequestContext(
-            glucose: "61 mg/dL ↘",
-            glucoseAgeMinutes: 4,
-            recentCarbs: AIRequestContext.Recent(amount: "20", minutesAgo: 6),
-            recentBolus: AIRequestContext.Recent(amount: "3.00", minutesAgo: 8),
-            noDoseReason: "glucose is forecast to go low"
-        ),
-        testKind: .real
-    ))
+    previewScreen(.lasagne)
+}
+
+// The watch sizes the screen has to fit, as the points the app is laid out in: 40 mm (SE), 41 mm and 49 mm (Ultra). The
+// frame stands in for the device, so the screen sheds layout as it would on that watch, whichever one the canvas shows.
+// The status bar's clock isn't simulated, so the real room is a little less.
+
+#Preview("40 mm") {
+    previewScreen(.lasagne)
+        .frame(width: 162, height: 197)
+}
+
+#Preview("40 mm, xxxLarge") {
+    previewScreen(.lasagne)
+        .dynamicTypeSize(.xxxLarge)
+        .frame(width: 162, height: 197)
+}
+
+#Preview("41 mm") {
+    previewScreen(.lasagne)
+        .frame(width: 176, height: 215)
+}
+
+#Preview("41 mm, xxxLarge") {
+    previewScreen(.lasagne)
+        .dynamicTypeSize(.xxxLarge)
+        .frame(width: 176, height: 215)
+}
+
+#Preview("49 mm") {
+    previewScreen(.lasagne)
+        .frame(width: 211, height: 257)
+}
+
+#Preview("49 mm, xxxLarge") {
+    previewScreen(.lasagne)
+        .dynamicTypeSize(.xxxLarge)
+        .frame(width: 211, height: 257)
+}
+
+#Preview("41 mm, accessibility3") {
+    previewScreen(.lasagne)
+        .dynamicTypeSize(.accessibility3)
+        .frame(width: 176, height: 215)
 }
 
 #Preview("Asking: fat, protein and a long title") {

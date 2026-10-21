@@ -47,6 +47,27 @@ enum AIRequestWatchRing: Equatable {
     case success
     /// Nothing happened, as the wearer asked.
     case neutral
+
+    /// How long the ring takes to run out, and so how long the screen stays before it closes. A success is held a little
+    /// longer than a decline, which the wearer already knows.
+    var drainDuration: TimeInterval {
+        switch self {
+        case .success:
+            return 1.5
+        case .neutral:
+            return 1.0
+        }
+    }
+}
+
+/// The haptic the watch plays as the approval screen moves from one phase to another.
+enum AIRequestWatchHaptic: Equatable {
+    /// The wearer committed to an approval, or the request was carried out.
+    case success
+    /// The answer wasn't sent, the request failed or ran out, or the dose wasn't given.
+    case failure
+    /// The wearer declined.
+    case directionDown
 }
 
 /// The watch approval screen's phases, and its words for each. A plain value with no clock of its own: the view
@@ -147,6 +168,42 @@ struct AIRequestWatchFlow: Equatable {
             case .failure,
                  .warning:
                 return .close
+            }
+        }
+    }
+
+    /// The haptic for the screen moving from phase `old` to phase `new`, or `nil` for none. It plays after the move, so it
+    /// follows what became of sending the answer and never runs ahead of it: committing to an approve is felt only once
+    /// the answer was sent or queued, and an answer that couldn't be sent is a failure, never a success.
+    ///
+    /// - Committing to an approve, by the crown, Approve or a double tap alike: success, once.
+    /// - Declining: direction down.
+    /// - An answer that wasn't sent, a request that expired on the screen, and a failure or warning from the phone (the
+    ///   bolus the wearer approved wasn't given, or was only partly): failure.
+    /// - A success from the phone: success.
+    /// - Everything else, including the phone's receipt, a queued answer waiting and a neutral result: none.
+    static func haptic(from old: AIRequestWatchPhase, to new: AIRequestWatchPhase) -> AIRequestWatchHaptic? {
+        guard old != new else { return nil }
+        switch new {
+        case .asking,
+             .received:
+            return nil
+        case let .sending(decision, _, _):
+            // Only the answer itself: nothing else moves into sending.
+            guard old == .asking else { return nil }
+            return decision == .approve ? .success : .directionDown
+        case .expired,
+             .notSent:
+            return .failure
+        case let .result(message):
+            switch message.tone {
+            case .success:
+                return .success
+            case .failure,
+                 .warning:
+                return .failure
+            case .neutral:
+                return nil
             }
         }
     }

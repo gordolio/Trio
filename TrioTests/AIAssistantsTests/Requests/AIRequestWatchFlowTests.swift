@@ -458,4 +458,93 @@ import Testing
         #expect(asking.headline.isEmpty)
         #expect(asking.detail == nil)
     }
+
+    @Test(
+        "Committing to an approve plays success once the answer is sent or queued, and a failure when it wasn't sent"
+    ) func hapticForCommittingToAnApprove() {
+        let asking = Self.flow().phase
+
+        // The crown, Approve and a double tap all end in the same phase, so they feel the same.
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.approve).phase) == .success)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.approve, queued: true).phase) == .success)
+
+        // An answer that couldn't be sent is a failure, never a success, whichever the answer was.
+        var notSentApprove = Self.flow()
+        notSentApprove.answered(.approve, .notSent, at: Self.shownAt.addingTimeInterval(2))
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: notSentApprove.phase) == .failure)
+
+        var notSentDecline = Self.flow()
+        notSentDecline.answered(.decline, .notSent, at: Self.shownAt.addingTimeInterval(2))
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: notSentDecline.phase) == .failure)
+    }
+
+    @Test("Declining plays direction down, and the phone's receipt plays nothing") func hapticForDeclineAndReceipt() {
+        let asking = Self.flow().phase
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.decline).phase) == .directionDown)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: Self.sending(.decline, queued: true).phase) == .directionDown)
+
+        // The approve was felt when it was committed to; the receipt doesn't repeat it.
+        var approved = Self.sending(.approve)
+        let sending = approved.phase
+        approved.receiptArrived()
+        #expect(AIRequestWatchFlow.haptic(from: sending, to: approved.phase) == nil)
+
+        var declined = Self.sending(.decline)
+        let declining = declined.phase
+        declined.receiptArrived()
+        #expect(AIRequestWatchFlow.haptic(from: declining, to: declined.phase) == nil)
+    }
+
+    @Test("Expiring on the screen plays a failure") func hapticForExpiry() {
+        let asking = Self.flow().phase
+        var expired = Self.flow()
+        expired.expireIfDue(at: Self.expiresAt)
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: expired.phase) == .failure)
+    }
+
+    @Test(
+        "The phone's result plays success for a success, failure for a failure or warning, and nothing otherwise"
+    ) func hapticForResults() {
+        let sending = Self.sending().phase
+        func haptic(_ tone: AIRequestResultMessage.Tone) -> AIRequestWatchHaptic? {
+            var flow = Self.sending()
+            flow.resultArrived(Self.message(tone: tone))
+            return AIRequestWatchFlow.haptic(from: sending, to: flow.phase)
+        }
+        #expect(haptic(.success) == .success)
+        #expect(haptic(.failure) == .failure)
+        #expect(haptic(.warning) == .failure)
+        #expect(haptic(.neutral) == nil)
+
+        // A result for a request nobody answered on the watch is felt the same way.
+        var unanswered = Self.flow()
+        unanswered.resultArrived(Self.message(answeredOn: .phone))
+        #expect(AIRequestWatchFlow.haptic(from: Self.flow().phase, to: unanswered.phase) == .success)
+
+        // A result that arrives after the screen expired replaces it, and is felt too.
+        var expired = Self.flow()
+        expired.expireIfDue(at: Self.expiresAt)
+        let expiredPhase = expired.phase
+        expired.resultArrived(Self.message(answeredOn: .phone))
+        #expect(AIRequestWatchFlow.haptic(from: expiredPhase, to: expired.phase) == .success)
+    }
+
+    @Test("A phase that doesn't change plays nothing, and asking never does") func hapticNeedsAChange() {
+        let asking = Self.flow().phase
+        #expect(AIRequestWatchFlow.haptic(from: asking, to: asking) == nil)
+
+        let sending = Self.sending().phase
+        #expect(AIRequestWatchFlow.haptic(from: sending, to: sending) == nil)
+
+        var resulted = Self.sending()
+        resulted.resultArrived(Self.message())
+        #expect(AIRequestWatchFlow.haptic(from: resulted.phase, to: resulted.phase) == nil)
+
+        #expect(AIRequestWatchFlow.haptic(from: sending, to: asking) == nil)
+    }
+
+    @Test("A success is held a little longer than a decline before the screen closes") func ringDrainDurations() {
+        #expect(AIRequestWatchRing.success.drainDuration == 1.5)
+        #expect(AIRequestWatchRing.neutral.drainDuration == 1.0)
+    }
 }
