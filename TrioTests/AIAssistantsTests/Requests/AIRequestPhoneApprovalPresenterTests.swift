@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import Trio
@@ -365,5 +366,35 @@ private func sampleOutcome(
         let message = AIRequestResultText.message(for: sampleOutcome(.expired, id: "r2"))
         #expect(AIRequestPhoneApprovalPhase(result: message, requestID: "r1", isWorking: false) == .asking)
         #expect(AIRequestPhoneApprovalPhase(result: message, requestID: "r2", isWorking: false) == .result(message))
+    }
+
+    // MARK: The sheet's heights
+
+    @Test func askingTakesTheWholeHeightWhenThereIsAWarning() {
+        for phase in [AIRequestPhoneApprovalPhase.asking, .checking] {
+            #expect(phase.detents(hasWarning: true, isAccessibilitySize: false) == [.large])
+            #expect(phase.detents(hasWarning: true, isAccessibilitySize: true) == [.large])
+        }
+    }
+
+    @Test func askingTakesTheWholeHeightAtAnAccessibilitySize() {
+        for phase in [AIRequestPhoneApprovalPhase.asking, .checking] {
+            #expect(phase.detents(hasWarning: false, isAccessibilitySize: true) == [.large])
+        }
+    }
+
+    @Test func askingIsAHalfSheetWithNoWarningAndOrdinaryText() {
+        for phase in [AIRequestPhoneApprovalPhase.asking, .checking] {
+            #expect(phase.detents(hasWarning: false, isAccessibilitySize: false) == [.medium])
+        }
+    }
+
+    @Test func aResultCanBePulledUpWhateverElseIsTrue() {
+        let phase = AIRequestPhoneApprovalPhase.result(AIRequestResultText.message(for: sampleOutcome(.expired)))
+        for hasWarning in [false, true] {
+            for isAccessibilitySize in [false, true] {
+                #expect(phase.detents(hasWarning: hasWarning, isAccessibilitySize: isAccessibilitySize) == [.medium, .large])
+            }
+        }
     }
 }

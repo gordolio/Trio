@@ -202,6 +202,20 @@ enum AIRequestPhoneApprovalPhase: Equatable {
         if case .result = self { return true }
         return false
     }
+
+    /// The heights the sheet may take. While it asks, it's the full height whenever a double-dose warning is among
+    /// Trio's rows or the text is at an accessibility size, so Approve is never in reach with a warning cut off. Without
+    /// either, a half sheet is enough. A result can be pulled up to the full height as well, since what it says is
+    /// whether insulin was given.
+    func detents(hasWarning: Bool, isAccessibilitySize: Bool) -> Set<PresentationDetent> {
+        switch self {
+        case .asking,
+             .checking:
+            return hasWarning || isAccessibilitySize ? [.large] : [.medium]
+        case .result:
+            return [.medium, .large]
+        }
+    }
 }
 
 /// Asks the wearer to approve or decline a request on the iPhone, and then shows how it ended. The sheet stays until
@@ -248,9 +262,7 @@ struct AIRequestPhoneApprovalView: View {
                  .checking:
                 requestForm
             case let .result(message):
-                resultContent(message)
-                    .padding(24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                resultScroll(message)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -260,8 +272,10 @@ struct AIRequestPhoneApprovalView: View {
         .tint(Color.tabBar)
         .animation(.default, value: phase)
         .interactiveDismissDisabled(!phase.allowsSwipeToDismiss)
-        // The accessibility sizes make the amounts and the buttons too big to share a half sheet.
-        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium])
+        .presentationDetents(phase.detents(
+            hasWarning: contextRowList.contains(where: \.isWarning),
+            isAccessibilitySize: dynamicTypeSize.isAccessibilitySize
+        ))
     }
 
     // MARK: Asking
@@ -350,14 +364,19 @@ struct AIRequestPhoneApprovalView: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// Trio's rows for the request, the same as on the watch: a warning has a yellow triangle. Its words stay in the
-    /// primary color, which reads on a light background too.
-    @ViewBuilder private var contextRows: some View {
-        let rows = AIRequestContextRows.rows(
+    /// Trio's rows for the request, the same as on the watch and in the notification.
+    private var contextRowList: [AIRequestContextRow] {
+        AIRequestContextRows.rows(
             context: pending.prompt.context,
             shown: shown,
             testKind: pending.prompt.testKind
         )
+    }
+
+    /// The rows, a warning with an orange triangle. The watch's is yellow, which doesn't read on a light row, and the
+    /// triangle is all that marks a row as a warning. The words stay in the primary color.
+    @ViewBuilder private var contextRows: some View {
+        let rows = contextRowList
         ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
             Group {
                 if row.isWarning {
@@ -365,7 +384,7 @@ struct AIRequestPhoneApprovalView: View {
                         Text(row.text)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(.orange)
                     }
                 } else {
                     Text(row.text)
@@ -465,6 +484,19 @@ struct AIRequestPhoneApprovalView: View {
     }
 
     // MARK: Result
+
+    /// The result, centered when it's short and scrolling when it's not: a long detail can say whether insulin was
+    /// given, and mustn't run under the grabber or the Done button.
+    private func resultScroll(_ message: AIRequestResultMessage) -> some View {
+        GeometryReader { proxy in
+            ScrollView {
+                resultContent(message)
+                    .padding(24)
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
 
     /// The icon, the headline and the detail. A request answered on the watch says so above them.
     private func resultContent(_ message: AIRequestResultMessage) -> some View {
