@@ -28,7 +28,9 @@ extension WCSession: AIRequestWatchSession {
 
 /// The phone's side of the watch's requests: shows a request on the watch, withdraws it, tells it how a request ended,
 /// and reads what the watch sends back, which is a request for the answer key, a signed answer, the ID of the request
-/// whose screen it opened, or the watch's push token.
+/// whose screen it opened, the request the wearer opened, confirmed or closed on the watch, or the watch's push token.
+/// It sends the request's details when the watch opens it, the acknowledgement of a confirmation, and the ending of a
+/// request whose screen is open there.
 final class AIRequestWatchLink: AIRequestWatchDelivery {
     static let watchPushTokenKey = "AIAssistants.watchPushToken"
 
@@ -37,6 +39,9 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
     private let defaults: UserDefaults
     private let onAnswer: (AIRequestAnswer) -> Void
     private let onViewing: (String) -> Void
+    private let onOpen: (String) -> Void
+    private let onConfirm: (AIRequestWatchConfirm) -> Void
+    private let onClose: (AIRequestWatchClose) -> Void
     private let onWatchTokenChanged: () -> Void
 
     init(
@@ -45,6 +50,9 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         defaults: UserDefaults = .standard,
         onAnswer: @escaping (AIRequestAnswer) -> Void,
         onViewing: @escaping (String) -> Void,
+        onOpen: @escaping (String) -> Void,
+        onConfirm: @escaping (AIRequestWatchConfirm) -> Void,
+        onClose: @escaping (AIRequestWatchClose) -> Void,
         onWatchTokenChanged: @escaping () -> Void
     ) {
         self.session = session
@@ -52,6 +60,9 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         self.defaults = defaults
         self.onAnswer = onAnswer
         self.onViewing = onViewing
+        self.onOpen = onOpen
+        self.onConfirm = onConfirm
+        self.onClose = onClose
         self.onWatchTokenChanged = onWatchTokenChanged
     }
 
@@ -94,6 +105,27 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         }
     }
 
+    /// Answers the watch's open: the request's amounts and Trio's dose for them.
+    func sendDetails(_ details: AIRequestWatchDetails) {
+        send(encoded: details, key: AIRequestIdentifiers.keyDetails)
+    }
+
+    /// Tells the watch the request it may have open left pending, so it closes that screen.
+    func sendEnded(_ ended: AIRequestEnded) {
+        send(encoded: ended, key: AIRequestIdentifiers.keyEnded)
+    }
+
+    /// Tells the watch how its confirmation went, in upstream's own acknowledgement, which the watch shows on its
+    /// acknowledgement screen.
+    func sendAcknowledgment(success: Bool, message: String) {
+        let code = success ? BaseWatchManager.AcknowledgmentCode.genericSuccess : .genericFailure
+        send([
+            WatchMessageKeys.acknowledged: success,
+            WatchMessageKeys.message: message,
+            WatchMessageKeys.ackCode: code.rawValue
+        ])
+    }
+
     /// Handles a message from the watch. Returns `false` if it isn't one of the request messages, so the
     /// caller can handle it.
     func receive(_ message: [String: Any]) -> Bool {
@@ -114,6 +146,30 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
                 debug(.service, "AI requests: ignored a viewing message without a request ID")
             }
         }
+        if let opened = message[AIRequestIdentifiers.keyOpen] {
+            handled = true
+            if let id = opened as? String {
+                onOpen(id)
+            } else {
+                debug(.service, "AI requests: ignored an open message without a request ID")
+            }
+        }
+        if let confirm = message[AIRequestIdentifiers.keyConfirm] {
+            handled = true
+            if let confirm = decode(AIRequestWatchConfirm.self, from: confirm) {
+                onConfirm(confirm)
+            } else {
+                debug(.service, "AI requests: couldn't read a confirmation from the watch")
+            }
+        }
+        if let close = message[AIRequestIdentifiers.keyClose] {
+            handled = true
+            if let close = decode(AIRequestWatchClose.self, from: close) {
+                onClose(close)
+            } else {
+                debug(.service, "AI requests: couldn't read a close from the watch")
+            }
+        }
         if let token = message[AIRequestIdentifiers.keyWatchPushToken] as? String {
             handled = true
             store(token)
@@ -131,6 +187,14 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         }
     }
 
+    private func send(encoded message: some Encodable, key: String) {
+        do {
+            send([key: try JSONEncoder().encode(message)])
+        } catch {
+            debug(.service, "AI requests: couldn't encode a \(key) message for the watch: \(error)")
+        }
+    }
+
     /// A new key each time, so answers signed by a reinstalled watch's old key no longer verify.
     private func sendNewKey() {
         guard let key = keys.rotate() else {
@@ -141,6 +205,11 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
     }
 
     // MARK: Receiving
+
+    private func decode<Message: Decodable>(_ type: Message.Type, from value: Any) -> Message? {
+        guard let data = value as? Data else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
+    }
 
     private func forward(_ value: Any) {
         guard let data = value as? Data, let answer = try? JSONDecoder().decode(AIRequestAnswer.self, from: data) else {

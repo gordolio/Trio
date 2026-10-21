@@ -97,7 +97,10 @@ final class AIRequestMessageHolder {
     private static let requestKeys = [
         AIRequestIdentifiers.keyRequest,
         AIRequestIdentifiers.keyAnswer,
-        AIRequestIdentifiers.keyWatchPushToken
+        AIRequestIdentifiers.keyWatchPushToken,
+        AIRequestIdentifiers.keyOpen,
+        AIRequestIdentifiers.keyConfirm,
+        AIRequestIdentifiers.keyClose
     ]
 
     private let lock = NSLock()

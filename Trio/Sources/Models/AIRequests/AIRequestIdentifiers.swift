@@ -35,6 +35,21 @@ enum AIRequestIdentifiers {
     /// The ID of the request whose approval screen the watch has opened, sent from the watch to the phone so its
     /// backup waits.
     static let keyViewing = "aiRequestViewing"
+    /// The ID of the request the wearer opened on the watch, as a `String`, sent from the watch to the phone. The
+    /// phone answers with `keyDetails`.
+    static let keyOpen = "aiRequestOpen"
+    /// The request's amounts and Trio's dose for them, as JSON-encoded `AIRequestWatchDetails`, sent from the phone to
+    /// the watch.
+    static let keyDetails = "aiRequestDetails"
+    /// What the wearer confirmed on the watch, as JSON-encoded `AIRequestWatchConfirm`, sent from the watch to the
+    /// phone.
+    static let keyConfirm = "aiRequestConfirm"
+    /// The watch left the request without confirming it, as JSON-encoded `AIRequestWatchClose`, sent from the watch to
+    /// the phone.
+    static let keyClose = "aiRequestClose"
+    /// The request left pending, so the watch closes its screen, as JSON-encoded `AIRequestEnded`, sent from the phone
+    /// to the watch.
+    static let keyEnded = "aiRequestEnded"
 
     // MARK: Notification slots
 

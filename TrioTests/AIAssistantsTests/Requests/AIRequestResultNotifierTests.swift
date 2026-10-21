@@ -163,6 +163,9 @@ private func outcome(
             defaults: UserDefaults(suiteName: UUID().uuidString)!,
             onAnswer: { _ in },
             onViewing: { _ in },
+            onOpen: { _ in },
+            onConfirm: { _ in },
+            onClose: { _ in },
             onWatchTokenChanged: {}
         )
         let notifier = AIRequestResultNotifier(center: center, isShowing: { _ in false })
