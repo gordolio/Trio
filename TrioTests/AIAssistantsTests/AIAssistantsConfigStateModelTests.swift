@@ -202,4 +202,87 @@ final class FakeAIAssistantsService: AIAssistantsService {
         await signOut.value
         #expect(state.isSigningOut == false)
     }
+
+    // MARK: - Request preferences
+
+    func freshStore() -> AIAssistantsPreferencesStore {
+        AIAssistantsPreferencesStore(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+    }
+
+    @Test("A change on the screen is written to the store") func preferencesWriteThrough() {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        state.preferences.allowsMealRequests = true
+        state.preferences.phoneBackupDelay = 30
+        state.preferences.wakePushType = .timeSensitive
+        #expect(store.value.allowsMealRequests)
+        #expect(store.value.phoneBackupDelay == 30)
+        #expect(store.value.wakePushType == .timeSensitive)
+    }
+
+    @Test("A change in the store reaches the screen") func storeChangesReachTheModel() async {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        store.value.phoneBackupDelay = 60
+        #expect(await eventuallyTrue { state.preferences.phoneBackupDelay == 60 })
+    }
+
+    @Test("The screen starts with what the store holds") func screenStartsWithTheStoredPreferences() {
+        let store = freshStore()
+        store.value = AIAssistantsPreferences(
+            allowsMealRequests: true,
+            phoneBackupDelay: 60,
+            wakePushType: .background
+        )
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        #expect(state.preferences == store.value)
+    }
+
+    @Test(
+        "A change on the screen is written once, and the store's update doesn't write it again"
+    ) func preferencesWriteDoesNotEcho(
+    ) async {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        var writes = 0
+        let subscription = store.changes.dropFirst().sink { _ in writes += 1 }
+        state.preferences.allowsMealRequests = true
+        await letDebouncePass()
+        #expect(writes == 1)
+        #expect(state.preferences.allowsMealRequests)
+        subscription.cancel()
+    }
+
+    @Test("Two quick changes on the screen settle on the last one") func quickChangesSettleOnTheLastOne() async {
+        let store = freshStore()
+        let state = makeState()
+        state.preferencesStore = store
+        state.subscribe()
+        var writes = 0
+        let subscription = store.changes.dropFirst().sink { _ in writes += 1 }
+        state.preferences.wakePushType = .background
+        state.preferences.wakePushType = .timeSensitive
+        await letDebouncePass()
+        #expect(writes == 2)
+        #expect(state.preferences.wakePushType == .timeSensitive)
+        #expect(store.value.wakePushType == .timeSensitive)
+        subscription.cancel()
+    }
+
+    @Test("Without a store the screen keeps its own preferences") func preferencesWithoutAStoreStayOnTheScreen() async {
+        let state = makeState()
+        state.preferencesStore = nil
+        state.subscribe()
+        state.preferences.phoneBackupDelay = 60
+        await letDebouncePass()
+        #expect(state.preferences.phoneBackupDelay == 60)
+    }
 }

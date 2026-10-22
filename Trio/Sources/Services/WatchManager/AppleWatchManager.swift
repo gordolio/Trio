@@ -643,6 +643,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     }
 
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
+        if AIRequestHooks.phoneReceivedFromWatch(message) { return }
         // Handle logs first - doesn't need self, so it can run even during teardown
         if let logs = message["watchLogs"] as? String {
             SimpleLogReporter.appendToWatchLog(logs)
@@ -784,6 +785,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if AIRequestHooks.phoneReceivedFromWatch(userInfo) { return }
         if let logs = userInfo["watchLogs"] as? String {
             SimpleLogReporter.appendToWatchLog(logs)
         }

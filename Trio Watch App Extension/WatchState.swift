@@ -172,6 +172,7 @@ import WatchConnectivity
             }
 
             if activationState == .activated {
+                AIRequestWatchCenter.shared.sessionDidActivate()
                 Task {
                     await WatchLogger.shared.log("⌚️ Watch session activated with state: \(activationState.rawValue)")
                 }
@@ -189,6 +190,7 @@ import WatchConnectivity
 
     /// Handles incoming messages from the paired iPhone when Phone is in the foreground
     func session(_: WCSession, didReceiveMessage message: [String: Any]) {
+        if AIRequestWatchCenter.shared.receive(message) { return }
         Task {
             await WatchLogger.shared.log("⌚️ Watch received data: \(message)")
         }
@@ -225,6 +227,7 @@ import WatchConnectivity
     }
 
     func session(_: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        if AIRequestWatchCenter.shared.receive(userInfo) { return }
         handleIncomingWatchStatePayload(userInfo)
     }
 

@@ -37,6 +37,7 @@ extension AIAssistantsConfig {
                     ConnectSection(state: state)
                 }
                 QuestionsSection(state: state)
+                ApprovalSection(state: state)
                 if state.isLinked {
                     signOutSection
                 }

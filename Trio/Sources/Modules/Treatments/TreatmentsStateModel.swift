@@ -494,6 +494,7 @@ extension Treatments {
         // MARK: - Button tasks
 
         func invokeTreatmentsTask() {
+            if MainActor.assumeIsolated({ AIRequestTreatmentsSession.shared.refusesSubmit(from: self) }) { return }
             Task {
                 debug(.bolusState, "invokeTreatmentsTask fired")
                 await MainActor.run {

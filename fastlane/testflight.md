@@ -196,12 +196,14 @@ There is an additional identifier, but it does not need the App Group added to i
 
 ## Enable Time Sensitive Notifications
 
-The `Trio` identifier requires the **Time Sensitive Notifications** capability to be enabled manually. This is only required for the `Trio` identifier, not the others. You can do this at the same time you add the `Trio App Group` to the `Trio` identifier - just check the box before you Save.
+The `Trio` identifier requires the **Time Sensitive Notifications** capability to be enabled manually. You can do this at the same time you add the `Trio App Group` to the `Trio` identifier - just check the box before you Save.
 
 1. Go to [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/identifiers/list) on the Apple developer site.
 1. Click on the `Trio` **IDENTIFIER** row (`org.nightscout.TEAMID.trio`, substituting your team id for `TEAMID`).
 1. Scroll down until you see the "Time Sensitive Notifications" capability, and check its box to enable it.
 1. Click "Save".
+
+The `Trio Watch App` identifier needs it too, and "2. Add Identifiers" enables it for you, together with Push Notifications. If you added your identifiers before it did, run "2. Add Identifiers" again, then "3. Create Certificates", so the watch app's profile includes both. The other identifiers don't need it.
 
 ## Create Trio App in App Store Connect
 

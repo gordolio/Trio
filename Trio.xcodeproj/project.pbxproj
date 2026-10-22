@@ -7,6 +7,48 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		460278C2EB8B79E4B5594F73 /* AIRequestBolusSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */; };
+		5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */; };
+		A89895B2F0920F33CB2453C1 /* AIRequestTreatmentsSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */; };
+		4A86AF5A4BDCF4AFAA605E06 /* AIRequestTreatmentsSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */; };
+		D60EBCB6909343009642A7A4 /* AIRequestLeftText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A38C4B335320460AB1B97D38 /* AIRequestLeftText.swift */; };
+		3342E99511A446CB8233C894 /* AIRequestWatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A4C79EE4C6460EA8E5B6BC /* AIRequestWatchMessages.swift */; };
+		C0A257AA5DE2422D90FA3C71 /* AIRequestWatchMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A4C79EE4C6460EA8E5B6BC /* AIRequestWatchMessages.swift */; };
+		4F794E8EEE0E4BE39E335CD6 /* AIRequestScreensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0CBF78903A7F44DEBB40E3EC /* AIRequestScreensTests.swift */; };
+		3F4DC5F2F4DE4EEE9846B260 /* AIRequestContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */; };
+		F4E63F59A0994484BA744CD4 /* AIRequestCarryOutMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A99277089E54EACA79DEEA3 /* AIRequestCarryOutMarker.swift */; };
+		37927C430E4A41EA9424AD39 /* AIRequestCarryOutMarkerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F585A07C504B4CEFB0BB23BA /* AIRequestCarryOutMarkerTests.swift */; };
+		6107468383D74CF1A7B296A7 /* ServiceRequestReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E4FCECAF9594AED8364742A /* ServiceRequestReporter.swift */; };
+		71E36E3AFED1426B860A1BCC /* AIAssistantsCheckIn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4287BE11F88430D82875048 /* AIAssistantsCheckIn.swift */; };
+		F21153A53E244F46B14559FB /* AIAssistantsCheckInTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */; };
+		6BDBA53B6BAA43EFA432E7DE /* AIInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = E70F8B809C6045D3905D019B /* AIInbox.swift */; };
+		6972F71FF2EE43D394392953 /* AIInboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39BD404EE2143A18D9889FB /* AIInboxTests.swift */; };
+		C6EE0CB0DFA64C61BA729E53 /* AIAssistantsApprovalSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */; };
+		072A5F0C958442B5BAD37A48 /* AIRequestPhoneBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1BD9E67190442CD94491170 /* AIRequestPhoneBackup.swift */; };
+		DC9C0ECE70544B13BA2851A8 /* AIRequestPhoneBackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00EFB0AE3CDE423386F4D18D /* AIRequestPhoneBackupTests.swift */; };
+		7DAC09FE8C7C4F9F8670B8F2 /* AIRequestWatchAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57C3B25B38A8437F91FCA786 /* AIRequestWatchAppDelegate.swift */; };
+		34AB91296BC84D2E9CAAB57D /* AIRequestWatchCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EAAD4702AA444B9AC909E33 /* AIRequestWatchCenter.swift */; };
+		675DFCC1E177432685C1AA88 /* AIRequestWatchLinkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE6E49A2B23C42D899F52140 /* AIRequestWatchLinkTests.swift */; };
+		F85AD05FDC3F4F50BD78370F /* AIRequestHooks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 230E59A311C34E7385EB0163 /* AIRequestHooks.swift */; };
+		6965B6705E6F4083BA0A45E9 /* AIRequestsRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2B32119B55E4282B6F7A15F /* AIRequestsRuntime.swift */; };
+		7E774722BCBA4D5FB96F11CA /* AIRequestWatchLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07D29DF7F02B4248A94A5DBF /* AIRequestWatchLink.swift */; };
+		9A61BCA1BD3E495FAA20783F /* BaseAIRequestTreatments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87C7F1C73775496FB1321019 /* BaseAIRequestTreatments.swift */; };
+		ED1D533C74084C15BF37577A /* AIRequestDisplayText.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD44087C5754CCFB0F68858 /* AIRequestDisplayText.swift */; };
+		DB4CFD6984D94957A2BC5FC3 /* AIRequestDeliverableDoseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3694296B1F5B4E6CAD6B91F9 /* AIRequestDeliverableDoseTests.swift */; };
+		F89F3D3F0C0D4A80BA085E33 /* AIRequestDisplayTextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A787F6C5D614FD5B41ECB42 /* AIRequestDisplayTextTests.swift */; };
+		0960AC84A6B94BE0A7FBE348 /* AIRequestCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1173CB4287744CD0BDAEC467 /* AIRequestCoordinator.swift */; };
+		D44C9F48586E4F3E88E8EFE0 /* AIRequestPorts.swift in Sources */ = {isa = PBXBuildFile; fileRef = E64A8211A26747689E38A214 /* AIRequestPorts.swift */; };
+		93E1BF66A33241F4837A736E /* AIRequestCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 669A3BD17346474D98448187 /* AIRequestCoordinatorTests.swift */; };
+		93970FF8484743128DC966EF /* AIRequestFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39123B18938B4F7589379806 /* AIRequestFakes.swift */; };
+		EF40907D1FE6408E94F80A7C /* AIAssistantsPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 425F6B46D6B747EFAC0AC86C /* AIAssistantsPreferences.swift */; };
+		3942BBF8C40B43A582F738C2 /* AIAssistantsPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E7BAF10CDC4B80B436BE9B /* AIAssistantsPreferencesTests.swift */; };
+		9A7C8D764D3C4265A9513BCB /* AIRequestIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9A85DF17FE4FC9B245E7F7 /* AIRequestIdentifiers.swift */; };
+		DE5358C016714776B695BFCA /* AIRequestIdentifiers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9A85DF17FE4FC9B245E7F7 /* AIRequestIdentifiers.swift */; };
+		DB077B43F35F49D69F6A7E41 /* AIRequestShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6534401DE9024515AEADDE5E /* AIRequestShared.swift */; };
+		A2824464DA1A4016A22A9052 /* AIRequestShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6534401DE9024515AEADDE5E /* AIRequestShared.swift */; };
+		8B2B4A1D90C24468AD1D8DE7 /* AIRequestSeenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE54FA490013489FB43A0FC2 /* AIRequestSeenStore.swift */; };
+		B3BCF138BA5D4CA5828A5C93 /* AIRequestState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8FEFB04B7AA49B8A179931A /* AIRequestState.swift */; };
+		38C6D74E00DB430AAA76EF1E /* AIRequestSeenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1D1696F8B3146C99F576C8D /* AIRequestSeenStoreTests.swift */; };
 		71552FFE326E4A7FBCBD8E20 /* AIAssistantsConfigPreviews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A349D3318134544809EC8BE /* AIAssistantsConfigPreviews.swift */; };
 		C7829DBFCE344E6295F7743D /* AIAssistantsConfigComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF077C74C75248129B661565 /* AIAssistantsConfigComponents.swift */; };
 		63EF3395C2404BF4B9A989A3 /* AIAssistantSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 714E1D841CE54605B58B3FA1 /* AIAssistantSetupView.swift */; };
@@ -1159,6 +1201,11 @@
 		CA0924000000000000000002 /* GRICalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA0924000000000000000001 /* GRICalculator.swift */; };
 		CA0924000000000000000004 /* GRIView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA0924000000000000000003 /* GRIView.swift */; };
 		CA0924000000000000000006 /* GRICalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA0924000000000000000005 /* GRICalculatorTests.swift */; };
+		6E17CEEA91E3E69C6D626EC8 /* AIRequestWatchFlowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA47CE0E314853B699B94914 /* AIRequestWatchFlowController.swift */; };
+		6A9ACF0722A5DDB6BFE0A04D /* AIRequestWatchFlowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA47CE0E314853B699B94914 /* AIRequestWatchFlowController.swift */; };
+		6B386C900A0258AFCF7A456D /* AIRequestWatchFlowControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B360526D7C46ECD973CCE1C3 /* AIRequestWatchFlowControllerTests.swift */; };
+		4A3EC03640867705006CC66C /* AIRequestFlowModifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = C58B4D51BF7D5A17E508654C /* AIRequestFlowModifier.swift */; };
+		F6EFB29AC67EA83925647CFC /* AIRequestSharedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 226C7FB74E50839187288FD3 /* AIRequestSharedTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1274,6 +1321,46 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestBolusSignals.swift; sourceTree = "<group>"; };
+		4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsOpener.swift; sourceTree = "<group>"; };
+		7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsSession.swift; sourceTree = "<group>"; };
+		DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsSessionTests.swift; sourceTree = "<group>"; };
+		A38C4B335320460AB1B97D38 /* AIRequestLeftText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestLeftText.swift; sourceTree = "<group>"; };
+		88A4C79EE4C6460EA8E5B6BC /* AIRequestWatchMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchMessages.swift; sourceTree = "<group>"; };
+		0CBF78903A7F44DEBB40E3EC /* AIRequestScreensTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestScreensTests.swift; sourceTree = "<group>"; };
+		252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestContextTests.swift; sourceTree = "<group>"; };
+		5A99277089E54EACA79DEEA3 /* AIRequestCarryOutMarker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCarryOutMarker.swift; sourceTree = "<group>"; };
+		F585A07C504B4CEFB0BB23BA /* AIRequestCarryOutMarkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCarryOutMarkerTests.swift; sourceTree = "<group>"; };
+		4E4FCECAF9594AED8364742A /* ServiceRequestReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceRequestReporter.swift; sourceTree = "<group>"; };
+		A4287BE11F88430D82875048 /* AIAssistantsCheckIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsCheckIn.swift; sourceTree = "<group>"; };
+		468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsCheckInTests.swift; sourceTree = "<group>"; };
+		E70F8B809C6045D3905D019B /* AIInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIInbox.swift; sourceTree = "<group>"; };
+		C39BD404EE2143A18D9889FB /* AIInboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIInboxTests.swift; sourceTree = "<group>"; };
+		A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsApprovalSection.swift; sourceTree = "<group>"; };
+		B1BD9E67190442CD94491170 /* AIRequestPhoneBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneBackup.swift; sourceTree = "<group>"; };
+		00EFB0AE3CDE423386F4D18D /* AIRequestPhoneBackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPhoneBackupTests.swift; sourceTree = "<group>"; };
+		57C3B25B38A8437F91FCA786 /* AIRequestWatchAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchAppDelegate.swift; sourceTree = "<group>"; };
+		2EAAD4702AA444B9AC909E33 /* AIRequestWatchCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchCenter.swift; sourceTree = "<group>"; };
+		E3E88F62F39C42059DE4842B /* TrioWatchApp.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TrioWatchApp.entitlements; sourceTree = "<group>"; };
+		AE6E49A2B23C42D899F52140 /* AIRequestWatchLinkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchLinkTests.swift; sourceTree = "<group>"; };
+		230E59A311C34E7385EB0163 /* AIRequestHooks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestHooks.swift; sourceTree = "<group>"; };
+		C2B32119B55E4282B6F7A15F /* AIRequestsRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestsRuntime.swift; sourceTree = "<group>"; };
+		07D29DF7F02B4248A94A5DBF /* AIRequestWatchLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchLink.swift; sourceTree = "<group>"; };
+		87C7F1C73775496FB1321019 /* BaseAIRequestTreatments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BaseAIRequestTreatments.swift; sourceTree = "<group>"; };
+		ABD44087C5754CCFB0F68858 /* AIRequestDisplayText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestDisplayText.swift; sourceTree = "<group>"; };
+		3694296B1F5B4E6CAD6B91F9 /* AIRequestDeliverableDoseTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestDeliverableDoseTests.swift; sourceTree = "<group>"; };
+		3A787F6C5D614FD5B41ECB42 /* AIRequestDisplayTextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestDisplayTextTests.swift; sourceTree = "<group>"; };
+		1173CB4287744CD0BDAEC467 /* AIRequestCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCoordinator.swift; sourceTree = "<group>"; };
+		E64A8211A26747689E38A214 /* AIRequestPorts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestPorts.swift; sourceTree = "<group>"; };
+		669A3BD17346474D98448187 /* AIRequestCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestCoordinatorTests.swift; sourceTree = "<group>"; };
+		39123B18938B4F7589379806 /* AIRequestFakes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestFakes.swift; sourceTree = "<group>"; };
+		425F6B46D6B747EFAC0AC86C /* AIAssistantsPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsPreferences.swift; sourceTree = "<group>"; };
+		81E7BAF10CDC4B80B436BE9B /* AIAssistantsPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsPreferencesTests.swift; sourceTree = "<group>"; };
+		0D9A85DF17FE4FC9B245E7F7 /* AIRequestIdentifiers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestIdentifiers.swift; sourceTree = "<group>"; };
+		6534401DE9024515AEADDE5E /* AIRequestShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestShared.swift; sourceTree = "<group>"; };
+		EE54FA490013489FB43A0FC2 /* AIRequestSeenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestSeenStore.swift; sourceTree = "<group>"; };
+		B8FEFB04B7AA49B8A179931A /* AIRequestState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestState.swift; sourceTree = "<group>"; };
+		D1D1696F8B3146C99F576C8D /* AIRequestSeenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestSeenStoreTests.swift; sourceTree = "<group>"; };
 		7A349D3318134544809EC8BE /* AIAssistantsConfigPreviews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsConfigPreviews.swift; sourceTree = "<group>"; };
 		CF077C74C75248129B661565 /* AIAssistantsConfigComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsConfigComponents.swift; sourceTree = "<group>"; };
 		714E1D841CE54605B58B3FA1 /* AIAssistantSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantSetupView.swift; sourceTree = "<group>"; };
@@ -2409,6 +2496,10 @@
 		CA0924000000000000000001 /* GRICalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GRICalculator.swift; sourceTree = "<group>"; };
 		CA0924000000000000000003 /* GRIView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GRIView.swift; sourceTree = "<group>"; };
 		CA0924000000000000000005 /* GRICalculatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GRICalculatorTests.swift; sourceTree = "<group>"; };
+		DA47CE0E314853B699B94914 /* AIRequestWatchFlowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchFlowController.swift; sourceTree = "<group>"; };
+		B360526D7C46ECD973CCE1C3 /* AIRequestWatchFlowControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestWatchFlowControllerTests.swift; sourceTree = "<group>"; };
+		C58B4D51BF7D5A17E508654C /* AIRequestFlowModifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestFlowModifier.swift; sourceTree = "<group>"; };
+		226C7FB74E50839187288FD3 /* AIRequestSharedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestSharedTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -2508,9 +2599,80 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		85CE324C446C4CBCB4FEB73D /* AIRequests */ = {
+			isa = PBXGroup;
+			children = (
+				C58B4D51BF7D5A17E508654C /* AIRequestFlowModifier.swift */,
+				57C3B25B38A8437F91FCA786 /* AIRequestWatchAppDelegate.swift */,
+				2EAAD4702AA444B9AC909E33 /* AIRequestWatchCenter.swift */,
+			);
+			path = AIRequests;
+			sourceTree = "<group>";
+		};
+		1AC02AB3F3294C59B759E4A3 /* AIRequests */ = {
+			isa = PBXGroup;
+			children = (
+				DA47CE0E314853B699B94914 /* AIRequestWatchFlowController.swift */,
+				88A4C79EE4C6460EA8E5B6BC /* AIRequestWatchMessages.swift */,
+				0D9A85DF17FE4FC9B245E7F7 /* AIRequestIdentifiers.swift */,
+				6534401DE9024515AEADDE5E /* AIRequestShared.swift */,
+			);
+			path = AIRequests;
+			sourceTree = "<group>";
+		};
+		F331CE00DCA84A18B10AFE87 /* Requests */ = {
+			isa = PBXGroup;
+			children = (
+				8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */,
+				4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */,
+				7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */,
+				A38C4B335320460AB1B97D38 /* AIRequestLeftText.swift */,
+				5A99277089E54EACA79DEEA3 /* AIRequestCarryOutMarker.swift */,
+				4E4FCECAF9594AED8364742A /* ServiceRequestReporter.swift */,
+				A4287BE11F88430D82875048 /* AIAssistantsCheckIn.swift */,
+				E70F8B809C6045D3905D019B /* AIInbox.swift */,
+				B1BD9E67190442CD94491170 /* AIRequestPhoneBackup.swift */,
+				230E59A311C34E7385EB0163 /* AIRequestHooks.swift */,
+				C2B32119B55E4282B6F7A15F /* AIRequestsRuntime.swift */,
+				07D29DF7F02B4248A94A5DBF /* AIRequestWatchLink.swift */,
+				87C7F1C73775496FB1321019 /* BaseAIRequestTreatments.swift */,
+				ABD44087C5754CCFB0F68858 /* AIRequestDisplayText.swift */,
+				1173CB4287744CD0BDAEC467 /* AIRequestCoordinator.swift */,
+				E64A8211A26747689E38A214 /* AIRequestPorts.swift */,
+				425F6B46D6B747EFAC0AC86C /* AIAssistantsPreferences.swift */,
+				EE54FA490013489FB43A0FC2 /* AIRequestSeenStore.swift */,
+				B8FEFB04B7AA49B8A179931A /* AIRequestState.swift */,
+			);
+			path = Requests;
+			sourceTree = "<group>";
+		};
+		7ADFEF598A034B3EAB259796 /* Requests */ = {
+			isa = PBXGroup;
+			children = (
+				226C7FB74E50839187288FD3 /* AIRequestSharedTests.swift */,
+				B360526D7C46ECD973CCE1C3 /* AIRequestWatchFlowControllerTests.swift */,
+				DC447C38300907FAD66D3B20 /* AIRequestTreatmentsSessionTests.swift */,
+				0CBF78903A7F44DEBB40E3EC /* AIRequestScreensTests.swift */,
+				252CE48B9086434E851BCE68 /* AIRequestContextTests.swift */,
+				F585A07C504B4CEFB0BB23BA /* AIRequestCarryOutMarkerTests.swift */,
+				468367C7922D4FA09DB9121C /* AIAssistantsCheckInTests.swift */,
+				C39BD404EE2143A18D9889FB /* AIInboxTests.swift */,
+				00EFB0AE3CDE423386F4D18D /* AIRequestPhoneBackupTests.swift */,
+				AE6E49A2B23C42D899F52140 /* AIRequestWatchLinkTests.swift */,
+				3694296B1F5B4E6CAD6B91F9 /* AIRequestDeliverableDoseTests.swift */,
+				3A787F6C5D614FD5B41ECB42 /* AIRequestDisplayTextTests.swift */,
+				669A3BD17346474D98448187 /* AIRequestCoordinatorTests.swift */,
+				39123B18938B4F7589379806 /* AIRequestFakes.swift */,
+				81E7BAF10CDC4B80B436BE9B /* AIAssistantsPreferencesTests.swift */,
+				D1D1696F8B3146C99F576C8D /* AIRequestSeenStoreTests.swift */,
+			);
+			path = Requests;
+			sourceTree = "<group>";
+		};
 		3DAA3B455744249FFFF53168 /* View */ = {
 			isa = PBXGroup;
 			children = (
+				A675266DE93644D0BC3EC86E /* AIAssistantsApprovalSection.swift */,
 				7A349D3318134544809EC8BE /* AIAssistantsConfigPreviews.swift */,
 				CF077C74C75248129B661565 /* AIAssistantsConfigComponents.swift */,
 				714E1D841CE54605B58B3FA1 /* AIAssistantSetupView.swift */,
@@ -2540,6 +2702,7 @@
 		D060BBDD4AE7733E22CFA88D /* AIAssistants */ = {
 			isa = PBXGroup;
 			children = (
+				F331CE00DCA84A18B10AFE87 /* Requests */,
 				C138515B3CDFDCF581EFE5F3 /* PKCE.swift */,
 				3178288173E6D79E3E0FB93D /* AppleNonce.swift */,
 				87412BDB8F603E2FE0517D10 /* AIAssistantsAuthClient.swift */,
@@ -2555,6 +2718,7 @@
 		22FA7FA9147B21ECB1CDD2B9 /* AIAssistantsTests */ = {
 			isa = PBXGroup;
 			children = (
+				7ADFEF598A034B3EAB259796 /* Requests */,
 				E53E196F652544AC804B3DCE /* AIAssistantsScreenRenderTests.swift */,
 				C37C354EBA6549C8B31F178C /* AIAssistantsFlowLayoutTests.swift */,
 				69FBC552240E48288AF7D580 /* AIAssistantsConfigDisplayTests.swift */,
@@ -3499,6 +3663,7 @@
 		388E5A5925B6F0250019842D /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				1AC02AB3F3294C59B759E4A3 /* AIRequests */,
 				AD3D28EFB64C432F48F5F0C4 /* CalibrationTestState.swift */,
 				CA4F586CF37541FDD7D0DA0F /* GlucoseTabletBrand.swift */,
 				BD11795B2F4E22C100F90001 /* GlucoseAlerts */,
@@ -4552,6 +4717,8 @@
 		BDFF7A9C2D25FA730016C40C /* Trio Watch App Extension */ = {
 			isa = PBXGroup;
 			children = (
+				85CE324C446C4CBCB4FEB73D /* AIRequests */,
+				E3E88F62F39C42059DE4842B /* TrioWatchApp.entitlements */,
 				DDFF204D2DB2C00B00AB8A96 /* WatchStateSnapshot.swift */,
 				DDFF20492DB29EF500AB8A96 /* WatchLogger.swift */,
 				BDA25EE52D260D5800035F34 /* WatchState.swift */,
@@ -5858,6 +6025,30 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6E17CEEA91E3E69C6D626EC8 /* AIRequestWatchFlowController.swift in Sources */,
+				460278C2EB8B79E4B5594F73 /* AIRequestBolusSignals.swift in Sources */,
+				5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */,
+				A89895B2F0920F33CB2453C1 /* AIRequestTreatmentsSession.swift in Sources */,
+				D60EBCB6909343009642A7A4 /* AIRequestLeftText.swift in Sources */,
+				3342E99511A446CB8233C894 /* AIRequestWatchMessages.swift in Sources */,
+				F4E63F59A0994484BA744CD4 /* AIRequestCarryOutMarker.swift in Sources */,
+				6107468383D74CF1A7B296A7 /* ServiceRequestReporter.swift in Sources */,
+				71E36E3AFED1426B860A1BCC /* AIAssistantsCheckIn.swift in Sources */,
+				6BDBA53B6BAA43EFA432E7DE /* AIInbox.swift in Sources */,
+				C6EE0CB0DFA64C61BA729E53 /* AIAssistantsApprovalSection.swift in Sources */,
+				072A5F0C958442B5BAD37A48 /* AIRequestPhoneBackup.swift in Sources */,
+				F85AD05FDC3F4F50BD78370F /* AIRequestHooks.swift in Sources */,
+				6965B6705E6F4083BA0A45E9 /* AIRequestsRuntime.swift in Sources */,
+				7E774722BCBA4D5FB96F11CA /* AIRequestWatchLink.swift in Sources */,
+				9A61BCA1BD3E495FAA20783F /* BaseAIRequestTreatments.swift in Sources */,
+				ED1D533C74084C15BF37577A /* AIRequestDisplayText.swift in Sources */,
+				0960AC84A6B94BE0A7FBE348 /* AIRequestCoordinator.swift in Sources */,
+				D44C9F48586E4F3E88E8EFE0 /* AIRequestPorts.swift in Sources */,
+				EF40907D1FE6408E94F80A7C /* AIAssistantsPreferences.swift in Sources */,
+				DE5358C016714776B695BFCA /* AIRequestIdentifiers.swift in Sources */,
+				A2824464DA1A4016A22A9052 /* AIRequestShared.swift in Sources */,
+				8B2B4A1D90C24468AD1D8DE7 /* AIRequestSeenStore.swift in Sources */,
+				B3BCF138BA5D4CA5828A5C93 /* AIRequestState.swift in Sources */,
 				71552FFE326E4A7FBCBD8E20 /* AIAssistantsConfigPreviews.swift in Sources */,
 				C7829DBFCE344E6295F7743D /* AIAssistantsConfigComponents.swift in Sources */,
 				63EF3395C2404BF4B9A989A3 /* AIAssistantSetupView.swift in Sources */,
@@ -6685,6 +6876,22 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F6EFB29AC67EA83925647CFC /* AIRequestSharedTests.swift in Sources */,
+				6B386C900A0258AFCF7A456D /* AIRequestWatchFlowControllerTests.swift in Sources */,
+				4A86AF5A4BDCF4AFAA605E06 /* AIRequestTreatmentsSessionTests.swift in Sources */,
+				4F794E8EEE0E4BE39E335CD6 /* AIRequestScreensTests.swift in Sources */,
+				3F4DC5F2F4DE4EEE9846B260 /* AIRequestContextTests.swift in Sources */,
+				37927C430E4A41EA9424AD39 /* AIRequestCarryOutMarkerTests.swift in Sources */,
+				F21153A53E244F46B14559FB /* AIAssistantsCheckInTests.swift in Sources */,
+				6972F71FF2EE43D394392953 /* AIInboxTests.swift in Sources */,
+				DC9C0ECE70544B13BA2851A8 /* AIRequestPhoneBackupTests.swift in Sources */,
+				675DFCC1E177432685C1AA88 /* AIRequestWatchLinkTests.swift in Sources */,
+				DB4CFD6984D94957A2BC5FC3 /* AIRequestDeliverableDoseTests.swift in Sources */,
+				F89F3D3F0C0D4A80BA085E33 /* AIRequestDisplayTextTests.swift in Sources */,
+				93E1BF66A33241F4837A736E /* AIRequestCoordinatorTests.swift in Sources */,
+				93970FF8484743128DC966EF /* AIRequestFakes.swift in Sources */,
+				3942BBF8C40B43A582F738C2 /* AIAssistantsPreferencesTests.swift in Sources */,
+				38C6D74E00DB430AAA76EF1E /* AIRequestSeenStoreTests.swift in Sources */,
 				086EBB40FFC84A5698F82B0B /* AIAssistantsScreenRenderTests.swift in Sources */,
 				D904957993664AE4866D1995 /* AIAssistantsFlowLayoutTests.swift in Sources */,
 				ED9C86B606C34C4CA97CBEDA /* AIAssistantsConfigDisplayTests.swift in Sources */,
@@ -6834,6 +7041,13 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4A3EC03640867705006CC66C /* AIRequestFlowModifier.swift in Sources */,
+				6A9ACF0722A5DDB6BFE0A04D /* AIRequestWatchFlowController.swift in Sources */,
+				C0A257AA5DE2422D90FA3C71 /* AIRequestWatchMessages.swift in Sources */,
+				7DAC09FE8C7C4F9F8670B8F2 /* AIRequestWatchAppDelegate.swift in Sources */,
+				34AB91296BC84D2E9CAAB57D /* AIRequestWatchCenter.swift in Sources */,
+				9A7C8D764D3C4265A9513BCB /* AIRequestIdentifiers.swift in Sources */,
+				DB077B43F35F49D69F6A7E41 /* AIRequestShared.swift in Sources */,
 				BDA25F222D26D62800035F34 /* BolusInputView.swift in Sources */,
 				BDFF7A882D25F97D0016C40C /* TrioMainWatchView.swift in Sources */,
 				BDA25F202D26D5FE00035F34 /* CarbsInputView.swift in Sources */,
@@ -7311,6 +7525,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch App Extension/TrioWatchApp.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -7348,6 +7563,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CODE_SIGN_ENTITLEMENTS = "Trio Watch App Extension/TrioWatchApp.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

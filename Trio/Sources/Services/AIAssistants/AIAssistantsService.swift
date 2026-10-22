@@ -49,14 +49,18 @@ final class BaseAIAssistantsService: AIAssistantsService {
     private var lastSentStatus: StatusSnapshot?
     /// Ends the background task that keeps Trio running from a trigger until its upload.
     private var endPendingActivity: (() -> Void)?
+    /// The check-ins, which use the link on their own, so unlinking stops them as it stops the uploads. Set once
+    /// the runtime that makes them is built.
+    var checkIn: AIAssistantsCheckIn?
 
     /// Uses its own device-only Keychain rather than the shared one, which syncs through iCloud.
     convenience init(resolver: Resolver) {
         let store = AIAssistantsTokenStore.deviceOnly()
         let apsManager = resolver.resolve(APSManager.self)!
         let settingsManager = resolver.resolve(SettingsManager.self)!
+        let api = AIAssistantsAPI(store: store, auth: AIAssistantsAuthClient())
         self.init(
-            api: AIAssistantsAPI(store: store, auth: AIAssistantsAuthClient()),
+            api: api,
             store: store,
             builder: AIAssistantsSnapshotBuilder(
                 context: CoreDataStack.shared.newTaskContext(),
@@ -69,10 +73,26 @@ final class BaseAIAssistantsService: AIAssistantsService {
                 entityChanges: CoreDataStack.shared.entityChangePublisher
             ),
             debounce: .seconds(10),
-            deviceRegistration: { BaseAIAssistantsService.currentDeviceRegistration() },
+            deviceRegistration: {
+                BaseAIAssistantsService.currentDeviceRegistration(preferences: AIRequestsRuntime.shared?.preferences.value)
+            },
             beginBackgroundActivity: BaseAIAssistantsService.beginBackgroundTask(named:),
             now: Date.init
         )
+
+        // A new watch push token needs the device registered again. A check-in runs while the API has the
+        // address and tokens it sends with; signing out clears the tokens.
+        let runtime = AIRequestsRuntime(
+            resolver: resolver,
+            api: api,
+            isLinked: { store.baseURL != nil && store.tokens != nil },
+            loopRuns: apsManager.lastLoopDateSubject.eraseToAnyPublisher(),
+            uploadNow: { [weak self] in Task { await self?.uploadNow() } }
+        )
+        AIRequestsRuntime.shared = runtime
+        checkIn = runtime.checkIn
+        uploadWhenRegistrationPreferencesChange(runtime.preferences.changes.eraseToAnyPublisher())
+        Task { await runtime.coordinator.start() }
     }
 
     init(
@@ -102,6 +122,9 @@ final class BaseAIAssistantsService: AIAssistantsService {
             .debounce(for: debounce, scheduler: queue)
             .sink { [weak self] in self?.triggered() }
             .store(in: &subscriptions)
+        api.signedOut
+            .sink { [weak self] baseURL in self?.signedOut(of: baseURL) }
+            .store(in: &subscriptions)
     }
 
     func completeLink(baseURL: URL, tokens: AIAssistantsTokens, account: AIAssistantsAccount?) async {
@@ -121,6 +144,9 @@ final class BaseAIAssistantsService: AIAssistantsService {
     /// Trio forgets the link even if that request fails, for example when offline.
     @discardableResult func unlink() async -> Bool {
         await stopUploads()
+        await checkIn?.pause()
+        // A check-in asked for from here on finds Trio not linked.
+        defer { checkIn?.resume() }
         var deleted = true
         do {
             try await api.deleteDevice()
@@ -233,7 +259,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
             uploadLock.withLock { lastSentStatus = status }
             finish(host: host) { _ in .linked(host: host, lastUpload: self.now(), lastError: nil) }
         } catch AIAssistantsAPIError.signedOut {
-            debug(.service, "AI Assistants: signed out of \(host)")
+            // The client has told `signedOut(of:)` too, unless another call found out first.
             finish(host: host) { _ in .signedOut(host: host) }
         } catch {
             debug(.service, "AI Assistants: upload failed: \(error)")
@@ -242,8 +268,15 @@ final class BaseAIAssistantsService: AIAssistantsService {
         }
     }
 
-    /// Applies an upload's result, unless the link changed while it ran (unlinked, or linked
-    /// to another address). `newState` gets the current last upload time.
+    /// Any call to the service can find Trio signed out: an upload, a check-in or a state report.
+    private func signedOut(of baseURL: URL) {
+        let host = Self.host(of: baseURL)
+        debug(.service, "AI Assistants: signed out of \(host)")
+        finish(host: host) { _ in .signedOut(host: host) }
+    }
+
+    /// Applies the result of an upload or a sign-out, unless the link changed meanwhile (unlinked, or
+    /// linked to another address). `newState` gets the current last upload time.
     private func finish(host: String, _ newState: (Date?) -> AIAssistantsLinkState) {
         guard case let .linked(currentHost, lastUpload, _) = state.value, currentHost == host else { return }
         state.send(newState(lastUpload))
@@ -277,6 +310,24 @@ final class BaseAIAssistantsService: AIAssistantsService {
     }
 
     // MARK: - App wiring
+
+    /// Whether meal requests are allowed, which decides whether the watch is in it, and the wake-up push type are part
+    /// of the device registration, so a new value is uploaded to tell the service. The first value is the current one,
+    /// and a repeat isn't a change.
+    func uploadWhenRegistrationPreferencesChange(_ preferences: AnyPublisher<AIAssistantsPreferences, Never>) {
+        preferences
+            .map { ($0.allowsMealRequests, $0.wakePushType) }
+            .removeDuplicates { $0 == $1 }
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task {
+                    if let self, case .linked = self.state.value {
+                        await self.uploadNow()
+                    }
+                }
+            }
+            .store(in: &subscriptions)
+    }
 
     /// Loop runs, loop failures (which don't change `lastLoopDate`), and saves of the rows a
     /// snapshot reads.
@@ -317,14 +368,30 @@ final class BaseAIAssistantsService: AIAssistantsService {
 
     /// This phone's push registration, which Trio Remote Control stores on every launch.
     /// `nil` until the phone has a push token. The version is the one Settings shows
-    /// (1.0.2.12), not the build number.
-    static func currentDeviceRegistration(defaults: UserDefaults = .standard, bundle: Bundle = .main) -> DeviceRegistration? {
+    /// (1.0.2.12), not the build number. The watch is included once it has sent its push token, while
+    /// the `preferences` allow meal requests: the service only pushes requests to it. The wake-up push type is
+    /// included when there are `preferences`.
+    static func currentDeviceRegistration(
+        defaults: UserDefaults = .standard,
+        bundle: Bundle = .main,
+        preferences: AIAssistantsPreferences? = nil
+    ) -> DeviceRegistration? {
         guard let token = defaults.string(forKey: "deviceToken"), !token.isEmpty else { return nil }
+        let bundleId = bundle.bundleIdentifier ?? ""
+        let environment = defaults.bool(forKey: "isAPNSProduction") ? "production" : "sandbox"
+        let watchToken = preferences?.allowsMealRequests == true
+            ? defaults.string(forKey: AIRequestWatchLink.watchPushTokenKey).flatMap { $0.isEmpty ? nil : $0 }
+            : nil
         return DeviceRegistration(
             apnsToken: token,
-            bundleId: bundle.bundleIdentifier ?? "",
-            apnsEnvironment: defaults.bool(forKey: "isAPNSProduction") ? "production" : "sandbox",
-            appVersion: bundle.appDevVersion ?? bundle.releaseVersionNumber ?? ""
+            bundleId: bundleId,
+            apnsEnvironment: environment,
+            appVersion: bundle.appDevVersion ?? bundle.releaseVersionNumber ?? "",
+            // The service pushes to the watch through the phone's APNs environment.
+            watch: watchToken.map {
+                WatchRegistration(apnsToken: $0, bundleId: "\(bundleId).watchkitapp", apnsEnvironment: environment)
+            },
+            wakePushType: preferences?.wakePushType.rawValue
         )
     }
 

@@ -16,10 +16,12 @@ extension AIAssistantsConfig {
                     Text("AI Assistants")
                         .font(.title2.bold())
                         .accessibilityAddTraits(.isHeader)
-                    Text("Ask ChatGPT, Claude or Grok about your glucose, insulin and meals.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
+                    Text(
+                        "Ask ChatGPT, Claude or Grok about your glucose and insulin, or have them log a meal for you to approve."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)

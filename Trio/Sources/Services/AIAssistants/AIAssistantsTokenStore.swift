@@ -11,6 +11,8 @@ final class AIAssistantsTokenStore {
     }
 
     private let keychain: Keychain
+    /// Orders the token writes and `clear()`. The device API and the service share one store.
+    private let lock = NSLock()
 
     init(keychain: Keychain) {
         self.keychain = keychain
@@ -38,6 +40,21 @@ final class AIAssistantsTokenStore {
 
     /// Setting `nil` removes the key.
     var tokens: AIAssistantsTokens? {
+        get { lock.withLock { storedTokens } }
+        set { lock.withLock { storedTokens = newValue } }
+    }
+
+    /// Sets the tokens only if they are still `old`, and says whether it did. A refresh that finishes after Trio
+    /// was unlinked, or linked again, doesn't write its tokens over that.
+    func replaceTokens(_ old: AIAssistantsTokens, with new: AIAssistantsTokens?) -> Bool {
+        lock.withLock {
+            guard storedTokens == old else { return false }
+            storedTokens = new
+            return true
+        }
+    }
+
+    private var storedTokens: AIAssistantsTokens? {
         get {
             try? (keychain.getValue(AIAssistantsTokens.self, forKey: Key.tokens) as Result<AIAssistantsTokens?, KeychainError>)
                 .get()
@@ -67,8 +84,10 @@ final class AIAssistantsTokenStore {
     }
 
     func clear() {
-        for key in [Key.baseURL, Key.tokens, Key.lastDevice, Key.account] {
-            keychain.removeObject(forKey: key)
+        lock.withLock {
+            for key in [Key.baseURL, Key.tokens, Key.lastDevice, Key.account] {
+                keychain.removeObject(forKey: key)
+            }
         }
     }
 }

@@ -19,6 +19,11 @@ extension AIAssistantsConfig {
         @Published private(set) var copyCount = 0
         @Published private(set) var copiedMessage = ""
 
+        /// What the request settings on the screen show. Kept in sync with `preferencesStore` once `subscribe()` ran.
+        @Published var preferences = AIAssistantsPreferences()
+        /// Where the request preferences are kept: the request runtime's store, unless a test sets another.
+        var preferencesStore: AIAssistantsPreferencesStore? = AIRequestsRuntime.shared?.preferences
+
         var pasteboard: (String) -> Void = { UIPasteboard.general.string = $0 }
         /// Tells VoiceOver what was copied; the confirmation on screen is hidden from it.
         var announce: (String) -> Void = { AccessibilityNotification.Announcement($0).post() }
@@ -35,6 +40,33 @@ extension AIAssistantsConfig {
             service.account
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] in self?.account = $0 }
+                .store(in: &lifetime)
+            subscribeToPreferences()
+        }
+
+        /// Both ways, and neither echoes: each side writes only a value that differs from what it has. A change
+        /// in the store reaches the screen on the main queue as the store's value of that moment, not the value
+        /// that was sent. With the sent values, two changes made before the first one arrives would overwrite
+        /// each other back and forth without end.
+        private func subscribeToPreferences() {
+            guard let store = preferencesStore else { return }
+            preferences = store.value
+            store.changes
+                .dropFirst()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    let latest = store.value
+                    guard let self, self.preferences != latest else { return }
+                    self.preferences = latest
+                }
+                .store(in: &lifetime)
+            $preferences
+                .dropFirst()
+                .removeDuplicates()
+                .sink { preferences in
+                    guard store.value != preferences else { return }
+                    store.value = preferences
+                }
                 .store(in: &lifetime)
         }
 
