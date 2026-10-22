@@ -881,6 +881,45 @@ private func pizzaShown(units: Decimal) -> AIRequestShown {
         #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.watch), source: "ChatGPT")])
     }
 
+    @Test func submitAfterTheWatchTookTheRequestLogsNothing() async throws {
+        let state = await openSheet()
+        // The watch's confirm took the request a moment before Log was pressed, and hasn't taken it out of pending yet.
+        #expect(h.coordinator.take("r1", by: .watch))
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        state.amount = 2
+        state.date = h.now
+
+        // Upstream's submit doesn't run, so nothing is logged or given here, and the sheet closes at once.
+        #expect(session.refusesSubmit(from: state))
+        #expect(router.sent == [.treatmentView, nil])
+        #expect(deadlines.value.isEmpty)
+
+        // The watch's confirm carries it out, and once the sheet hears, the notice says so.
+        let report = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+        #expect(report == .delivering(shown: pizzaShown(units: d("1.2"))))
+        await flushMainQueue()
+        await flushMainQueue()
+        #expect(try #require(center.added.first).content.title == "Logged on your watch")
+        #expect(center.added.count == 1)
+
+        session.sheetDisappeared()
+        await expectOnlyTheWatchsReport()
+    }
+
+    @Test func submitTakesTheRequestBeforeItsClaimArrives() async {
+        let state = await openSheet()
+        state.amount = 2
+        state.date = h.now
+        #expect(!session.refusesSubmit(from: state))
+
+        // A watch confirm that reaches the coordinator before the iPhone's claim, or after it, carries nothing out.
+        let report = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+        #expect(report == nil)
+        #expect(h.treatments.storedCarbs.isEmpty)
+        #expect(h.treatments.enacted.isEmpty)
+        #expect(h.coordinator.taker(of: "r1") == .phone)
+    }
+
     @Test func submitWhenAnotherRequestIsPendingLogsNothing() async throws {
         let state = await openSheet()
         // A newer request replaces this one, and the wearer presses Log before the sheet hears.

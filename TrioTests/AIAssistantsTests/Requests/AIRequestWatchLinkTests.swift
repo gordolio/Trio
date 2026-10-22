@@ -555,6 +555,20 @@ private final class RelayRig {
         ])
     }
 
+    @Test func confirmAfterTheIPhonesLogTookItAcknowledgesTheIPhone() async {
+        let rig = RelayRig()
+        await rig.ask("r1")
+        // The iPhone's Log took the request, and its claim hasn't reached the coordinator yet.
+        #expect(rig.harness.coordinator.take("r1", by: .phone))
+
+        await rig.relay.confirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+
+        #expect(rig.harness.treatments.storedCarbs.isEmpty && rig.harness.treatments.enacted.isEmpty)
+        #expect(rig.acknowledgments == [
+            SentAcknowledgment(acknowledged: false, message: "Logged on your iPhone", ackCode: "failure")
+        ])
+    }
+
     @Test func lateConfirmAcknowledgesWhyTheRequestEnded() async {
         let rig = RelayRig()
         await rig.ask("r1")

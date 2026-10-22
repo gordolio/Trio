@@ -161,9 +161,11 @@ import UserNotifications
     /// why, as when it hears first. A sheet already closing for its request is refused too, and so is a second Log on a
     /// sheet that submitted its request.
     ///
-    /// Otherwise, on a request's sheet, the iPhone claims the request, and the session watches what comes of the
-    /// submit (see `Submission`). If the claim still fails, as when the watch's confirm reached the coordinator within
-    /// the same moment, the submit goes ahead as the wearer's own, and nothing more is done for the request.
+    /// Otherwise, on a request's sheet, the iPhone takes the request at once, through the lock the watch's confirm also
+    /// takes it through, so only one device carries it out. If the watch took it first, in the moment before the
+    /// request left pending, the submit is refused as above. The iPhone then claims the request, and the session
+    /// watches what comes of the submit (see `Submission`). If the claim still fails, as when the request's time ran
+    /// out in that moment, the submit goes ahead as the wearer's own, and nothing more is done for the request.
     func refusesSubmit(from state: Treatments.StateModel) -> Bool {
         guard let sheet = requestSheet, sheet.state === state else { return false }
         let id = sheet.requestID
@@ -187,6 +189,16 @@ import UserNotifications
         }
         // Nothing to log or give: the sheet only closes, which declines the request.
         guard state.carbs > 0 || state.fat > 0 || state.protein > 0 || state.amount > 0 else { return false }
+        // Taken here, before upstream's submit goes ahead: the claim below reaches the coordinator a moment later, and
+        // a watch confirm that reaches it first is refused. A watch confirm that took it first wins instead.
+        guard coordinator.take(id, by: .phone) else {
+            debug(.service, "AI requests: the watch took \(id) as its Treatments sheet's Log was pressed, so it logs nothing")
+            active.leftElsewhere = true
+            self.active = active
+            noticeOwed = active.pending
+            closeSheet()
+            return true
+        }
 
         let claim = Task { await coordinator.claim(id: id, on: .phone) }
         let submission = Submission(id: id, state: state, submittedAt: now(), claim: claim, coordinator: coordinator)

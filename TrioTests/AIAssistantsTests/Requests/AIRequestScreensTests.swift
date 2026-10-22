@@ -200,6 +200,31 @@ import Testing
         #expect(h.reporter.states == ["r1:pending"])
     }
 
+    @Test func watchConfirmAfterTheIPhonesLogTookItLogsNothing() async {
+        // The iPhone's Log took the request, and the watch's confirm reaches the coordinator before the iPhone's claim.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(h.coordinator.take("r1", by: .phone))
+        let report = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+        #expect(report == nil)
+        #expect(h.treatments.storedCarbs.isEmpty)
+        #expect(h.treatments.enacted.isEmpty)
+        #expect(h.coordinator.current.value?.request.id == "r1")
+
+        // The iPhone's claim gets the request when it arrives.
+        #expect(await h.coordinator.claim(id: "r1", on: .phone))
+        #expect(h.left == [LeftEvent(id: "r1", left: .claimed(.phone), source: "ChatGPT")])
+    }
+
+    @Test func iPhonesLogAfterTheWatchTookItIsRefused() async {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil)) != nil)
+        #expect(h.coordinator.taker(of: "r1") == .watch)
+        #expect(!h.coordinator.take("r1", by: .phone))
+        #expect(await h.coordinator.claim(id: "r1", on: .phone) == false)
+    }
+
     @Test func watchConfirmLogsTheRequestsExactGrams() async {
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1", carbs: d("82.5"), fat: 10, protein: 5), via: .service)

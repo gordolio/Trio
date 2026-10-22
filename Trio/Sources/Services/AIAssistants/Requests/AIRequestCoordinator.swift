@@ -18,6 +18,10 @@ actor AIRequestCoordinator {
     /// Why the pending request left pending, with its ID and who asked. It's sent the moment the request leaves, for
     /// any reason, before anything awaits, so a device that has it open hears at once.
     nonisolated let left: PassthroughSubject<(id: String, left: AIRequestLeft, source: String), Never>
+    /// Which device took each recent request to carry it out. The iPhone's Log takes the request through it at once,
+    /// before upstream's submit goes ahead, and the watch's confirm takes it through the same lock before it's carried
+    /// out, so a confirm that reaches the coordinator in the moment before the iPhone's claim can't carry it out too.
+    private nonisolated let takers = AIRequestTakers()
 
     private let seen: AIRequestSeenStore
     private let pendingFileURL: URL
@@ -394,8 +398,25 @@ actor AIRequestCoordinator {
         }
     }
 
-    /// Takes the request out of pending for the device that claimed it, or returns `nil` unless `id` is pending.
+    /// Takes the request for `side`, at once, from any thread: the iPhone's Log takes it before upstream's submit goes
+    /// ahead. Returns `false` if the other device took it first. Taking it doesn't claim it: the claim, or the watch's
+    /// confirm, still needs it pending.
+    nonisolated func take(_ id: String, by side: AIRequestAnswerSide) -> Bool {
+        takers.take(id, by: side)
+    }
+
+    /// The device that took the request, if one did.
+    nonisolated func taker(of id: String) -> AIRequestAnswerSide? {
+        takers.taker(of: id)
+    }
+
+    /// Takes the request out of pending for the device that claimed it, or returns `nil` unless `id` is pending and
+    /// the other device didn't take it first.
     private func takeClaimed(id: String, on side: AIRequestAnswerSide) async -> PendingAIRequest? {
+        guard take(id, by: side) else {
+            debug(.service, "AI requests: the \(side.rawValue) couldn't claim \(id), the other device took it")
+            return nil
+        }
         // A request whose time is up, with no screen holding it, can't be claimed.
         await expireIfDue()
         guard let pending = takePending(.claimed(side), id: id) else {
@@ -724,5 +745,33 @@ actor AIRequestCoordinator {
     private func dropOldFinalReports() {
         let cutoff = now().addingTimeInterval(-Self.finalReportRetention)
         finalReports.removeAll { $0.reportedAt < cutoff }
+    }
+}
+
+/// Which device took each of the last requests to carry it out, under a lock, so either device can take one from any
+/// thread. The first device to take a request has it; the other is refused.
+private final class AIRequestTakers: @unchecked Sendable {
+    /// How many requests it remembers: far more than are ever pending around the same time.
+    private static let kept = 20
+
+    private let lock = NSLock()
+    private var takers: [(id: String, side: AIRequestAnswerSide)] = []
+
+    /// Takes the request for `side`. Returns `false` if the other device took it first.
+    func take(_ id: String, by side: AIRequestAnswerSide) -> Bool {
+        lock.withLock {
+            if let taker = takers.last(where: { $0.id == id }) {
+                return taker.side == side
+            }
+            takers.append((id, side))
+            if takers.count > Self.kept {
+                takers.removeFirst(takers.count - Self.kept)
+            }
+            return true
+        }
+    }
+
+    func taker(of id: String) -> AIRequestAnswerSide? {
+        lock.withLock { takers.last { $0.id == id }?.side }
     }
 }

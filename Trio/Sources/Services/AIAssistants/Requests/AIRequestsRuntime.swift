@@ -207,6 +207,10 @@ final class WatchRelay {
 
     private func lateAcknowledgment(forRequest id: String) -> (success: Bool, message: String)? {
         guard let ending = lock.withLock({ endings.last { $0.id == id } }) else {
+            if current?.coordinator.taker(of: id) == .phone {
+                // The iPhone's Log took it a moment ago, and its claim hasn't taken it out of pending yet.
+                return (false, AIRequestLeftText.headline(for: .claimed(.phone), source: "").headline)
+            }
             // The request ended before Trio launched, or isn't one it knows. Nothing was logged for it.
             return (false, AIRequestLeftText.headline(for: .expired, source: "").headline)
         }
