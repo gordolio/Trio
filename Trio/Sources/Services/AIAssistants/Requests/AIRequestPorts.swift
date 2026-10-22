@@ -156,7 +156,8 @@ protocol AIRequestTreatments: AnyObject {
     /// Stores the request's meal, eaten now, with the note `AI: <source> – <description>`: `carbs`, `fat` and `protein`
     /// are the grams logged.
     func storeCarbs(for request: AIMealRequest, carbs: Decimal, fat: Decimal, protein: Decimal) async throws
-    /// Returns `nil` if the pump accepted the bolus, otherwise the reason it didn't.
+    /// Returns `nil` if the pump accepted the bolus, otherwise the reason it didn't. It returns on the pump's answer,
+    /// without waiting for the loop update that follows a bolus.
     func enactBolus(_ units: Decimal) async -> String?
 }
 

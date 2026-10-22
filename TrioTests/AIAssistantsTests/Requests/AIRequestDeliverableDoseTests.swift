@@ -40,3 +40,50 @@ import Testing
         )
     }
 }
+
+@Suite("AI request pump answer") struct AIRequestPumpAnswerTests {
+    @Test(.timeLimit(.minutes(1))) func answerComesWithoutWaitingForTheLoopUpdate() async {
+        // `APSManager.enactBolus` calls back once the pump accepts the bolus, then runs the loop update before it
+        // returns. The watch's acknowledgement waits for the pump only.
+        let loopUpdate = Gate()
+        let answer = await AIRequestPumpAnswer.first { answer in
+            answer(true, "Bolus enacted successfully.")
+            await loopUpdate.wait()
+        }
+        #expect(answer?.success == true)
+        #expect(answer?.message == "Bolus enacted successfully.")
+        await loopUpdate.open()
+    }
+
+    @Test func refusalIsTheAnswer() async {
+        let answer = await AIRequestPumpAnswer.first { answer in
+            answer(false, "Pump suspended")
+            answer(true, "A second callback isn't the answer")
+        }
+        #expect(answer?.success == false)
+        #expect(answer?.message == "Pump suspended")
+    }
+
+    @Test func returningWithoutACallbackIsNoAnswer() async {
+        // As `enactBolus` does for an amount that isn't above 0.
+        let answer = await AIRequestPumpAnswer.first { _ in }
+        #expect(answer == nil)
+    }
+}
+
+/// Holds whoever waits on it until it's opened.
+private actor Gate {
+    private var isOpen = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        guard !isOpen else { return }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        waiting.forEach { $0.resume() }
+        waiting = []
+    }
+}

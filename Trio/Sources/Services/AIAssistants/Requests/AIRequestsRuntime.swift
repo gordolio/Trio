@@ -157,13 +157,18 @@ final class WatchRelay {
         connection.link.sendDetails(details)
     }
 
-    /// The wearer confirmed on the watch. It's carried out, and the watch is told how it went. A request that isn't
-    /// pending any more is not carried out.
+    /// The wearer confirmed on the watch. It's carried out, and the watch is told how it went as soon as the pump
+    /// answers, before the report to trio-rc, as upstream's watch is. A request that isn't pending any more is not
+    /// carried out.
     func confirm(_ confirm: AIRequestWatchConfirm) async {
         guard let connection = current else { return }
-        let report = await connection.coordinator.carryOutWatchConfirm(confirm)
-        guard let acknowledgment = acknowledgment(for: report, id: confirm.id) else { return }
-        connection.link.sendAcknowledgment(success: acknowledgment.success, message: acknowledgment.message)
+        let link = connection.link
+        let report = await connection.coordinator.carryOutWatchConfirm(confirm) { [weak self] report in
+            self?.acknowledge(report, id: confirm.id, on: link)
+        }
+        if report == nil {
+            acknowledge(nil, id: confirm.id, on: link)
+        }
     }
 
     /// The wearer left the request's screens on the watch, or swiped its notification away.
@@ -173,6 +178,11 @@ final class WatchRelay {
     }
 
     // MARK: Acknowledging
+
+    private func acknowledge(_ report: AIRequestReport?, id: String, on link: AIRequestWatchLink) {
+        guard let acknowledgment = acknowledgment(for: report, id: id) else { return }
+        link.sendAcknowledgment(success: acknowledgment.success, message: acknowledgment.message)
+    }
 
     /// What the watch is told about its confirmation, or `nil` if it's told nothing. `report` is `nil` when the
     /// request wasn't pending, and then nothing was logged: the watch is told why, in the words the other screen

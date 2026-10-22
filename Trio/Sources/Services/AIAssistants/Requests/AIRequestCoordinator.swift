@@ -340,7 +340,13 @@ actor AIRequestCoordinator {
     /// grams, or the watch's when the wearer changed them) with its fat and protein when the wearer's fat and protein
     /// entries are on, then gives the units, at most the max bolus. Returns the final report, or `nil` when the claim
     /// failed, as when the iPhone claimed it first: then nothing is logged.
-    func carryOutWatchConfirm(_ confirm: AIRequestWatchConfirm) async -> AIRequestReport? {
+    ///
+    /// `acknowledge` gets the final report as soon as it's known: on the pump's answer, before the report goes to where
+    /// the request came from, which can wait on the network. It isn't called when the claim failed.
+    func carryOutWatchConfirm(
+        _ confirm: AIRequestWatchConfirm,
+        acknowledge: @Sendable(AIRequestReport) -> Void = { _ in }
+    ) async -> AIRequestReport? {
         ensureLoaded()
         guard let pending = await takeClaimed(id: confirm.id, on: .watch) else { return nil }
         let previous = carryingOut
@@ -349,7 +355,10 @@ actor AIRequestCoordinator {
             return await self.carryOut(pending, confirmed: confirm)
         }
         carryingOut = task
-        return await task.value
+        let report = await task.value
+        acknowledge(report)
+        await reporters[pending.channel]?.report(report, for: pending.request.id)
+        return report
     }
 
     /// The final report of a request the iPhone claimed, from what its Treatments sheet logged and gave. Only the first
@@ -399,7 +408,8 @@ actor AIRequestCoordinator {
 
     /// Carries out the watch's confirmation. A marker on disk says how far it got until the final report. The carbs are
     /// stored, unless there are none to log, then the units are given when above 0. A failed bolus keeps the carbs,
-    /// because the food was eaten. Each report says what was actually done. Returns the final report.
+    /// because the food was eaten. Each report says what was actually done. Returns the final report, saved but not
+    /// reported yet.
     private func carryOut(_ pending: PendingAIRequest, confirmed confirm: AIRequestWatchConfirm) async -> AIRequestReport {
         // Before this confirmation's marker replaces it on disk.
         await reportStoppedCarryOut()
@@ -422,7 +432,7 @@ actor AIRequestCoordinator {
         ))
         // The watch's own carbs, if the wearer changed them, weren't checked when the request arrived.
         if let failure = limitFailure(carbs: carbs, fat: request.fat, protein: request.protein) {
-            return await reportFinal(.failed(reason: failure, carbsLogged: false), id: request.id, via: pending.channel)
+            return recordFinal(.failed(reason: failure, carbsLogged: false), id: request.id)
         }
 
         let carbsLogged = carbs > 0 || fat > 0 || protein > 0
@@ -431,23 +441,19 @@ actor AIRequestCoordinator {
             do {
                 try await treatments.storeCarbs(for: request, carbs: carbs, fat: fat, protein: protein)
             } catch {
-                return await reportFinal(
-                    .failed(reason: error.localizedDescription, carbsLogged: false),
-                    id: request.id,
-                    via: pending.channel
-                )
+                return recordFinal(.failed(reason: error.localizedDescription, carbsLogged: false), id: request.id)
             }
         }
 
         let done = AIRequestShown(carbs: carbs, fat: fat, protein: protein, units: units)
         guard units > 0 else {
-            return await reportFinal(.logged(shown: done), id: request.id, via: pending.channel)
+            return recordFinal(.logged(shown: done), id: request.id)
         }
         mark(.enacting)
         if let reason = await treatments.enactBolus(units) {
-            return await reportFinal(.failed(reason: reason, carbsLogged: carbsLogged), id: request.id, via: pending.channel)
+            return recordFinal(.failed(reason: reason, carbsLogged: carbsLogged), id: request.id)
         }
-        return await reportFinal(.delivering(shown: done), id: request.id, via: pending.channel)
+        return recordFinal(.delivering(shown: done), id: request.id)
     }
 
     /// The dose floored to the hundredths that `shown` has, so what's delivered is the number shown.
@@ -608,12 +614,18 @@ actor AIRequestCoordinator {
         id: String,
         via channel: AIRequestChannel
     ) async -> AIRequestReport {
+        recordFinal(report, id: id)
+        await reporters[channel]?.report(report, for: id)
+        return report
+    }
+
+    /// Saves the request's first final report, without reporting it yet. Returns the report.
+    @discardableResult private func recordFinal(_ report: AIRequestReport, id: String) -> AIRequestReport {
         seen.setOutcome(report.state, for: id)
         saveFinalReport(report, for: id)
         // After the final report is saved, so a launch that finds the marker can tell it was reported.
         removeCarryOutMarker(for: id)
         debug(.service, "AI requests: \(id) is \(report.state.rawValue)")
-        await reporters[channel]?.report(report, for: id)
         return report
     }
 

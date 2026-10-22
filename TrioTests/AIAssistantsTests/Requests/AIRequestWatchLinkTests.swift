@@ -64,6 +64,18 @@ private struct SentAcknowledgment: Equatable {
     let ackCode: String
 }
 
+/// The acknowledgements the watch had been sent when a report reached trio-rc.
+private final class AcknowledgmentsAtReport: @unchecked Sendable {
+    private let lock = NSLock()
+    private var acknowledgments: [SentAcknowledgment]?
+
+    var recorded: [SentAcknowledgment]? { lock.withLock { acknowledgments } }
+
+    func record(_ sent: [SentAcknowledgment]) {
+        lock.withLock { acknowledgments = sent }
+    }
+}
+
 /// The runtime's link to the watch and its relay over a coordinator over fakes, with the fake session in place of
 /// WatchConnectivity.
 private final class RelayRig {
@@ -483,6 +495,25 @@ private final class RelayRig {
         #expect(ack?[WatchMessageKeys.acknowledged] as? Bool == true)
         #expect(ack?[WatchMessageKeys.message] as? String == "Bolus enacted successfully.")
         #expect(ack?[WatchMessageKeys.ackCode] as? String == "success")
+    }
+
+    @Test func confirmIsAcknowledgedBeforeItsReportGoesToTrioRC() async {
+        // The report to trio-rc can wait on the network. The watch hears how it went first, as upstream's watch does.
+        let rig = RelayRig()
+        await rig.ask("r1")
+        let atReport = AcknowledgmentsAtReport()
+        rig.harness.reporter.whileReporting = { [rig] report in
+            if report.state == .delivering {
+                atReport.record(rig.acknowledgments)
+            }
+        }
+
+        await rig.relay.confirm(AIRequestWatchConfirm(id: "r1", units: d("1.2"), carbs: nil))
+
+        #expect(atReport.recorded == [
+            SentAcknowledgment(acknowledged: true, message: "Bolus enacted successfully.", ackCode: "success")
+        ])
+        #expect(rig.harness.reporter.states == ["r1:pending", "r1:delivering"])
     }
 
     @Test func confirmWithoutUnitsAcknowledgesTheLoggedCarbs() async {

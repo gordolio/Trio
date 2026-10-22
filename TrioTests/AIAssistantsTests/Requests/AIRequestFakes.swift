@@ -131,6 +131,13 @@ final class FakePhoneBackup: AIRequestPhoneBackupScheduling {
 final class RecordingReporter: AIRequestReporter {
     private let lock = NSLock()
     private var recorded: [(id: String, report: AIRequestReport)] = []
+    private var reportHook: ((AIRequestReport) -> Void)?
+
+    /// Runs inside each `report`, before it's recorded.
+    var whileReporting: ((AIRequestReport) -> Void)? {
+        get { lock.withLock { reportHook } }
+        set { lock.withLock { reportHook = newValue } }
+    }
 
     var reports: [(id: String, report: AIRequestReport)] { lock.withLock { recorded } }
     /// Each report as `"<id>:<state>"`.
@@ -142,6 +149,7 @@ final class RecordingReporter: AIRequestReporter {
     }
 
     func report(_ report: AIRequestReport, for id: String) async {
+        whileReporting?(report)
         lock.withLock { recorded.append((id, report)) }
     }
 }

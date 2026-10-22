@@ -211,12 +211,14 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     }
 
     func enactBolus(_ units: Decimal) async -> String? {
-        let outcome = BolusOutcome()
-        // `enactBolus` calls back before it returns, or never, as for an amount that isn't above 0.
-        await apsManager.enactBolus(amount: Double(truncating: units as NSNumber), isSMB: false) { success, message in
-            outcome.record(success: success, message: message)
+        let apsManager = self.apsManager
+        let amount = Double(truncating: units as NSNumber)
+        // Returns on the pump's answer, as upstream's watch acknowledgement does. `enactBolus` goes on to run the loop
+        // update for the bolus before it returns, which isn't waited for.
+        let answer = await AIRequestPumpAnswer.first { answer in
+            await apsManager.enactBolus(amount: amount, isSMB: false, callback: answer)
         }
-        guard let result = outcome.result else {
+        guard let result = answer else {
             debug(.service, "AI requests: the pump didn't report on the \(units) U bolus")
             return "Trio couldn't confirm the bolus started"
         }
@@ -261,16 +263,40 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
     }
 }
 
-/// What `APSManager.enactBolus` called back with, if it did.
-private final class BolusOutcome {
-    private let lock = NSLock()
-    private var recorded: (success: Bool, message: String)?
+/// The pump's answer to a bolus, as `APSManager.enactBolus` calls back with it: as soon as the pump accepts or refuses
+/// the bolus. `enactBolus` then runs the loop update for a bolus it gave before it returns.
+enum AIRequestPumpAnswer {
+    /// Starts `enact`, and returns what it calls back with as soon as it calls back, while `enact` carries on. Returns
+    /// `nil` if `enact` returns without calling back, as `enactBolus` does for an amount that isn't above 0.
+    static func first(
+        of enact: @escaping (@escaping (Bool, String) -> Void) async -> Void
+    ) async -> (success: Bool, message: String)? {
+        await withCheckedContinuation { continuation in
+            let answer = FirstAnswer(continuation)
+            Task {
+                await enact { success, message in
+                    answer.give((success, message))
+                }
+                answer.give(nil)
+            }
+        }
+    }
+}
 
-    var result: (success: Bool, message: String)? {
-        lock.withLock { recorded }
+/// Resumes a continuation with the first answer it's given; later ones are ignored.
+private final class FirstAnswer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<(success: Bool, message: String)?, Never>?
+
+    init(_ continuation: CheckedContinuation<(success: Bool, message: String)?, Never>) {
+        self.continuation = continuation
     }
 
-    func record(success: Bool, message: String) {
-        lock.withLock { recorded = (success, message) }
+    func give(_ answer: (success: Bool, message: String)?) {
+        let continuation = lock.withLock {
+            defer { self.continuation = nil }
+            return self.continuation
+        }
+        continuation?.resume(returning: answer)
     }
 }
