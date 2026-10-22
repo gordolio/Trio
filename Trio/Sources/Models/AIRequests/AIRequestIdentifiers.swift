@@ -35,6 +35,9 @@ enum AIRequestIdentifiers {
     /// The request left pending, so the watch closes its screen, as JSON-encoded `AIRequestEnded`, sent from the phone
     /// to the watch.
     static let keyEnded = "aiRequestEnded"
+    /// Whether the wearer allows meal requests, as a `Bool`, sent from the phone to the watch. The watch asks to show
+    /// notifications only once they're allowed.
+    static let keyMealRequestsAllowed = "aiMealRequestsAllowed"
 
     // MARK: Notification slots
 

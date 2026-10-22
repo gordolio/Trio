@@ -26,7 +26,9 @@ extension AIAssistantsConfig {
             } footer: {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("If your watch hasn't answered by then, your iPhone asks too. Without a watch, it asks right away.")
-                    Text("Swiping a request away declines it. Requests expire after 5 minutes.")
+                    Text(
+                        "Swiping a request away on your watch declines it, unless it's open on your iPhone. Requests expire after 5 minutes."
+                    )
                 }
             }
             .listRowBackground(Color.chart)

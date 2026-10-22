@@ -47,8 +47,10 @@ final class AIRequestsRuntime {
         let watchLink = AIRequestsRuntime.makeWatchLink(
             session: WCSession.default,
             relay: relay,
+            allowsMealRequests: { preferences.value.allowsMealRequests },
             onWatchTokenChanged: uploadNow
         )
+        watchLink.follow(preferences.changes.eraseToAnyPublisher())
         let phoneBackup = AIRequestPhoneBackup()
         let coordinator = AIRequestCoordinator(
             seen: seen,
@@ -85,11 +87,13 @@ extension AIRequestsRuntime {
         session: AIRequestWatchSession,
         defaults: UserDefaults = .standard,
         relay: WatchRelay,
+        allowsMealRequests: @escaping () -> Bool,
         onWatchTokenChanged: @escaping () -> Void
     ) -> AIRequestWatchLink {
         AIRequestWatchLink(
             session: session,
             defaults: defaults,
+            allowsMealRequests: allowsMealRequests,
             onOpen: { id in Task { await relay.open(id) } },
             onConfirm: { confirm in Task { await relay.confirm(confirm) } },
             onClose: { close in Task { await relay.close(close) } },

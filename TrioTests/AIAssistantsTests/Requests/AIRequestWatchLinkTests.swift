@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -37,16 +38,23 @@ private final class LinkEvents {
 private func makeLink(
     session: FakeWatchSession = FakeWatchSession(),
     defaults: UserDefaults = UserDefaults(suiteName: UUID().uuidString)!,
-    events: LinkEvents = LinkEvents()
+    events: LinkEvents = LinkEvents(),
+    allowsMealRequests: @escaping () -> Bool = { false }
 ) -> AIRequestWatchLink {
     AIRequestWatchLink(
         session: session,
         defaults: defaults,
+        allowsMealRequests: allowsMealRequests,
         onOpen: { events.opened.append($0) },
         onConfirm: { events.confirms.append($0) },
         onClose: { events.closes.append($0) },
         onWatchTokenChanged: { events.tokenChanges += 1 }
     )
+}
+
+/// What the watch was told about meal requests being allowed, sent live or queued, in order.
+private func mealRequestsAllowedSent(_ session: FakeWatchSession) -> [Bool] {
+    (session.messages + session.userInfos).compactMap { $0[AIRequestIdentifiers.keyMealRequestsAllowed] as? Bool }
 }
 
 /// Push tokens as the watch sends them: hex, 32 bytes.
@@ -91,6 +99,7 @@ private final class RelayRig {
             session: session,
             defaults: UserDefaults(suiteName: UUID().uuidString)!,
             relay: relay,
+            allowsMealRequests: { true },
             onWatchTokenChanged: {}
         )
         relay.connect(coordinator: harness.coordinator, link: link)
@@ -200,6 +209,32 @@ private final class RelayRig {
         session.isPaired = true
         session.isWatchAppInstalled = false
         #expect(!link.isWatchAvailable)
+    }
+
+    @Test func watchTokenIsAnsweredWithWhetherMealRequestsAreAllowed() {
+        // The watch sends its token each time it launches. It asks to show notifications only once meal requests are on.
+        let session = FakeWatchSession()
+        let allowed = TestBox(false)
+        let link = makeLink(session: session, allowsMealRequests: { allowed.value })
+        #expect(link.receive([AIRequestIdentifiers.keyWatchPushToken: watchToken]))
+        allowed.value = true
+        #expect(link.receive([AIRequestIdentifiers.keyWatchPushToken: watchToken]))
+        #expect(mealRequestsAllowedSent(session) == [false, true])
+    }
+
+    @Test func turningMealRequestsOnOrOffTellsTheWatch() {
+        let session = FakeWatchSession()
+        let link = makeLink(session: session)
+        let preferences = CurrentValueSubject<AIAssistantsPreferences, Never>(AIAssistantsPreferences())
+        link.follow(preferences.eraseToAnyPublisher())
+        // The current value isn't sent: the watch hears it when it sends its token.
+        #expect(mealRequestsAllowedSent(session).isEmpty)
+
+        preferences.send(AIAssistantsPreferences(phoneBackupDelay: 30))
+        preferences.send(AIAssistantsPreferences(allowsMealRequests: true))
+        preferences.send(AIAssistantsPreferences(allowsMealRequests: true, phoneBackupDelay: 60))
+        preferences.send(AIAssistantsPreferences())
+        #expect(mealRequestsAllowedSent(session) == [true, false])
     }
 
     @Test func unrelatedMessagesAreLeftAlone() {

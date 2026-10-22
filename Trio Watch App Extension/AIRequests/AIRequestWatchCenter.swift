@@ -38,6 +38,8 @@ final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WC
     private static let openSendWindow: TimeInterval = 4
     /// How often a `liveBefore` message checks whether the phone is reachable yet.
     private static let reachabilityCheck: UInt64 = 500_000_000
+    /// Whether the wearer allows meal requests, as the phone last said.
+    private static let mealRequestsAllowedKey = "AIRequests.mealRequestsAllowed"
 
     private let lock = NSLock()
     /// Whether the session has been activated. Before that, WatchConnectivity drops anything sent.
@@ -52,7 +54,8 @@ final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WC
     }
 
     /// Sets up notifications for requests on top of upstream's glucose alerts, registers for the service's pushes, and
-    /// connects the request flow to the phone.
+    /// connects the request flow to the phone. The push token goes only to the phone, which passes it on to the service
+    /// while meal requests are allowed.
     func configure() {
         AIRequestWatchFlowController.shared.connect(
             send: { [weak self] message in self?.sendFlowMessage(message) },
@@ -75,7 +78,15 @@ final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WC
             let kept = existing.filter { !ourIDs.contains($0.identifier) && !$0.identifier.hasPrefix("trio.request.") }
             center.setNotificationCategories(kept.union(ours))
         }
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+        // Meal requests are off until the wearer turns them on, so the watch doesn't ask to show notifications before.
+        if UserDefaults.standard.bool(forKey: Self.mealRequestsAllowedKey) {
+            requestNotificationAuthorization()
+        }
+    }
+
+    /// Asks the wearer to let the watch show notifications, for requests. It's asked once; later calls only log.
+    private func requestNotificationAuthorization() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
             if let error {
                 Self.log("notification authorization failed: \(error)")
             } else if !granted {
@@ -113,6 +124,13 @@ final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WC
                 Self.log("\(ended.id) ended: \(ended.headline)")
             } else {
                 Self.log("couldn't read a request's ending from the phone")
+            }
+        }
+        if let allowed = message[AIRequestIdentifiers.keyMealRequestsAllowed] as? Bool {
+            handled = true
+            UserDefaults.standard.set(allowed, forKey: Self.mealRequestsAllowedKey)
+            if allowed {
+                requestNotificationAuthorization()
             }
         }
         return handled

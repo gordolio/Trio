@@ -311,6 +311,76 @@ import Testing
         #expect(relaunched.reporter.states == ["r1:expired"])
     }
 
+    // Before the first unlock, Trio's files are there but can't be read. A relaunch then mustn't take them as empty.
+
+    @Test func repeatedIDAfterARelaunchBeforeTheFirstUnlockRepeatsTheSavedOutcome() async throws {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        _ = await h.coordinator.carryOutWatchConfirm(AIRequestWatchConfirm(id: "r1", units: 1.2, carbs: nil))
+        try setReadable(h.files.seen, false)
+        try setReadable(h.files.finalReports, false)
+        let relaunched = makeCoordinator(files: h.files)
+        await relaunched.coordinator.start()
+        try setReadable(h.files.seen, true)
+        try setReadable(h.files.finalReports, true)
+
+        await relaunched.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(relaunched.reporter.states == ["r1:delivering"])
+        #expect(relaunched.coordinator.current.value == nil && relaunched.backup.scheduled.isEmpty)
+    }
+
+    @Test func requestArrivingBeforeTheFirstUnlockIsLeftForTheNextCheckIn() async throws {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.close(id: "r1", on: .phone, dismissed: false)
+        try setReadable(h.files.seen, false)
+        let relaunched = makeCoordinator(files: h.files)
+
+        await relaunched.coordinator.receive(meal(id: "r2"), via: .service)
+        #expect(relaunched.reporter.reports.isEmpty)
+        #expect(relaunched.coordinator.current.value == nil && relaunched.backup.scheduled.isEmpty)
+
+        try setReadable(h.files.seen, true)
+        await relaunched.coordinator.receive(meal(id: "r2"), via: .service)
+        #expect(relaunched.reporter.states == ["r2:pending"])
+    }
+
+    @Test func pendingRequestThatCantBeReadYetIsKeptAndPendingOnceItCanBe() async throws {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        try setReadable(h.files.pending, false)
+        let relaunched = makeCoordinator(files: h.files, now: coordinatorTestStart + 60)
+        await relaunched.coordinator.start()
+        #expect(relaunched.coordinator.current.value == nil)
+        #expect(FileManager.default.fileExists(atPath: h.files.pending.path))
+
+        try setReadable(h.files.pending, true)
+        await relaunched.coordinator.expireIfDue()
+        #expect(relaunched.coordinator.current.value?.request.id == "r1")
+        #expect(relaunched.reporter.reports.isEmpty)
+    }
+
+    @Test func finalReportWhileTheFileCantBeReadIsntWrittenOverIt() async throws {
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        await h.coordinator.close(id: "r1", on: .phone, dismissed: false)
+        try setReadable(h.files.finalReports, false)
+        let relaunched = makeCoordinator(files: h.files)
+        await relaunched.coordinator.receive(meal(id: "r2"), via: .service)
+        await relaunched.coordinator.close(id: "r2", on: .phone, dismissed: false)
+        try setReadable(h.files.finalReports, true)
+
+        // Both are on record once the file can be read: the one on disk, and the one kept in memory meanwhile.
+        await relaunched.coordinator.withdraw(id: "r1", request: nil, via: .service)
+        await relaunched.coordinator.withdraw(id: "r2", request: nil, via: .service)
+        #expect(relaunched.reporter.states == ["r2:pending", "r2:declined", "r1:declined", "r2:declined"])
+        // And both are on disk for the next launch.
+        let next = makeCoordinator(files: h.files)
+        await next.coordinator.withdraw(id: "r1", request: nil, via: .service)
+        await next.coordinator.withdraw(id: "r2", request: nil, via: .service)
+        #expect(next.reporter.states == ["r1:declined", "r2:declined"])
+    }
+
     @Test func withdrawPendingReportsWithdrawn() async {
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1"), via: .service)

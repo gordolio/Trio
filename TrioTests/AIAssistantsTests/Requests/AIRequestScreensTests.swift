@@ -153,6 +153,18 @@ import Testing
         #expect(h.left == [LeftEvent(id: "r1", left: .declined(.phone), source: "ChatGPT")])
     }
 
+    @Test func swipingTheWatchNotificationAwayLeavesARequestOpenOnTheIPhone() async {
+        // The wearer is finishing it on the iPhone's Treatments sheet, and clears the watch's notification.
+        let h = makeCoordinator()
+        await h.coordinator.receive(meal(id: "r1"), via: .service)
+        #expect(await h.coordinator.open(id: "r1", on: .phone) != nil)
+        await h.coordinator.close(id: "r1", on: .watch, dismissed: true)
+        #expect(h.coordinator.current.value?.request.id == "r1")
+        #expect(h.reporter.states == ["r1:pending"])
+        #expect(h.left.isEmpty)
+        #expect(await h.coordinator.claim(id: "r1", on: .phone))
+    }
+
     @Test func closingARequestThatIsntPendingDoesNothing() async {
         let h = makeCoordinator()
         await h.coordinator.receive(meal(id: "r1"), via: .service)

@@ -91,7 +91,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
         )
         AIRequestsRuntime.shared = runtime
         checkIn = runtime.checkIn
-        uploadWhenWakePushTypeChanges(runtime.preferences.changes.eraseToAnyPublisher())
+        uploadWhenRegistrationPreferencesChange(runtime.preferences.changes.eraseToAnyPublisher())
         Task { await runtime.coordinator.start() }
     }
 
@@ -311,12 +311,13 @@ final class BaseAIAssistantsService: AIAssistantsService {
 
     // MARK: - App wiring
 
-    /// The wake-up push type is part of the device registration, so a new one is uploaded to tell the
-    /// service. The first value is the current one, and a repeat isn't a change.
-    func uploadWhenWakePushTypeChanges(_ preferences: AnyPublisher<AIAssistantsPreferences, Never>) {
+    /// Whether meal requests are allowed, which decides whether the watch is in it, and the wake-up push type are part
+    /// of the device registration, so a new value is uploaded to tell the service. The first value is the current one,
+    /// and a repeat isn't a change.
+    func uploadWhenRegistrationPreferencesChange(_ preferences: AnyPublisher<AIAssistantsPreferences, Never>) {
         preferences
-            .map(\.wakePushType)
-            .removeDuplicates()
+            .map { ($0.allowsMealRequests, $0.wakePushType) }
+            .removeDuplicates { $0 == $1 }
             .dropFirst()
             .sink { [weak self] _ in
                 Task {
@@ -367,8 +368,9 @@ final class BaseAIAssistantsService: AIAssistantsService {
 
     /// This phone's push registration, which Trio Remote Control stores on every launch.
     /// `nil` until the phone has a push token. The version is the one Settings shows
-    /// (1.0.2.12), not the build number. The watch is included once it has sent its push token, and
-    /// the wake-up push type when there are `preferences`.
+    /// (1.0.2.12), not the build number. The watch is included once it has sent its push token, while
+    /// the `preferences` allow meal requests: the service only pushes requests to it. The wake-up push type is
+    /// included when there are `preferences`.
     static func currentDeviceRegistration(
         defaults: UserDefaults = .standard,
         bundle: Bundle = .main,
@@ -377,7 +379,9 @@ final class BaseAIAssistantsService: AIAssistantsService {
         guard let token = defaults.string(forKey: "deviceToken"), !token.isEmpty else { return nil }
         let bundleId = bundle.bundleIdentifier ?? ""
         let environment = defaults.bool(forKey: "isAPNSProduction") ? "production" : "sandbox"
-        let watchToken = defaults.string(forKey: AIRequestWatchLink.watchPushTokenKey).flatMap { $0.isEmpty ? nil : $0 }
+        let watchToken = preferences?.allowsMealRequests == true
+            ? defaults.string(forKey: AIRequestWatchLink.watchPushTokenKey).flatMap { $0.isEmpty ? nil : $0 }
+            : nil
         return DeviceRegistration(
             apnsToken: token,
             bundleId: bundleId,

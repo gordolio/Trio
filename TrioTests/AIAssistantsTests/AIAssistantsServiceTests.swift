@@ -670,14 +670,15 @@ func letDebouncePass() async {
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(device.apnsToken, forKey: "deviceToken")
-        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)?.watch == nil)
+        let allowed = AIAssistantsPreferences(allowsMealRequests: true)
+        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: allowed)?.watch == nil)
 
         defaults.set("", forKey: "AIAssistants.watchPushToken")
-        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)?.watch == nil)
+        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: allowed)?.watch == nil)
 
         let watchToken = String(repeating: "cd", count: 32)
         defaults.set(watchToken, forKey: "AIAssistants.watchPushToken")
-        let sandbox = try #require(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults))
+        let sandbox = try #require(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: allowed))
         #expect(sandbox.watch == WatchRegistration(
             apnsToken: watchToken,
             bundleId: "\(Bundle.main.bundleIdentifier ?? "").watchkitapp",
@@ -686,9 +687,29 @@ func letDebouncePass() async {
 
         // The watch is pushed to through the phone's APNs environment.
         defaults.set(true, forKey: "isAPNSProduction")
-        let production = BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)
+        let production = BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: allowed)
         #expect(production?.watch?.apnsEnvironment == "production")
         #expect(production?.watch?.apnsToken == watchToken)
+    }
+
+    @Test("The device registration has no watch while meal requests are off") func deviceRegistrationWatchNeedsMealRequests(
+    ) throws {
+        let suite = "AIAssistantsServiceTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(device.apnsToken, forKey: "deviceToken")
+        let watchToken = String(repeating: "cd", count: 32)
+        defaults.set(watchToken, forKey: "AIAssistants.watchPushToken")
+
+        let off = BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults, preferences: AIAssistantsPreferences())
+        #expect(off != nil && off?.watch == nil)
+        // No preferences, no runtime: no meal requests either.
+        #expect(BaseAIAssistantsService.currentDeviceRegistration(defaults: defaults)?.watch == nil)
+        let on = BaseAIAssistantsService.currentDeviceRegistration(
+            defaults: defaults,
+            preferences: AIAssistantsPreferences(allowsMealRequests: true)
+        )
+        #expect(on?.watch?.apnsToken == watchToken)
     }
 
     @Test("The device registration carries the wake-up push type of the preferences") func deviceRegistrationWakePushType() throws {
@@ -744,26 +765,48 @@ func letDebouncePass() async {
         #expect(store.lastDevice?.wakePushType == "timeSensitive")
     }
 
-    @Test("A change of the wake-up push type uploads; the first value and other changes don't") func wakePushTypeChangeUploads(
-    ) async {
+    @Test(
+        "Turning meal requests on or off, or a new wake-up push type, uploads; the first value and other changes don't"
+    ) func registrationPreferenceChangeUploads() async {
+        // Each step gives the device registration a new value, so an upload shows as a `putDevice`.
+        func registration(_ wakePushType: String) -> DeviceRegistration {
+            DeviceRegistration(
+                apnsToken: device.apnsToken,
+                bundleId: device.bundleId,
+                apnsEnvironment: device.apnsEnvironment,
+                appVersion: device.appVersion,
+                wakePushType: wakePushType
+            )
+        }
         let service = makeLinkedService()
-        pushDevice.value = device
+        pushDevice.value = registration("passive")
         let preferences = CurrentValueSubject<AIAssistantsPreferences, Never>(AIAssistantsPreferences())
-        service.uploadWhenWakePushTypeChanges(preferences.eraseToAnyPublisher())
+        service.uploadWhenRegistrationPreferencesChange(preferences.eraseToAnyPublisher())
         await letDebouncePass()
         #expect(api.calls.isEmpty)
 
         // Another preference changed.
-        preferences.send(AIAssistantsPreferences(allowsMealRequests: true))
+        preferences.send(AIAssistantsPreferences(phoneBackupDelay: 30))
         await letDebouncePass()
         #expect(api.calls.isEmpty)
 
-        preferences.send(AIAssistantsPreferences(allowsMealRequests: true, wakePushType: .timeSensitive))
+        // Meal requests on: the registration has the watch from now on.
+        preferences.send(AIAssistantsPreferences(allowsMealRequests: true, phoneBackupDelay: 30))
         #expect(await eventuallyTrue { api.calls == ["putDevice", "putStatus"] })
 
-        // The same type again isn't a change.
-        preferences.send(AIAssistantsPreferences(allowsMealRequests: false, wakePushType: .timeSensitive))
+        pushDevice.value = registration("timeSensitive")
+        preferences.send(AIAssistantsPreferences(allowsMealRequests: true, phoneBackupDelay: 30, wakePushType: .timeSensitive))
+        #expect(await eventuallyTrue { api.calls == ["putDevice", "putStatus", "putDevice"] })
+
+        // Meal requests off: the watch goes.
+        pushDevice.value = registration("background")
+        preferences.send(AIAssistantsPreferences(phoneBackupDelay: 30, wakePushType: .timeSensitive))
+        #expect(await eventuallyTrue { api.calls == ["putDevice", "putStatus", "putDevice", "putDevice"] })
+
+        // The same values again aren't a change.
+        pushDevice.value = registration("passive")
+        preferences.send(AIAssistantsPreferences(phoneBackupDelay: 60, wakePushType: .timeSensitive))
         await letDebouncePass()
-        #expect(api.calls == ["putDevice", "putStatus"])
+        #expect(api.calls == ["putDevice", "putStatus", "putDevice", "putDevice"])
     }
 }

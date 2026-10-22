@@ -172,6 +172,16 @@ struct CoordinatorFiles {
             pending: folder.appendingPathComponent("pending-request.json")
         )
     }
+
+    /// Where the coordinator keeps its final reports: next to the pending file.
+    var finalReports: URL {
+        pending.deletingLastPathComponent().appendingPathComponent("final-reports.json")
+    }
+}
+
+/// Makes the file readable to Trio or not, as protected data is after and before the first unlock.
+func setReadable(_ url: URL, _ readable: Bool) throws {
+    try FileManager.default.setAttributes([.posixPermissions: readable ? 0o644 : 0o000], ofItemAtPath: url.path)
 }
 
 /// One `left` the coordinator sent.

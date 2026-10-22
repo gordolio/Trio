@@ -40,6 +40,28 @@ private func tempFile() -> URL {
         #expect(try store.observe("a") == .seen(outcome: nil))
     }
 
+    @Test func idsThatCantBeReadYetAreReadOnceTheyCanBe() throws {
+        // Before the first unlock, an intact protected file can't be read. A relaunch then mustn't take it as empty.
+        let url = tempFile()
+        _ = try AIRequestSeenStore(fileURL: url).observe("a")
+        try setReadable(url, false)
+        let relaunched = AIRequestSeenStore(fileURL: url)
+        try setReadable(url, true)
+        #expect(try relaunched.observe("a") == .seen(outcome: nil))
+    }
+
+    @Test func observingBeforeTheIDsCanBeReadRecordsNothing() throws {
+        let url = tempFile()
+        _ = try AIRequestSeenStore(fileURL: url).observe("a")
+        try setReadable(url, false)
+        let relaunched = AIRequestSeenStore(fileURL: url)
+        #expect(throws: AIRequestSeenStore.SeenError.notReadableYet) { try relaunched.observe("b") }
+        try setReadable(url, true)
+        // The file wasn't written over.
+        #expect(try AIRequestSeenStore(fileURL: url).observe("a") == .seen(outcome: nil))
+        #expect(try relaunched.observe("b") == .new)
+    }
+
     @Test func entriesOlderThanRetentionArePruned() throws {
         var clock = Date(timeIntervalSince1970: 0)
         let url = tempFile()

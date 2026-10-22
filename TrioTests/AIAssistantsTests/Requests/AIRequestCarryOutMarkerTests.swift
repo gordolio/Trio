@@ -156,11 +156,6 @@ import Testing
     }
 }
 
-/// Makes the file readable to Trio or not, as protected data is after and before the first unlock.
-private func setReadable(_ url: URL, _ readable: Bool) throws {
-    try FileManager.default.setAttributes([.posixPermissions: readable ? 0o644 : 0o000], ofItemAtPath: url.path)
-}
-
 /// The watch's confirmation of Trio's 1.2 U dose for `meal(id:)`, with its own carbs.
 private func confirm(_ id: String) -> AIRequestWatchConfirm {
     AIRequestWatchConfirm(id: id, units: 1.2, carbs: nil)

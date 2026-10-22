@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import WatchConnectivity
 
@@ -28,20 +29,24 @@ extension WCSession: AIRequestWatchSession {
 
 /// The phone's side of the watch's requests: reads what the watch sends, which is the request the wearer opened,
 /// confirmed or closed on the watch, or the watch's push token. It sends the request's details when the watch opens it,
-/// the acknowledgement of a confirmation, and the ending of a request whose screen is open there.
+/// the acknowledgement of a confirmation, the ending of a request whose screen is open there, and whether the wearer
+/// allows meal requests.
 final class AIRequestWatchLink: AIRequestWatchDelivery {
     static let watchPushTokenKey = "AIAssistants.watchPushToken"
 
     private let session: AIRequestWatchSession
     private let defaults: UserDefaults
+    private let allowsMealRequests: () -> Bool
     private let onOpen: (String) -> Void
     private let onConfirm: (AIRequestWatchConfirm) -> Void
     private let onClose: (AIRequestWatchClose) -> Void
     private let onWatchTokenChanged: () -> Void
+    private var preferencesSubscription: AnyCancellable?
 
     init(
         session: AIRequestWatchSession,
         defaults: UserDefaults = .standard,
+        allowsMealRequests: @escaping () -> Bool,
         onOpen: @escaping (String) -> Void,
         onConfirm: @escaping (AIRequestWatchConfirm) -> Void,
         onClose: @escaping (AIRequestWatchClose) -> Void,
@@ -49,6 +54,7 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
     ) {
         self.session = session
         self.defaults = defaults
+        self.allowsMealRequests = allowsMealRequests
         self.onOpen = onOpen
         self.onConfirm = onConfirm
         self.onClose = onClose
@@ -64,6 +70,21 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
     /// A watch that has no push token couldn't be reached by the service, so the request is asked on the phone.
     var isWatchAvailable: Bool {
         session.isPaired && session.isWatchAppInstalled && watchPushToken != nil
+    }
+
+    /// Tells the watch each time the wearer turns meal requests on or off. The current value isn't sent: the watch hears
+    /// it in answer to the push token it sends at each launch.
+    func follow(_ preferences: AnyPublisher<AIAssistantsPreferences, Never>) {
+        preferencesSubscription = preferences
+            .map(\.allowsMealRequests)
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] in self?.sendMealRequestsAllowed($0) }
+    }
+
+    /// Tells the watch whether the wearer allows meal requests. It asks to show notifications only once they do.
+    private func sendMealRequestsAllowed(_ allowed: Bool) {
+        send([AIRequestIdentifiers.keyMealRequestsAllowed: allowed])
     }
 
     /// Answers the watch's open: the request's amounts and Trio's dose for them.
@@ -118,6 +139,8 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         if let token = message[AIRequestIdentifiers.keyWatchPushToken] as? String {
             handled = true
             store(token)
+            // The watch sends its token each time it launches.
+            sendMealRequestsAllowed(allowsMealRequests())
         }
         return handled
     }

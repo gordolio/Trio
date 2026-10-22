@@ -55,8 +55,12 @@ actor AIRequestCoordinator {
     private var openOn: Set<AIRequestAnswerSide> = []
     /// The requests a device claimed, until their final report.
     private var claims: [String: Claim] = [:]
-    /// Whether the pending request, the final reports and the carry-out marker were read from disk.
-    private var loaded = false
+    /// Whether the carry-out marker was read from disk. It's read once (see `ensureLoaded()`).
+    private var markerRead = false
+    /// Whether the pending request and the final reports were read from disk. Before the first unlock their files are
+    /// there but can't be read, so each call tries again until they have been.
+    private var pendingRead = false
+    private var finalReportsRead = false
     /// The final reports on record, oldest first, so a repeated ID gets the same report again.
     private var finalReports: [FinalReport] = []
     /// As long as the seen store keeps an ID.
@@ -118,15 +122,12 @@ actor AIRequestCoordinator {
         expiryCheck?.cancel()
     }
 
-    /// Reports the approval Trio stopped carrying out, if it did. Then watches the request that was pending when Trio
-    /// quit, and expires it if its time is up. Its phone backup was scheduled with the system, so it isn't scheduled
-    /// again.
+    /// Reports the approval Trio stopped carrying out, if it did. Then expires the request that was pending when Trio
+    /// quit if its time is up; reading it watched its expiry. Its phone backup was scheduled with the system, so it
+    /// isn't scheduled again.
     func start() async {
         ensureLoaded()
         await reportStoppedCarryOut()
-        if let pending = current.value {
-            scheduleExpiryCheck(at: pending.request.expiresAt)
-        }
         await expireIfDue()
     }
 
@@ -311,9 +312,16 @@ actor AIRequestCoordinator {
     /// declined on that device, or dismissed when the wearer swiped the watch's notification away, which only the
     /// watch has: `dismissed` is ignored for the iPhone. Otherwise there's nothing to do: the screens a request had
     /// open were let go when it left pending.
+    ///
+    /// A swipe while the iPhone's Treatments sheet has the request open isn't a decline: the wearer is finishing it
+    /// there, and clearing the watch's copy of the notification. The sheet answers it.
     func close(id: String, on side: AIRequestAnswerSide, dismissed: Bool) async {
         ensureLoaded()
         await expireIfDue()
+        if side == .watch, dismissed, openOn.contains(.phone), current.value?.request.id == id {
+            debug(.service, "AI requests: \(id)'s watch notification was swiped away with the iPhone's sheet open, so it waits")
+            return
+        }
         let declinedOn: AIRequestDeclinedOn = switch side {
         case .phone: .phone
         case .watch: dismissed ? .dismissed : .watch
@@ -539,13 +547,18 @@ actor AIRequestCoordinator {
 
     // MARK: Requests
 
-    /// Records the ID as seen. Returns `nil` when the request is dropped: it has no ID, or the ID
-    /// couldn't be saved, which is reported as a failure.
+    /// Records the ID as seen. Returns `nil` when the request is dropped: it has no ID, the ID
+    /// couldn't be saved, which is reported as a failure, or the seen IDs can't be read yet, which leaves it for
+    /// the next check-in.
     private func observe(_ id: String, via channel: AIRequestChannel) async -> AIRequestSeenStore.Sighting? {
         do {
             return try seen.observe(id)
         } catch AIRequestSeenStore.SeenError.missingID {
             debug(.service, "AI requests: dropped a request without an ID")
+            return nil
+        } catch AIRequestSeenStore.SeenError.notReadableYet {
+            // It may be one Trio already handled. The service lists it again until it's final.
+            debug(.service, "AI requests: left \(id) for the next check-in, the seen IDs can't be read yet")
             return nil
         } catch {
             // Without the saved ID, a relaunch couldn't tell a repeat of this request from a new one.
@@ -681,29 +694,39 @@ actor AIRequestCoordinator {
 
     // MARK: Files
 
-    /// Reads the pending request, the final reports and the carry-out marker, once, before the first call uses them,
-    /// so the marker read is the one Trio left, not a new approval's. A marker that can't be read yet is read again
-    /// by `reportStoppedCarryOut()`.
+    /// Reads the final reports, the carry-out marker and the pending request before the first call uses them. The
+    /// marker is read once, so the one read is the one Trio left, not a new approval's; one that can't be read yet is
+    /// read again by `reportStoppedCarryOut()`. The final reports and the pending request are read again at each call
+    /// until they can be, as before the first unlock.
     private func ensureLoaded() {
-        guard !loaded else { return }
-        loaded = true
-        finalReports = loadFinalReports()
-        dropOldFinalReports()
-        leftoverCarryOut = AIRequestCarryOutMarker.read(from: carryOutMarkerURL)
-        if let pending = loadPending() {
-            current.send(pending)
+        loadFinalReportsIfNeeded()
+        if !markerRead {
+            markerRead = true
+            leftoverCarryOut = AIRequestCarryOutMarker.read(from: carryOutMarkerURL)
         }
+        loadPendingIfNeeded()
     }
 
-    private func loadPending() -> PendingAIRequest? {
-        guard FileManager.default.fileExists(atPath: pendingFileURL.path) else { return nil }
-        do {
-            return try JSONDecoder().decode(PendingAIRequest.self, from: Data(contentsOf: pendingFileURL))
-        } catch {
-            debug(.service, "AI requests: pending request file unreadable, dropping it: \(error)")
-            deletePendingFile()
-            return nil
+    /// Reads the pending request that was saved, and watches its expiry. A file that can't be read yet is kept for the
+    /// next call; one that doesn't decode is dropped.
+    private func loadPendingIfNeeded() {
+        guard !pendingRead else { return }
+        switch AIRequestFileContents.read(pendingFileURL) {
+        case .absent:
+            break
+        case let .data(data):
+            do {
+                let pending = try JSONDecoder().decode(PendingAIRequest.self, from: data)
+                current.send(pending)
+                scheduleExpiryCheck(at: pending.request.expiresAt)
+            } catch {
+                debug(.service, "AI requests: pending request file doesn't decode, dropping it: \(error)")
+                deletePendingFile()
+            }
+        case .unreadable:
+            return
         }
+        pendingRead = true
     }
 
     private func savePending(_ pending: PendingAIRequest) {
@@ -722,19 +745,43 @@ actor AIRequestCoordinator {
         }
     }
 
-    private func loadFinalReports() -> [FinalReport] {
-        guard FileManager.default.fileExists(atPath: finalReportsURL.path) else { return [] }
-        do {
-            return try JSONDecoder().decode([FinalReport].self, from: Data(contentsOf: finalReportsURL))
-        } catch {
-            debug(.service, "AI requests: final reports file unreadable, starting empty: \(error)")
-            return []
+    /// Reads the final reports on disk, ahead of any recorded while they couldn't be read, which are then saved with
+    /// them. A file that can't be read yet is kept for the next call; one that doesn't decode is started over.
+    private func loadFinalReportsIfNeeded() {
+        guard !finalReportsRead else { return }
+        let recordedMeanwhile = !finalReports.isEmpty
+        switch AIRequestFileContents.read(finalReportsURL) {
+        case .absent:
+            break
+        case let .data(data):
+            do {
+                finalReports = try JSONDecoder().decode([FinalReport].self, from: data) + finalReports
+            } catch {
+                debug(.service, "AI requests: final reports file doesn't decode, starting over: \(error)")
+            }
+        case .unreadable:
+            return
+        }
+        finalReportsRead = true
+        dropOldFinalReports()
+        if recordedMeanwhile {
+            writeFinalReports()
         }
     }
 
+    /// Saves the report with the others. While their file can't be read yet, it's kept in memory, so the file isn't
+    /// written over.
     private func saveFinalReport(_ report: AIRequestReport, for id: String) {
         dropOldFinalReports()
         finalReports.append(FinalReport(id: id, reportedAt: now(), report: report))
+        guard finalReportsRead else {
+            debug(.service, "AI requests: kept \(id)'s final report in memory, the file can't be read yet")
+            return
+        }
+        writeFinalReports()
+    }
+
+    private func writeFinalReports() {
         do {
             try JSONEncoder().encode(finalReports).write(to: finalReportsURL, options: .atomic)
         } catch {
