@@ -10,9 +10,17 @@ enum AIRequestHooks {
     static let watchMessages = AIRequestMessageHolder()
 
     /// Reads a message the watch sent to the phone. Returns `true` if it was a request message, so the watch
-    /// manager must not handle it.
+    /// manager must not handle it. Any message from the watch means Trio is running now, which iOS doesn't promise
+    /// for a push, so Trio checks in too (throttled).
     static func phoneReceivedFromWatch(_ message: [String: Any]) -> Bool {
-        watchMessages.handle(message)
+        checkIn(reason: .watch)
+        return watchMessages.handle(message)
+    }
+
+    /// Starts a check-in, without waiting for it. Before the runtime is built there's nothing to check in with.
+    static func checkIn(reason: AIAssistantsCheckIn.Reason) {
+        guard let checkIn = AIRequestsRuntime.shared?.checkIn else { return }
+        Task { await checkIn.checkIn(reason: reason) }
     }
 
     /// Chooses how the iPhone shows a notification while Trio is open. Returns `true` if it was an AI request
@@ -56,11 +64,22 @@ enum AIRequestHooks {
 
     /// Whether the service's push is a check-in: it asks Trio to check in with the service, and shows nothing.
     static func isCheckIn(_ userInfo: [AnyHashable: Any]) -> Bool {
-        let payload = userInfo[AIRequestIdentifiers.pushPayloadKey] as? [String: Any]
-        return payload?["type"] as? String == "check-in"
+        pushType(userInfo) == "check-in"
     }
 
-    /// Checks in for the service's check-in push. Returns `true` if it was one, so the app delegate must not
+    /// Whether the service's push should wake Trio to check in: a check-in, or a meal the service showed on the
+    /// iPhone itself (someone without a watch), which stays in Notification Center until Trio's own replaces it.
+    static func wakesTrio(_ userInfo: [AnyHashable: Any]) -> Bool {
+        let type = pushType(userInfo)
+        return type == "check-in" || type == "request"
+    }
+
+    private static func pushType(_ userInfo: [AnyHashable: Any]) -> String? {
+        let payload = userInfo[AIRequestIdentifiers.pushPayloadKey] as? [String: Any]
+        return payload?["type"] as? String
+    }
+
+    /// Checks in for the service's push. Returns `true` if it was one, so the app delegate must not
     /// handle it; the completion handler is then called once, when the check-in finishes.
     static func handleRemoteNotification(
         _ userInfo: [AnyHashable: Any],
@@ -75,7 +94,7 @@ enum AIRequestHooks {
         checkIn: AIAssistantsCheckIn?,
         _ completion: @escaping (UIBackgroundFetchResult) -> Void
     ) -> Bool {
-        guard isCheckIn(userInfo) else { return false }
+        guard wakesTrio(userInfo) else { return false }
         guard let checkIn else {
             debug(.service, "AI requests: a check-in push arrived before the runtime, the next loop checks in")
             completion(.noData)

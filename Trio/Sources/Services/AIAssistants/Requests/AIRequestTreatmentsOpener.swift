@@ -16,6 +16,8 @@ import UIKit
     private let isDue: (PendingAIRequest, Date) async -> Bool
     /// Whether the app's key window shows anything over the app: a sheet, a cover or an alert, Trio's router's or not.
     private let keyWindowPresents: @MainActor() -> Bool
+    /// Checks in with the service and waits for it, for a tapped request Trio hasn't seen yet.
+    private let checkIn: () async -> Void
 
     init(
         router: @escaping @MainActor() -> Router? = { TrioApp.resolver.resolve(Router.self) },
@@ -23,7 +25,10 @@ import UIKit
         session: AIRequestTreatmentsSession? = nil,
         now: @escaping () -> Date = Date.init,
         isDue: @escaping (PendingAIRequest, Date) async -> Bool = { await AIRequestPhoneBackup().isDue($0, now: $1) },
-        keyWindowPresents: @escaping @MainActor() -> Bool = { AIRequestTreatmentsOpener.keyWindowPresentsAnything() }
+        keyWindowPresents: @escaping @MainActor() -> Bool = { AIRequestTreatmentsOpener.keyWindowPresentsAnything() },
+        checkIn: @escaping () async -> Void = {
+            await AIRequestsRuntime.shared?.checkIn.checkIn(reason: .open, waitingForRunning: true)
+        }
     ) {
         self.router = router
         self.coordinator = coordinator
@@ -31,6 +36,7 @@ import UIKit
         self.now = now
         self.isDue = isDue
         self.keyWindowPresents = keyWindowPresents
+        self.checkIn = checkIn
     }
 
     /// Whether the key window's root view controller presents a view controller.
@@ -43,10 +49,19 @@ import UIKit
             .presentedViewController != nil
     }
 
-    /// Opens the sheet for the request whose notification the wearer tapped, if it's the pending one. The task is the
-    /// opening, which the caller needn't wait for.
+    /// Opens the sheet for the request whose notification the wearer tapped, if it's the pending one. The service can
+    /// show a request on the iPhone before Trio has it (someone without a watch), so Trio checks in first when it isn't
+    /// the pending one. The task is the opening, which the caller needn't wait for.
     @discardableResult func open(requestID: String) -> Task<Void, Never> {
-        Task { await openPending { $0.request.id == requestID } }
+        Task {
+            if let coordinator = coordinator() {
+                await coordinator.expireIfDue()
+                if coordinator.current.value?.request.id != requestID {
+                    await checkIn()
+                }
+            }
+            await openPending { $0.request.id == requestID }
+        }
     }
 
     /// Opens the sheet for the pending request when Trio comes to the front, if the iPhone is asking for it, so it

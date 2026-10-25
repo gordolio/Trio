@@ -3,18 +3,34 @@ import Foundation
 import UserNotifications
 
 /// Fetches what the service has waiting for Trio and hands it to the coordinator. Trio checks in on the
-/// service's check-in push, and on every loop run, which picks up a push that never arrived.
+/// service's pushes, on every loop run, which picks up a push that never arrived, whenever the watch reaches the
+/// iPhone or Trio comes to the front, and when the wearer opens a request Trio hasn't seen yet. iOS can hold a push
+/// back for minutes, but it lets Trio run when the watch messages it or the wearer opens Trio.
 final class AIAssistantsCheckIn {
     enum Reason: String {
         case push
         case loop
+        case watch = "watch contact"
+        case foreground
+        case open = "request opened"
+
+        /// The watch messages the iPhone often, and Trio comes to the front often: these check in at most once per
+        /// `throttle`. The others always check in.
+        var isThrottled: Bool { self == .watch || self == .foreground }
     }
+
+    /// The least time between two throttled check-ins.
+    static let throttle: TimeInterval = 15
+    /// How long to wait before each try again of an inbox fetch that failed for a reason other than signing out.
+    static let defaultRetryDelays: [TimeInterval] = [1, 2, 4]
 
     private let api: AIAssistantsAPIClient
     private let coordinator: AIRequestCoordinator
     private let isLinked: () -> Bool
     private let beginBackgroundActivity: (String) -> () -> Void
     private let removeDeliveredCheckIns: () -> Void
+    private let retryDelays: [TimeInterval]
+    private let now: () -> Date
     private var subscription: AnyCancellable?
 
     private let lock = NSLock()
@@ -22,8 +38,10 @@ final class AIAssistantsCheckIn {
     private var checkInRequested = false
     /// Set while unlinking: no check-in starts.
     private var isPaused = false
-    /// Unlinks waiting for the check-in in flight to finish.
+    /// Unlinks, and opens of a request Trio hasn't seen, waiting for the check-in in flight to finish.
     private var waitingForCheckIn: [CheckedContinuation<Void, Never>] = []
+    /// When the last check-in started, for the throttle.
+    private var lastStart: Date?
 
     init(
         api: AIAssistantsAPIClient,
@@ -31,13 +49,17 @@ final class AIAssistantsCheckIn {
         isLinked: @escaping () -> Bool,
         loopRuns: AnyPublisher<Date, Never>,
         beginBackgroundActivity: @escaping (String) -> () -> Void,
-        removeDeliveredCheckIns: @escaping () -> Void
+        removeDeliveredCheckIns: @escaping () -> Void,
+        retryDelays: [TimeInterval] = AIAssistantsCheckIn.defaultRetryDelays,
+        now: @escaping () -> Date = Date.init
     ) {
         self.api = api
         self.coordinator = coordinator
         self.isLinked = isLinked
         self.beginBackgroundActivity = beginBackgroundActivity
         self.removeDeliveredCheckIns = removeDeliveredCheckIns
+        self.retryDelays = retryDelays
+        self.now = now
         subscription = loopRuns.sink { [weak self] _ in
             Task { await self?.checkIn(reason: .loop) }
         }
@@ -46,12 +68,22 @@ final class AIAssistantsCheckIn {
     /// Unless Trio is linked, this only removes the delivered check-in pushes: the service keeps sending them to a
     /// phone it has registered, for example after Trio was signed out. While a check-in is running, this only asks
     /// for one more after it, so a push and a loop run that arrive together fetch the inbox twice, one after the other.
-    func checkIn(reason: Reason) async {
+    /// With `waitingForRunning`, it returns once that check-in, and the one more after it, have finished, so the
+    /// caller sees what they brought in: an open of a request Trio hasn't seen waits like this.
+    func checkIn(reason: Reason, waitingForRunning: Bool = false) async {
         guard isLinked() else {
             removeDeliveredCheckIns()
             return
         }
-        guard startCheckIn() else { return }
+        switch startCheckIn(reason: reason) {
+        case .started:
+            break
+        case .throttled:
+            return
+        case .running:
+            if waitingForRunning { await waitForRunningCheckIn() }
+            return
+        }
         let endActivity = beginBackgroundActivity("AI Assistants check-in")
         defer { endActivity() }
         debug(.service, "AI requests: checking in after a \(reason.rawValue)")
@@ -84,18 +116,48 @@ final class AIAssistantsCheckIn {
         lock.withLock { isPaused = false }
     }
 
+    /// Waits for the check-in in flight, if any, to finish.
+    private func waitForRunningCheckIn() async {
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock {
+                guard isCheckingIn else { return true }
+                waitingForCheckIn.append(continuation)
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+    }
+
+    /// The inbox, fetched again after each of `retryDelays` when the fetch fails for any reason but signing out.
+    /// Fetching it is safe to repeat. `nil` when every try failed.
+    private func fetchInbox() async throws -> AIInbox? {
+        var delays = retryDelays[...]
+        while true {
+            do {
+                return try await api.getInbox()
+            } catch AIAssistantsAPIError.signedOut {
+                throw AIAssistantsAPIError.signedOut
+            } catch {
+                guard let delay = delays.popFirst() else {
+                    debug(.service, "AI requests: check-in failed, trying again at the next one: \(error)")
+                    return nil
+                }
+                debug(.service, "AI requests: check-in failed, trying again in \(delay) s: \(error)")
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+        }
+    }
+
     /// Returns `false` if Trio was signed out, which ends the check-in; the API client tells the service. Any other
-    /// error waits for the next check-in.
+    /// error is tried again a few times, then waits for the next check-in.
     private func checkInOnce() async -> Bool {
         let inbox: AIInbox
         do {
-            inbox = try await api.getInbox()
-        } catch AIAssistantsAPIError.signedOut {
+            guard let fetched = try await fetchInbox() else { return true }
+            inbox = fetched
+        } catch {
             debug(.service, "AI requests: check-in stopped, signed out")
             return false
-        } catch {
-            debug(.service, "AI requests: check-in failed, trying again at the next one: \(error)")
-            return true
         }
 
         for request in inbox.requests.sorted(by: { $0.createdAt < $1.createdAt }) {
@@ -112,18 +174,30 @@ final class AIAssistantsCheckIn {
         return true
     }
 
-    /// False while paused, or while a check-in is running; that check-in then runs once more.
-    private func startCheckIn() -> Bool {
+    private enum Start {
+        case started
+        /// Paused, or a throttled reason too soon after the last check-in.
+        case throttled
+        /// A check-in is running; it runs once more after this one.
+        case running
+    }
+
+    private func startCheckIn(reason: Reason) -> Start {
         lock.withLock {
             if isPaused {
-                return false
+                return .throttled
             }
             if isCheckingIn {
                 checkInRequested = true
-                return false
+                return .running
+            }
+            let now = now()
+            if reason.isThrottled, let lastStart, now.timeIntervalSince(lastStart) < Self.throttle {
+                return .throttled
             }
             isCheckingIn = true
-            return true
+            lastStart = now
+            return .started
         }
     }
 

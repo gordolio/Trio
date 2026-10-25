@@ -40,8 +40,12 @@ import Observation
 
     static let shared = AIRequestWatchFlowController()
 
-    /// How long the watch waits for the phone's details.
-    static let detailsWait: TimeInterval = 5
+    /// How long the watch waits for the phone's details. The phone may have to check in with the service first, when
+    /// the watch was told about the request before Trio was.
+    static let detailsWait: TimeInterval = 10
+    /// When the watch asks the phone again while it waits, in seconds from the first ask. The phone joins an open of the
+    /// same request already in flight, so asking again is safe.
+    static let openResends: [TimeInterval] = [2, 5]
 
     private(set) var phase: Phase = .idle
     private(set) var notice: Notice?
@@ -112,8 +116,9 @@ import Observation
 
     // MARK: Opening
 
-    /// The wearer opened the request: the phone is asked for its details, and has 5 s to send them. The phone sends
-    /// none for a request that isn't pending any more.
+    /// The wearer opened the request: the phone is asked for its details, again at each of `openResends` while
+    /// they haven't come, and has `detailsWait` to send them. The phone sends none for a request that isn't pending
+    /// any more.
     func open(id: String) {
         if screensUp {
             holdsSends = true
@@ -126,6 +131,13 @@ import Observation
         wait(Self.detailsWait) { [weak self] in
             guard let self, self.flow == flow, self.phase == .loading(id: id) else { return }
             self.end(id, notice: Self.openOnIPhoneText, isSuccess: false, unshown: .unreachable(id: id))
+        }
+        for resend in Self.openResends {
+            wait(resend) { [weak self] in
+                guard let self, self.flow == flow, self.phase == .loading(id: id) else { return }
+                self.log("asking the phone again for \(id)")
+                self.send([AIRequestIdentifiers.keyOpen: id])
+            }
         }
     }
 

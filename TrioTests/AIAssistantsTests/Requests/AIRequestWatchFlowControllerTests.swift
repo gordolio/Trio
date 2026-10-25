@@ -117,12 +117,26 @@ private final class FlowHarness {
         #expect(harness.controller.requestedCarbs == 83)
     }
 
-    @Test(
-        "Without the phone's details in 5 s, the watch says to open the request on the iPhone"
-    ) func noDetailsInFiveSecondsIsUnreachable() throws {
+    @Test("While the details haven't come, the watch asks the phone again, and stops once they have") func asksAgainWhileWaiting() {
         let harness = FlowHarness()
         harness.controller.open(id: "r1")
-        #expect(harness.waits.map(\.seconds) == [5])
+        let resends = harness.waits.filter { $0.seconds < AIRequestWatchFlowController.detailsWait }
+        resends[0].work()
+        #expect(harness.opens == ["r1", "r1"])
+        #expect(harness.controller.phase == .loading(id: "r1"))
+
+        harness.controller.receive(Self.details)
+        resends[1].work()
+        #expect(harness.opens == ["r1", "r1"])
+        #expect(harness.controller.phase == .active(Self.details))
+    }
+
+    @Test(
+        "Without the phone's details in 10 s, the watch says to open the request on the iPhone"
+    ) func noDetailsInTenSecondsIsUnreachable() throws {
+        let harness = FlowHarness()
+        harness.controller.open(id: "r1")
+        #expect(harness.waits.map(\.seconds) == [10, 2, 5])
         #expect(harness.controller.notice == nil)
 
         harness.runWaits()

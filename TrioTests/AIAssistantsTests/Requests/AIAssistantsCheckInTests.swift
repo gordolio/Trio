@@ -60,19 +60,26 @@ final class CheckInHarness {
     /// Calls of `removeDeliveredCheckIns`.
     let removals: CallCounter
 
-    init(api: FakeAIAssistantsAPI, isLinked: Bool) {
+    /// The time the check-in reads, for its throttle.
+    let clock: TestClock
+
+    init(api: FakeAIAssistantsAPI, isLinked: Bool, retryDelays: [TimeInterval]) {
         let requests = makeCoordinator(serviceReporter: ServiceRequestReporter(api: api))
         let loopRuns = PassthroughSubject<Date, Never>()
         let activity = FakeBackgroundActivity()
         let removals = CallCounter()
+        let clock = TestClock()
         checkIn = AIAssistantsCheckIn(
             api: api,
             coordinator: requests.coordinator,
             isLinked: { isLinked },
             loopRuns: loopRuns.eraseToAnyPublisher(),
             beginBackgroundActivity: activity.begin,
-            removeDeliveredCheckIns: removals.record
+            removeDeliveredCheckIns: removals.record,
+            retryDelays: retryDelays,
+            now: clock.now
         )
+        self.clock = clock
         self.requests = requests
         self.loopRuns = loopRuns
         self.activity = activity
@@ -80,8 +87,20 @@ final class CheckInHarness {
     }
 }
 
-func makeCheckIn(api: FakeAIAssistantsAPI, isLinked: Bool = true) -> CheckInHarness {
-    CheckInHarness(api: api, isLinked: isLinked)
+func makeCheckIn(api: FakeAIAssistantsAPI, isLinked: Bool = true, retryDelays: [TimeInterval] = []) -> CheckInHarness {
+    CheckInHarness(api: api, isLinked: isLinked, retryDelays: retryDelays)
+}
+
+/// A time that moves only when a test says.
+final class TestClock {
+    private let lock = NSLock()
+    private var current = coordinatorTestStart
+
+    func now() -> Date { lock.withLock { current } }
+
+    func advance(_ seconds: TimeInterval) {
+        lock.withLock { current += seconds }
+    }
 }
 
 @Suite("AI Assistants check-in") struct AIAssistantsCheckInTests {
@@ -197,6 +216,62 @@ func makeCheckIn(api: FakeAIAssistantsAPI, isLinked: Bool = true) -> CheckInHarn
         #expect(api.reportedStates == ["r1:pending"])
     }
 
+    @Test func inboxNetworkErrorIsTriedAgainAfterEachDelay() async {
+        let api = FakeAIAssistantsAPI()
+        api.inbox = inbox(requests: [inboxMeal(id: "r1")])
+        api.errors["getInbox"] = .network
+        let h = makeCheckIn(api: api, retryDelays: [0.01, 0.01])
+        await h.checkIn.checkIn(reason: .push)
+        #expect(api.calls == ["getInbox", "getInbox", "getInbox"])
+        #expect(api.reportedStates.isEmpty)
+    }
+
+    @Test func inboxNetworkErrorThatClearsIsCheckedInOnTheNextTry() async {
+        let api = FakeAIAssistantsAPI()
+        api.inbox = inbox(requests: [inboxMeal(id: "r1")])
+        api.errors["getInbox"] = .network
+        let h = makeCheckIn(api: api, retryDelays: [0.2])
+        let checkIn = Task { await h.checkIn.checkIn(reason: .push) }
+        #expect(await eventuallyTrue { api.calls == ["getInbox"] })
+        api.errors = [:]
+        await checkIn.value
+        #expect(api.calls.filter { $0 == "getInbox" }.count == 2)
+        #expect(api.reportedStates == ["r1:pending"])
+    }
+
+    @Test func watchContactAndForegroundCheckInAtMostOncePerThrottle() async {
+        let api = FakeAIAssistantsAPI()
+        let h = makeCheckIn(api: api)
+        await h.checkIn.checkIn(reason: .watch)
+        await h.checkIn.checkIn(reason: .foreground)
+        await h.checkIn.checkIn(reason: .watch)
+        #expect(api.calls == ["getInbox"])
+        h.clock.advance(AIAssistantsCheckIn.throttle)
+        await h.checkIn.checkIn(reason: .foreground)
+        #expect(api.calls == ["getInbox", "getInbox"])
+        // A push, a loop run and an open always check in.
+        await h.checkIn.checkIn(reason: .push)
+        await h.checkIn.checkIn(reason: .loop)
+        await h.checkIn.checkIn(reason: .open)
+        #expect(api.calls.count == 5)
+    }
+
+    @Test func waitingForRunningReturnsOnceTheCheckInInFlightHasBroughtTheRequestIn() async {
+        let api = FakeAIAssistantsAPI()
+        let gate = UploadGate()
+        api.inboxGate = gate
+        let h = makeCheckIn(api: api)
+        let push = Task { await h.checkIn.checkIn(reason: .push) }
+        #expect(await eventuallyTrue { api.calls == ["getInbox"] })
+        // The request reaches the inbox after the push's fetch began; the open waits for the fetch after it.
+        api.inbox = inbox(requests: [inboxMeal(id: "r1")])
+        let open = Task { await h.checkIn.checkIn(reason: .open, waitingForRunning: true) }
+        gate.open()
+        await open.value
+        #expect(h.requests.coordinator.current.value?.request.id == "r1")
+        await push.value
+    }
+
     @Test func malformedInboxWaitsForTheNextCheckIn() async {
         let api = FakeAIAssistantsAPI()
         api.inbox = inbox(requests: [inboxMeal(id: "r1")])
@@ -260,7 +335,26 @@ func makeCheckIn(api: FakeAIAssistantsAPI, isLinked: Bool = true) -> CheckInHarn
 
     @Test func checkInPushIsRecognisedOthersAreNot() {
         #expect(AIRequestHooks.isCheckIn(["trio-rc": ["v": 1, "type": "check-in"]]))
+        #expect(!AIRequestHooks.isCheckIn(["trio-rc": ["v": 1, "type": "request"]]))
         #expect(!AIRequestHooks.isCheckIn(["encrypted_data": "x"]))
+    }
+
+    @Test func aMealPushedToTheIPhoneWakesTrioToo() {
+        #expect(AIRequestHooks.wakesTrio(["trio-rc": ["v": 1, "type": "check-in"]]))
+        #expect(AIRequestHooks.wakesTrio(["trio-rc": ["v": 1, "type": "request", "request": ["id": "r1"]]]))
+        #expect(!AIRequestHooks.wakesTrio(["trio-rc": ["v": 1, "type": "test"]]))
+        #expect(!AIRequestHooks.wakesTrio(["encrypted_data": "x"]))
+    }
+
+    @Test func mealPushChecksInThenCompletes() async {
+        let api = FakeAIAssistantsAPI()
+        api.inbox = inbox(requests: [inboxMeal(id: "r1")])
+        let h = makeCheckIn(api: api)
+        let results = FetchResults()
+        let push: [AnyHashable: Any] = ["trio-rc": ["v": 1, "type": "request", "request": ["id": "r1"]]]
+        #expect(AIRequestHooks.handleRemoteNotification(push, checkIn: h.checkIn, results.complete))
+        #expect(await eventuallyTrue { results.values == [.newData] })
+        #expect(api.reportedStates == ["r1:pending"])
     }
 
     @Test func loopRunTriggersACheckIn() async {

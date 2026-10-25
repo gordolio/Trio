@@ -479,6 +479,53 @@ private final class RelayRig {
         #expect(rig.harness.coordinator.current.value?.request.id == "r1")
     }
 
+    @Test func openOfARequestTrioHasntSeenChecksInFirst() async throws {
+        let rig = RelayRig()
+        let checkIns = CallCounter()
+        rig.relay.checkInBeforeOpening { [rig] in
+            checkIns.record()
+            await rig.ask("r1")
+        }
+
+        await rig.relay.open("r1")
+
+        #expect(checkIns.calls == 1)
+        #expect(try rig.sent(AIRequestIdentifiers.keyDetails, as: AIRequestWatchDetails.self).map(\.id) == ["r1"])
+        #expect(try rig.ended().isEmpty)
+    }
+
+    @Test func theWatchAskingAgainForTheSameRequestJoinsTheOpenInFlight() async throws {
+        let rig = RelayRig()
+        let checkIns = CallCounter()
+        let gate = UploadGate()
+        rig.relay.checkInBeforeOpening { [rig] in
+            checkIns.record()
+            await gate.wait()
+            await rig.ask("r1")
+        }
+
+        let first = Task { await rig.relay.open("r1") }
+        #expect(await eventuallyTrue { checkIns.calls == 1 })
+        let again = Task { await rig.relay.open("r1") }
+        gate.open()
+        await first.value
+        await again.value
+
+        #expect(checkIns.calls == 1)
+        #expect(try rig.sent(AIRequestIdentifiers.keyDetails, as: AIRequestWatchDetails.self).map(\.id) == ["r1"])
+    }
+
+    @Test func openOfARequestTheServiceDoesntHaveEitherRepliesExpired() async throws {
+        let rig = RelayRig()
+        let checkIns = CallCounter()
+        rig.relay.checkInBeforeOpening { checkIns.record() }
+
+        await rig.relay.open("r9")
+
+        #expect(checkIns.calls == 1)
+        #expect(try rig.ended() == [AIRequestEnded(id: "r9", headline: "Expired", isSuccess: false)])
+    }
+
     @Test func openForAnEndedRequestRepliesWithItsEnding() async throws {
         let rig = RelayRig()
         await rig.ask("r1")

@@ -34,8 +34,9 @@ final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WC
 
     /// How long a swipe on a request keeps the watch app running to tell the phone.
     private static let backgroundTimeout: TimeInterval = 15
-    /// How long an open waits for the phone to be reachable. The phone then has the rest of the flow's 5 s to answer.
-    private static let openSendWindow: TimeInterval = 4
+    /// How long an open waits for the phone to be reachable. The phone then has the rest of the flow's 10 s to answer,
+    /// which may include checking in with the service.
+    private static let openSendWindow: TimeInterval = 8
     /// How often a `liveBefore` message checks whether the phone is reachable yet.
     private static let reachabilityCheck: UInt64 = 500_000_000
     /// Whether the wearer allows meal requests, as the phone last said.
