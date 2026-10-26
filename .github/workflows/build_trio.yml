@@ -2,6 +2,16 @@ name: 4. Build Trio
 run-name: Build Trio (${{ github.ref_name }})
 on:
   workflow_dispatch:
+    inputs:
+      # Checked groups get this build and no one else does. Nothing checked = the usual upload.
+      testflight_group_gordon:
+        description: "Send to TestFlight group: Gordon"
+        type: boolean
+        default: true
+      testflight_group_testers:
+        description: "Send to TestFlight group: Testers"
+        type: boolean
+        default: false
   schedule:
     # Check for updates every Sunday
     #   Later logic builds if there are updates or if it is the 2nd Sunday of the month
@@ -349,6 +359,7 @@ jobs:
           FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
           FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          TESTFLIGHT_GROUPS: ${{ format('{0},{1}', inputs.testflight_group_gordon && 'Gordon' || '', inputs.testflight_group_testers && 'Testers' || '') }}
 
       # Publish only the non-sensitive metadata required by Trio-release-notes
       - name: Upload release notes metadata

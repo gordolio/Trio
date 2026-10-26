@@ -21,6 +21,8 @@ FASTLANE_ISSUER_ID = ENV["FASTLANE_ISSUER_ID"]
 FASTLANE_KEY = ENV["FASTLANE_KEY"]
 DEVICE_NAME = ENV["DEVICE_NAME"]
 DEVICE_ID = ENV["DEVICE_ID"]
+# Comma-separated TestFlight group names; when set, the build goes to these internal groups only
+TESTFLIGHT_GROUPS = ENV["TESTFLIGHT_GROUPS"].to_s.split(",").map(&:strip).reject(&:empty?)
 ENV["FASTLANE_XCODEBUILD_SETTINGS_TIMEOUT"] = "120"
 
 
@@ -146,13 +148,26 @@ platform :ios do
       key_content: "#{FASTLANE_KEY}"
     )
     
-    upload_to_testflight(
-      api_key: api_key,
-      skip_submission: false,
-      ipa: "Trio.ipa",
-      skip_waiting_for_build_processing: true,
-      changelog: git_branch+" "+last_git_commit[:abbreviated_commit_hash],
-    )
+    if TESTFLIGHT_GROUPS.empty?
+      upload_to_testflight(
+        api_key: api_key,
+        skip_submission: false,
+        ipa: "Trio.ipa",
+        skip_waiting_for_build_processing: true,
+        changelog: git_branch+" "+last_git_commit[:abbreviated_commit_hash],
+      )
+    else
+      # Adding a build to a group needs it processed, so wait here
+      upload_to_testflight(
+        api_key: api_key,
+        skip_submission: false,
+        ipa: "Trio.ipa",
+        skip_waiting_for_build_processing: false,
+        distribute_external: false,
+        groups: TESTFLIGHT_GROUPS,
+        changelog: git_branch+" "+last_git_commit[:abbreviated_commit_hash],
+      )
+    end
   end
 
   desc "Provision Identifiers and Certificates"
