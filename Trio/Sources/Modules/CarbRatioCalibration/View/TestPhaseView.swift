@@ -48,12 +48,10 @@ extension CarbRatioCalibration {
                             }
                         }
                         .padding()
-                        .background(Color(.tertiarySystemBackground))
-                        .cornerRadius(8)
+                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     // Calculation summary
                     VStack(spacing: 12) {
@@ -104,12 +102,10 @@ extension CarbRatioCalibration {
                             }
                         }
                         .padding()
-                        .background(Color(.tertiarySystemBackground))
-                        .cornerRadius(8)
+                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     // Instructions
                     VStack(alignment: .leading, spacing: 12) {
@@ -125,8 +121,7 @@ extension CarbRatioCalibration {
                         instructionRow(number: 4, text: "Do not eat or bolus for 90 minutes")
                     }
                     .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     Spacer()
 
@@ -141,7 +136,7 @@ extension CarbRatioCalibration {
                             }
                             .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.testPrimary)
 
                         Button(role: .destructive) {
                             showCancelConfirmation = true
@@ -149,7 +144,7 @@ extension CarbRatioCalibration {
                             Text("Cancel Test")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.testSecondary)
                     }
                 }
             }

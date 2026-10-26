@@ -6,10 +6,14 @@ extension CarbRatioCalibration {
         let resolver: Resolver
 
         @StateObject var state = StateModel()
+
+        @Environment(\.colorScheme) var colorScheme
+        @Environment(AppState.self) var appState
+
         var body: some View {
             VStack(spacing: 0) {
                 // Progress bar
-                CalibrationProgressBar(currentStep: state.currentStep)
+                SettingsTestStepBar(current: state.currentStep)
                     .padding(.horizontal)
                     .padding(.top, 8)
 
@@ -17,6 +21,7 @@ extension CarbRatioCalibration {
                 stepContent
                     .padding()
             }
+            .background(appState.trioBackgroundColor(for: colorScheme).ignoresSafeArea())
             .navigationTitle("Carb Ratio Calibration")
             .navigationBarTitleDisplayMode(.inline)
             .alert("Error", isPresented: .constant(state.errorMessage != nil)) {

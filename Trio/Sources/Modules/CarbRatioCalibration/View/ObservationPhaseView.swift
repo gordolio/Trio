@@ -56,8 +56,7 @@ extension CarbRatioCalibration {
                         .padding(.horizontal, 40)
                     }
                     .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     // Test details
                     VStack(spacing: 16) {
@@ -88,8 +87,7 @@ extension CarbRatioCalibration {
                         }
                     }
                     .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     // Instructions
                     VStack(alignment: .leading, spacing: 12) {
@@ -102,8 +100,7 @@ extension CarbRatioCalibration {
                         instructionRow(icon: "checkmark.circle", text: "Normal activity is fine", color: .green)
                     }
                     .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     Spacer()
 
@@ -117,7 +114,7 @@ extension CarbRatioCalibration {
                             Text("View Results")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.testPrimary)
                     }
 
                     // Cancel button
@@ -127,7 +124,7 @@ extension CarbRatioCalibration {
                         Text("Cancel Test")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.testSecondary)
                 }
             }
             .confirmationDialog(

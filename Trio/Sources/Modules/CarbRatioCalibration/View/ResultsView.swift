@@ -119,12 +119,10 @@ extension CarbRatioCalibration {
                         .foregroundColor(.secondary)
                 }
                 .padding()
-                .background(Color(.tertiarySystemBackground))
-                .cornerRadius(8)
+                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .padding()
-            .background(Color(.secondarySystemBackground))
-            .cornerRadius(12)
+            .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
 
         @ViewBuilder private var testSummary: some View {
@@ -149,13 +147,11 @@ extension CarbRatioCalibration {
                         )
                     }
                     .padding()
-                    .background(Color(.tertiarySystemBackground))
-                    .cornerRadius(8)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
             }
             .padding()
-            .background(Color(.secondarySystemBackground))
-            .cornerRadius(12)
+            .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
 
         @ViewBuilder private func recommendationSection(result: CalibrationResult) -> some View {
@@ -195,14 +191,12 @@ extension CarbRatioCalibration {
                             }
                         }
                         .padding()
-                        .background(Color(.tertiarySystemBackground))
-                        .cornerRadius(8)
+                        .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                 }
             }
             .padding()
-            .background(Color(.secondarySystemBackground))
-            .cornerRadius(12)
+            .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
 
         @ViewBuilder private var actionButtons: some View {
@@ -214,7 +208,7 @@ extension CarbRatioCalibration {
                         Text("Apply Suggested Ratio")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.testPrimary)
                     .confirmationDialog(
                         "Apply Ratio Change",
                         isPresented: $state.showRatioUpdateOptions,
@@ -245,7 +239,7 @@ extension CarbRatioCalibration {
                     Text(state.testState?.suggestedNewRatio != nil ? "Keep Current Ratio" : "Done")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.testSecondary)
             }
         }
 

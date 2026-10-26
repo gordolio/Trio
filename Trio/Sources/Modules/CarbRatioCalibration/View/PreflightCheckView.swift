@@ -64,8 +64,7 @@ extension CarbRatioCalibration {
                         )
                     }
                     .padding()
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     // Current Carb Ratio Info
                     VStack(spacing: 8) {
@@ -85,8 +84,7 @@ extension CarbRatioCalibration {
                     }
                     .padding()
                     .frame(maxWidth: .infinity)
-                    .background(Color(.secondarySystemBackground))
-                    .cornerRadius(12)
+                    .background(Color.chart, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
                     Spacer()
 
@@ -98,7 +96,7 @@ extension CarbRatioCalibration {
                             Text("Begin Prep")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.testPrimary)
                         .disabled(!state.preflightPassed)
                     }
                 }

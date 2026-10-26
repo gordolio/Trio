@@ -7,6 +7,21 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4CF281AA6BF01154300C30FD /* SettingsTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C199397780667503D6A80251 /* SettingsTestTests.swift */; };
+		DDF418230AA821E3B36192BE /* BasalTestResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D735FDFCDF087A632A52BAB /* BasalTestResultView.swift */; };
+		AE9B87A7BC5E40F2222136A0 /* BasalTestFastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA90C2D5FF77B3EFAA67910 /* BasalTestFastView.swift */; };
+		4917D5EBD1699E2EA5A59434 /* BasalTestCheckView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2025AA0CF7306A0310731747 /* BasalTestCheckView.swift */; };
+		BA02CB069535B54B6084B421 /* BasalTestRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 628E6A152745E9351F493B22 /* BasalTestRootView.swift */; };
+		B6E63B0A96D294D51A401C8F /* BasalTestStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF4FBF35BEE578ECB1BE473 /* BasalTestStateModel.swift */; };
+		34A45AD1A4B82909497149E3 /* BasalTestProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C338EE77BC846A2CF8D56669 /* BasalTestProvider.swift */; };
+		D547B8AD410F85729F61613F /* BasalTestModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA67704B618B29C4D15300E2 /* BasalTestModels.swift */; };
+		C789970E3F8CF9A01A98F36B /* BasalTestDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEC2305AA2305D82E590BFE /* BasalTestDataFlow.swift */; };
+		90BF9CAB4E8FDFDE72837D98 /* SettingsTestService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC769839F86616934537D1F /* SettingsTestService.swift */; };
+		D99B13574381DBEF6C3767F0 /* SettingsTestComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A8434013F3CEEB0F1BDAF4 /* SettingsTestComponents.swift */; };
+		B4AD88A52448D8A1B45ABB5D /* SettingsTestRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B02FF2B93B6A53371CD05A5 /* SettingsTestRootView.swift */; };
+		DAFA43DC5235CCC68E5D66F3 /* SettingsTestStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DAC8E7E661E449FCBBCBCE3 /* SettingsTestStateModel.swift */; };
+		583F76AA4084E20A0C4658D0 /* SettingsTestDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = F378F647DC86FC0CAB8F0FD6 /* SettingsTestDataFlow.swift */; };
+		56B5372D4D7EDE630DDB8350 /* SettingsTestModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 551627443D7FDF9453FC810C /* SettingsTestModels.swift */; };
 		460278C2EB8B79E4B5594F73 /* AIRequestBolusSignals.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */; };
 		5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */; };
 		A89895B2F0920F33CB2453C1 /* AIRequestTreatmentsSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */; };
@@ -93,7 +108,6 @@
 		06EA14194764FC7518A9B6A8 /* ChatMessageBubbles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE3CF472304972A06F81933 /* ChatMessageBubbles.swift */; };
 		F4A3B2C1D0E9F8A7B6C5D4E3 /* AnimatedNutrientValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* AnimatedNutrientValue.swift */; };
 		E7F1A2B3C4D5E6F7A8B9C0D1 /* ServingPickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E2F3A4B5C6D7E8F9A0B1C2 /* ServingPickerView.swift */; };
-		114077129AA24C269DD86299 /* CalibrationProgressBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48B4C6DE6F25CA591D765E1F /* CalibrationProgressBar.swift */; };
 		1FE9DDEA4241B6767CFB5850 /* ScanFoodIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE64D6C6E38DDE8C69942019 /* ScanFoodIntent.swift */; };
 		209E2A74CF8986BC64BB2B7D /* PhotoPickerWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = D203A7B314CB343B758EE815 /* PhotoPickerWrapper.swift */; };
 		2ADD5066B7B6BD1316327E89 /* CalibrationTestStored+CoreDataProperties.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E9634AEAF5898C5078A5900 /* CalibrationTestStored+CoreDataProperties.swift */; };
@@ -1348,6 +1362,21 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		C199397780667503D6A80251 /* SettingsTestTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestTests.swift; sourceTree = "<group>"; };
+		1D735FDFCDF087A632A52BAB /* BasalTestResultView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestResultView.swift; sourceTree = "<group>"; };
+		FCA90C2D5FF77B3EFAA67910 /* BasalTestFastView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestFastView.swift; sourceTree = "<group>"; };
+		2025AA0CF7306A0310731747 /* BasalTestCheckView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestCheckView.swift; sourceTree = "<group>"; };
+		628E6A152745E9351F493B22 /* BasalTestRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestRootView.swift; sourceTree = "<group>"; };
+		FCF4FBF35BEE578ECB1BE473 /* BasalTestStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestStateModel.swift; sourceTree = "<group>"; };
+		C338EE77BC846A2CF8D56669 /* BasalTestProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestProvider.swift; sourceTree = "<group>"; };
+		CA67704B618B29C4D15300E2 /* BasalTestModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestModels.swift; sourceTree = "<group>"; };
+		7CEC2305AA2305D82E590BFE /* BasalTestDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestDataFlow.swift; sourceTree = "<group>"; };
+		6AC769839F86616934537D1F /* SettingsTestService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestService.swift; sourceTree = "<group>"; };
+		02A8434013F3CEEB0F1BDAF4 /* SettingsTestComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestComponents.swift; sourceTree = "<group>"; };
+		6B02FF2B93B6A53371CD05A5 /* SettingsTestRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestRootView.swift; sourceTree = "<group>"; };
+		1DAC8E7E661E449FCBBCBCE3 /* SettingsTestStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestStateModel.swift; sourceTree = "<group>"; };
+		F378F647DC86FC0CAB8F0FD6 /* SettingsTestDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestDataFlow.swift; sourceTree = "<group>"; };
+		551627443D7FDF9453FC810C /* SettingsTestModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestModels.swift; sourceTree = "<group>"; };
 		8E4C20CC51DE24EA47ECC5CC /* AIRequestBolusSignals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestBolusSignals.swift; sourceTree = "<group>"; };
 		4D96FD901BC2B9380B2DCE6A /* AIRequestTreatmentsOpener.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsOpener.swift; sourceTree = "<group>"; };
 		7215749D3583C544E919EA47 /* AIRequestTreatmentsSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestTreatmentsSession.swift; sourceTree = "<group>"; };
@@ -1438,7 +1467,6 @@
 		357F0EC0AC1D16E1B932D948 /* CalibrationModeService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CalibrationModeService.swift; sourceTree = "<group>"; };
 		40F7F09ACA8EE57FD1269A2D /* PreflightCheckView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PreflightCheckView.swift; sourceTree = "<group>"; };
 		4797697E4FED0E86A8A64713 /* OpenTreatmentIntent.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OpenTreatmentIntent.swift; sourceTree = "<group>"; };
-		48B4C6DE6F25CA591D765E1F /* CalibrationProgressBar.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CalibrationProgressBar.swift; sourceTree = "<group>"; };
 		52B87767F0613A1FA18C7D34 /* FoodDescriptionInputView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FoodDescriptionInputView.swift; sourceTree = "<group>"; };
 		5E9634AEAF5898C5078A5900 /* CalibrationTestStored+CoreDataProperties.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "CalibrationTestStored+CoreDataProperties.swift"; sourceTree = "<group>"; };
 		69C874D89298DF022F8DD77E /* NutritionFactsMerger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NutritionFactsMerger.swift; sourceTree = "<group>"; };
@@ -2650,6 +2678,57 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		AC60EFEDD096B3E1AB8C4C6F /* View */ = {
+			isa = PBXGroup;
+			children = (
+				1D735FDFCDF087A632A52BAB /* BasalTestResultView.swift */,
+				FCA90C2D5FF77B3EFAA67910 /* BasalTestFastView.swift */,
+				2025AA0CF7306A0310731747 /* BasalTestCheckView.swift */,
+				628E6A152745E9351F493B22 /* BasalTestRootView.swift */,
+			);
+			path = View;
+			sourceTree = "<group>";
+		};
+		5636E05EDB442B5A3E4BF7CF /* BasalTest */ = {
+			isa = PBXGroup;
+			children = (
+				AC60EFEDD096B3E1AB8C4C6F /* View */,
+				FCF4FBF35BEE578ECB1BE473 /* BasalTestStateModel.swift */,
+				C338EE77BC846A2CF8D56669 /* BasalTestProvider.swift */,
+				CA67704B618B29C4D15300E2 /* BasalTestModels.swift */,
+				7CEC2305AA2305D82E590BFE /* BasalTestDataFlow.swift */,
+			);
+			path = BasalTest;
+			sourceTree = "<group>";
+		};
+		75A854C1A98D648D88236692 /* SettingsTest */ = {
+			isa = PBXGroup;
+			children = (
+				6AC769839F86616934537D1F /* SettingsTestService.swift */,
+			);
+			path = SettingsTest;
+			sourceTree = "<group>";
+		};
+		B96D45BAAF290374D4707BF6 /* View */ = {
+			isa = PBXGroup;
+			children = (
+				02A8434013F3CEEB0F1BDAF4 /* SettingsTestComponents.swift */,
+				6B02FF2B93B6A53371CD05A5 /* SettingsTestRootView.swift */,
+			);
+			path = View;
+			sourceTree = "<group>";
+		};
+		481AB4B8C84BF92F98D57A80 /* SettingsTest */ = {
+			isa = PBXGroup;
+			children = (
+				B96D45BAAF290374D4707BF6 /* View */,
+				1DAC8E7E661E449FCBBCBCE3 /* SettingsTestStateModel.swift */,
+				F378F647DC86FC0CAB8F0FD6 /* SettingsTestDataFlow.swift */,
+				551627443D7FDF9453FC810C /* SettingsTestModels.swift */,
+			);
+			path = SettingsTest;
+			sourceTree = "<group>";
+		};
 		85CE324C446C4CBCB4FEB73D /* AIRequests */ = {
 			isa = PBXGroup;
 			children = (
@@ -2789,7 +2868,6 @@
 		3752CA1125E472F0848ECB0E /* View */ = {
 			isa = PBXGroup;
 			children = (
-				48B4C6DE6F25CA591D765E1F /* CalibrationProgressBar.swift */,
 				82F381A1A8A4F0F7BB7A45CF /* CarbRatioCalibrationRootView.swift */,
 				BB33289344B40A5E9D637F64 /* ObservationPhaseView.swift */,
 				40F7F09ACA8EE57FD1269A2D /* PreflightCheckView.swift */,
@@ -3117,6 +3195,8 @@
 		3811DE0325C9D31700A708ED /* Modules */ = {
 			isa = PBXGroup;
 			children = (
+				5636E05EDB442B5A3E4BF7CF /* BasalTest */,
+				481AB4B8C84BF92F98D57A80 /* SettingsTest */,
 				BF090000000000000000AA01 /* AIServiceSettings */,
 				F7B83EB43077FBF9497855F2 /* CarbRatioCalibration */,
 				DDD163032C4C67B400CD525A /* Adjustments */,
@@ -3286,6 +3366,7 @@
 		3811DE9125C9D88200A708ED /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				75A854C1A98D648D88236692 /* SettingsTest */,
 				85795A8FCBF951AD76106BE8 /* AI */,
 				AFE4CFA07BB2F1A78FD8F0FF /* CalibrationMode */,
 				B015AFF22E600000000D7351 /* Adjustments */,
@@ -3965,6 +4046,7 @@
 		38FCF3EE25E9028E0078B0D1 /* TrioTests */ = {
 			isa = PBXGroup;
 			children = (
+				C199397780667503D6A80251 /* SettingsTestTests.swift */,
 				C3D4E5F6071829304152637A /* OpenAIStreamingParserTests.swift */,
 				E90100000000000000000002 /* ImageRoutingCoordinatorTests.swift */,
 				E90100000000000000000004 /* ImageRoutingDeadlineTests.swift */,
@@ -6078,6 +6160,20 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DDF418230AA821E3B36192BE /* BasalTestResultView.swift in Sources */,
+				AE9B87A7BC5E40F2222136A0 /* BasalTestFastView.swift in Sources */,
+				4917D5EBD1699E2EA5A59434 /* BasalTestCheckView.swift in Sources */,
+				BA02CB069535B54B6084B421 /* BasalTestRootView.swift in Sources */,
+				B6E63B0A96D294D51A401C8F /* BasalTestStateModel.swift in Sources */,
+				34A45AD1A4B82909497149E3 /* BasalTestProvider.swift in Sources */,
+				D547B8AD410F85729F61613F /* BasalTestModels.swift in Sources */,
+				C789970E3F8CF9A01A98F36B /* BasalTestDataFlow.swift in Sources */,
+				90BF9CAB4E8FDFDE72837D98 /* SettingsTestService.swift in Sources */,
+				D99B13574381DBEF6C3767F0 /* SettingsTestComponents.swift in Sources */,
+				B4AD88A52448D8A1B45ABB5D /* SettingsTestRootView.swift in Sources */,
+				DAFA43DC5235CCC68E5D66F3 /* SettingsTestStateModel.swift in Sources */,
+				583F76AA4084E20A0C4658D0 /* SettingsTestDataFlow.swift in Sources */,
+				56B5372D4D7EDE630DDB8350 /* SettingsTestModels.swift in Sources */,
 				6E17CEEA91E3E69C6D626EC8 /* AIRequestWatchFlowController.swift in Sources */,
 				460278C2EB8B79E4B5594F73 /* AIRequestBolusSignals.swift in Sources */,
 				5A0BC9B1C097699881368F23 /* AIRequestTreatmentsOpener.swift in Sources */,
@@ -6154,7 +6250,6 @@
 				65F728C62D3792102FFBC72B /* CarbRatioCalibrationDataFlow.swift in Sources */,
 				AACDDD9C7BE6A3DE961F3DB5 /* CarbRatioCalibrationProvider.swift in Sources */,
 				DF7B29B9F98628EF95E1CCE2 /* CarbRatioCalibrationStateModel.swift in Sources */,
-				114077129AA24C269DD86299 /* CalibrationProgressBar.swift in Sources */,
 				00B4CF9DD4CCC22F174FEB33 /* CarbRatioCalibrationRootView.swift in Sources */,
 				31F4662FE919CE32C59B3B77 /* ObservationPhaseView.swift in Sources */,
 				674B2AE86F837F0DF7D18091 /* PreflightCheckView.swift in Sources */,
@@ -6928,6 +7023,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4CF281AA6BF01154300C30FD /* SettingsTestTests.swift in Sources */,
 				F6EFB29AC67EA83925647CFC /* AIRequestSharedTests.swift in Sources */,
 				6B386C900A0258AFCF7A456D /* AIRequestWatchFlowControllerTests.swift in Sources */,
 				4A86AF5A4BDCF4AFAA605E06 /* AIRequestTreatmentsSessionTests.swift in Sources */,

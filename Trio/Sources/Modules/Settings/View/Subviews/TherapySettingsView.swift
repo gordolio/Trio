@@ -40,7 +40,7 @@ struct TherapySettingsView: BaseView {
             Section(
                 header: Text("Calibration"),
                 content: {
-                    Text("Carb Ratio Calibration").navigationLink(to: .carbRatioCalibration, from: self)
+                    Text("Settings Tests").navigationLink(to: .settingsTests, from: self)
                 }
             )
             .listRowBackground(Color.chart)
