@@ -157,13 +157,15 @@ platform :ios do
         changelog: git_branch+" "+last_git_commit[:abbreviated_commit_hash],
       )
     else
-      # Adding a build to a group needs it processed, so wait here
+      # Adding a build to a group needs it processed, so wait here.
+      # Internal groups need no Beta App Review; submitting needs Test Information, which this app lacks
       upload_to_testflight(
         api_key: api_key,
         skip_submission: false,
         ipa: "Trio.ipa",
         skip_waiting_for_build_processing: false,
         distribute_external: false,
+        submit_beta_review: false,
         groups: TESTFLIGHT_GROUPS,
         changelog: git_branch+" "+last_git_commit[:abbreviated_commit_hash],
       )
