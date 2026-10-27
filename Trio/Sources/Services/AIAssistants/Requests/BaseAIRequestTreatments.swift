@@ -108,7 +108,7 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
             glucose = snapshot.glucose.latest
             displayUnits = snapshot.units
         } catch {
-            debug(.service, "AI requests: couldn't read the glucose for the 0 U reason: \(error)")
+            debug(.remote, "AI requests: couldn't read the glucose for the 0 U reason: \(error)")
         }
         let determination = await latestDetermination()
         return Self.noDoseReason(
@@ -199,13 +199,13 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
         do {
             try await carbsStorage.storeCarbs([entry], areFetchedFromRemote: false)
             guard try await isMealEntryStored(id: id) else {
-                debug(.service, "AI requests: the carbs entry wasn't there after saving it")
+                debug(.remote, "AI requests: the carbs entry wasn't there after saving it")
                 throw AIRequestCarbsNotSavedError(underlying: nil)
             }
         } catch let error as AIRequestCarbsNotSavedError {
             throw error
         } catch {
-            debug(.service, "AI requests: couldn't save the carbs: \(error)")
+            debug(.remote, "AI requests: couldn't save the carbs: \(error)")
             throw AIRequestCarbsNotSavedError(underlying: error)
         }
     }
@@ -219,7 +219,7 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
             await apsManager.enactBolus(amount: amount, isSMB: false, callback: answer)
         }
         guard let result = answer else {
-            debug(.service, "AI requests: the pump didn't report on the \(units) U bolus")
+            debug(.remote, "AI requests: the pump didn't report on the \(units) U bolus")
             return "Trio couldn't confirm the bolus started"
         }
         return result.success ? nil : result.message
@@ -244,7 +244,7 @@ final class BaseAIRequestTreatments: AIRequestTreatments {
             }
             return (latest?.minPredBG ?? Self.defaultMinPredBG, latest?.iob)
         } catch {
-            debug(.service, "AI requests: couldn't read the last determination, using \(Self.defaultMinPredBG): \(error)")
+            debug(.remote, "AI requests: couldn't read the last determination, using \(Self.defaultMinPredBG): \(error)")
             return (Self.defaultMinPredBG, nil)
         }
     }

@@ -46,7 +46,7 @@ final class AIRequestSeenStore {
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         } catch {
-            debug(.service, "AI requests: couldn't create the seen-ID folder: \(error)")
+            debug(.remote, "AI requests: couldn't create the seen-ID folder: \(error)")
         }
         return AIRequestSeenStore(fileURL: folder.appendingPathComponent("seen-requests.json"))
     }
@@ -67,7 +67,7 @@ final class AIRequestSeenStore {
             do {
                 try save()
             } catch {
-                debug(.service, "AI requests: couldn't save seen IDs: \(error)")
+                debug(.remote, "AI requests: couldn't save seen IDs: \(error)")
                 throw SeenError.persistenceFailed
             }
             return .new
@@ -84,7 +84,7 @@ final class AIRequestSeenStore {
             do {
                 try save()
             } catch {
-                debug(.service, "AI requests: couldn't save seen IDs: \(error)")
+                debug(.remote, "AI requests: couldn't save seen IDs: \(error)")
             }
         }
     }
@@ -105,7 +105,7 @@ final class AIRequestSeenStore {
             do {
                 entries = try Self.makeDecoder().decode([Entry].self, from: data)
             } catch {
-                debug(.service, "AI requests: seen-ID file doesn't decode, starting empty: \(error)")
+                debug(.remote, "AI requests: seen-ID file doesn't decode, starting empty: \(error)")
                 entries = []
             }
         case .unreadable:
@@ -145,7 +145,7 @@ enum AIRequestFileContents {
         do {
             return try .data(Data(contentsOf: url))
         } catch {
-            debug(.service, "AI requests: couldn't read \(url.lastPathComponent) yet, keeping it: \(error)")
+            debug(.remote, "AI requests: couldn't read \(url.lastPathComponent) yet, keeping it: \(error)")
             return .unreadable
         }
     }

@@ -40,17 +40,17 @@ struct AIRequestCarryOutMarker: Codable, Equatable {
         do {
             data = try Data(contentsOf: url)
         } catch {
-            debug(.service, "AI requests: couldn't read the carry-out marker yet, keeping it: \(error)")
+            debug(.remote, "AI requests: couldn't read the carry-out marker yet, keeping it: \(error)")
             return .unreadable
         }
         do {
             return try .found(JSONDecoder().decode(Self.self, from: data))
         } catch let error as DecodingError {
-            debug(.service, "AI requests: carry-out marker doesn't decode, dropping it: \(error)")
+            debug(.remote, "AI requests: carry-out marker doesn't decode, dropping it: \(error)")
             remove(at: url)
             return .absent
         } catch {
-            debug(.service, "AI requests: couldn't decode the carry-out marker, keeping it: \(error)")
+            debug(.remote, "AI requests: couldn't decode the carry-out marker, keeping it: \(error)")
             return .unreadable
         }
     }
@@ -67,7 +67,7 @@ struct AIRequestCarryOutMarker: Codable, Equatable {
         do {
             try JSONEncoder().encode(self).write(to: url, options: .atomic)
         } catch {
-            debug(.service, "AI requests: couldn't save the carry-out marker for \(id): \(error)")
+            debug(.remote, "AI requests: couldn't save the carry-out marker for \(id): \(error)")
         }
     }
 
@@ -76,7 +76,7 @@ struct AIRequestCarryOutMarker: Codable, Equatable {
         do {
             try FileManager.default.removeItem(at: url)
         } catch {
-            debug(.service, "AI requests: couldn't remove the carry-out marker: \(error)")
+            debug(.remote, "AI requests: couldn't remove the carry-out marker: \(error)")
         }
     }
 }

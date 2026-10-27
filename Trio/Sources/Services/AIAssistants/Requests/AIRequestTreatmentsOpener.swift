@@ -86,14 +86,14 @@ import UIKit
         // Sheets and covers shown outside the router count too, such as Home's own. The request's own sheet counts as
         // well: it keeps holding the request.
         guard router.mainModalScreen.value == nil, router.mainSecondaryModalView.value == nil, !keyWindowPresents() else {
-            debug(.service, "AI requests: another sheet is open, so \(id) isn't opened")
+            debug(.remote, "AI requests: another sheet is open, so \(id) isn't opened")
             return
         }
         // A request whose time is up is still pending only while a screen holds it. It isn't opened fresh: opening it
         // lets go of a hold the iPhone kept, and the coordinator expires it unless the watch holds it.
         guard now() < pending.request.expiresAt else {
             _ = await coordinator.open(id: id, on: .phone)
-            debug(.service, "AI requests: \(id)'s time is up, so it isn't opened")
+            debug(.remote, "AI requests: \(id)'s time is up, so it isn't opened")
             return
         }
         // Nothing waits from here until the sheet is asked for.

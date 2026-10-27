@@ -124,7 +124,7 @@ extension AIAssistantsConfig {
                 let host = baseURL.host ?? baseURL.absoluteString
                 errorMessage = String(localized: "Couldn't reach \(host). Try again.")
             } catch {
-                debug(.service, "AI Assistants: sign-in failed: \(error)")
+                debug(.remote, "AI Assistants: sign-in failed: \(error)")
                 let reason = Self.shortReason(error)
                 errorMessage = String(localized: "Couldn't sign in (\(reason)). Try again.")
             }
@@ -132,7 +132,7 @@ extension AIAssistantsConfig {
 
         @MainActor func fail(with error: Error) {
             guard AIAssistantsAuthClient.mapAppleError(error) != .cancelled else { return }
-            debug(.service, "AI Assistants: Sign in with Apple failed: \(error)")
+            debug(.remote, "AI Assistants: Sign in with Apple failed: \(error)")
             errorMessage = String(localized: "Sign in with Apple didn't finish. Try again.")
         }
 

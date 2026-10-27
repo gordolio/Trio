@@ -86,7 +86,7 @@ final class AIAssistantsCheckIn {
         }
         let endActivity = beginBackgroundActivity("AI Assistants check-in")
         defer { endActivity() }
-        debug(.service, "AI requests: checking in after a \(reason.rawValue)")
+        debug(.remote, "AI requests: checking in after a \(reason.rawValue)")
         repeat {
             let signedIn = await checkInOnce()
             removeDeliveredCheckIns()
@@ -139,10 +139,10 @@ final class AIAssistantsCheckIn {
                 throw AIAssistantsAPIError.signedOut
             } catch {
                 guard let delay = delays.popFirst() else {
-                    debug(.service, "AI requests: check-in failed, trying again at the next one: \(error)")
+                    debug(.remote, "AI requests: check-in failed, trying again at the next one: \(error)")
                     return nil
                 }
-                debug(.service, "AI requests: check-in failed, trying again in \(delay) s: \(error)")
+                debug(.remote, "AI requests: check-in failed, trying again in \(delay) s: \(error)")
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             }
         }
@@ -156,7 +156,7 @@ final class AIAssistantsCheckIn {
             guard let fetched = try await fetchInbox() else { return true }
             inbox = fetched
         } catch {
-            debug(.service, "AI requests: check-in stopped, signed out")
+            debug(.remote, "AI requests: check-in stopped, signed out")
             return false
         }
 
@@ -167,7 +167,7 @@ final class AIAssistantsCheckIn {
             } else if let meal {
                 await coordinator.receive(meal, via: .service)
             } else {
-                debug(.service, "AI requests: skipped \(request.id), it isn't a meal Trio can read")
+                debug(.remote, "AI requests: skipped \(request.id), it isn't a meal Trio can read")
             }
         }
         await coordinator.expireIfDue()

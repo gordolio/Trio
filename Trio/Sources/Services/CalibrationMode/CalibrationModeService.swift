@@ -144,7 +144,7 @@ final class BaseCalibrationModeService: CalibrationModeService, Injectable {
             // Test was in an active prep/test phase - restore state
             // The calibration override is already persisted in Core Data and stays active
             testStateSubject.send(existingTest)
-            debug(.service, "CalibrationMode: Restored active test in phase: \(existingTest.phase.rawValue)")
+            debug(.settings, "CalibrationMode: Restored active test in phase: \(existingTest.phase.rawValue)")
 
         case .bolusDelivered:
             // Bolus was delivered but observation hasn't started yet - restore state
@@ -261,19 +261,19 @@ final class BaseCalibrationModeService: CalibrationModeService, Injectable {
             Foundation.NotificationCenter.default.post(name: .didUpdateOverrideConfiguration, object: nil)
         }
 
-        debug(.service, "CalibrationMode: Calibration override activated (SMBs disabled)")
+        debug(.settings, "CalibrationMode: Calibration override activated (SMBs disabled)")
     }
 
     func deactivateCalibrationOverride() async throws {
         guard let activeOverrideID = try await overrideStorage.fetchLatestActiveOverride() else {
-            debug(.service, "CalibrationMode: No active override to deactivate")
+            debug(.settings, "CalibrationMode: No active override to deactivate")
             return
         }
 
         // Verify this is the calibration override before disabling
         let isCalibrationOverride = await isCalibrationOverride(activeOverrideID)
         guard isCalibrationOverride else {
-            debug(.service, "CalibrationMode: Active override is not the calibration override - skipping deactivation")
+            debug(.settings, "CalibrationMode: Active override is not the calibration override - skipping deactivation")
             return
         }
 
@@ -287,7 +287,7 @@ final class BaseCalibrationModeService: CalibrationModeService, Injectable {
             Foundation.NotificationCenter.default.post(name: .didUpdateOverrideConfiguration, object: nil)
         }
 
-        debug(.service, "CalibrationMode: Calibration override deactivated (SMBs restored)")
+        debug(.settings, "CalibrationMode: Calibration override deactivated (SMBs restored)")
     }
 
     /// Disable an override on a background context and create an OverrideRunStored entry
@@ -353,7 +353,7 @@ final class BaseCalibrationModeService: CalibrationModeService, Injectable {
 
         notificationCenter.add(request) { error in
             if let error = error {
-                debug(.service, "CalibrationMode: Failed to schedule ready notification: \(error)")
+                debug(.settings, "CalibrationMode: Failed to schedule ready notification: \(error)")
             }
         }
     }
@@ -385,7 +385,7 @@ final class BaseCalibrationModeService: CalibrationModeService, Injectable {
 
         notificationCenter.add(request) { error in
             if let error = error {
-                debug(.service, "CalibrationMode: Failed to schedule results notification: \(error)")
+                debug(.settings, "CalibrationMode: Failed to schedule results notification: \(error)")
             }
         }
     }
@@ -406,7 +406,7 @@ final class BaseCalibrationModeService: CalibrationModeService, Injectable {
     func postNightscoutNote(_ message: String) {
         Task {
             await nightscoutManager.uploadNoteTreatment(note: message)
-            debug(.service, "CalibrationMode: Posted Nightscout note: \(message)")
+            debug(.settings, "CalibrationMode: Posted Nightscout note: \(message)")
         }
     }
 
@@ -439,11 +439,11 @@ final class BaseCalibrationModeService: CalibrationModeService, Injectable {
                 guard taskContext.hasChanges else { return }
                 try taskContext.save()
                 debug(
-                    .service,
+                    .settings,
                     "CalibrationMode: Archived completed test \(test.id) with \(glucoseReadings.count) glucose readings"
                 )
             } catch {
-                debug(.service, "CalibrationMode: Failed to archive test: \(error.localizedDescription)")
+                debug(.settings, "CalibrationMode: Failed to archive test: \(error.localizedDescription)")
             }
         }
     }

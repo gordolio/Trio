@@ -16,7 +16,7 @@ extension UNUserNotificationCenter: AIRequestNotificationScheduling {
     func add(_ request: UNNotificationRequest) {
         add(request) { error in
             if let error {
-                debug(.service, "AI requests: couldn't schedule the iPhone request: \(error.localizedDescription)")
+                debug(.remote, "AI requests: couldn't schedule the iPhone request: \(error.localizedDescription)")
             }
         }
     }
@@ -72,7 +72,7 @@ final class AIRequestPhoneBackup: AIRequestPhoneBackupScheduling {
         // A trigger needs an interval above 0, and no trigger delivers right away.
         let trigger = delay > 0 ? UNTimeIntervalNotificationTrigger(timeInterval: delay, repeats: false) : nil
         center.add(UNNotificationRequest(identifier: Self.identifier(for: prompt.id), content: content, trigger: trigger))
-        debug(.service, "AI requests: scheduled the iPhone request for \(prompt.id) after \(delay) s")
+        debug(.remote, "AI requests: scheduled the iPhone request for \(prompt.id) after \(delay) s")
     }
 
     func cancel(id: String) {

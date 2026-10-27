@@ -205,7 +205,7 @@ extension CarbRatioCalibration {
                 try await carbsStorage.storeCarbs([entry], areFetchedFromRemote: false)
                 return true
             } catch {
-                debug(.service, "CalibrationMode: Failed to store carbs: \(error.localizedDescription)")
+                debug(.settings, "CalibrationMode: Failed to store carbs: \(error.localizedDescription)")
                 return false
             }
         }

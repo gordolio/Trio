@@ -201,7 +201,7 @@ final class WatchRelay {
         if let details = await connection.coordinator.open(id: id, on: .watch) { return details }
         let (knowsEnding, checkIn) = lock.withLock { (endings.contains { $0.id == id }, checkInForOpen) }
         guard !knowsEnding, connection.coordinator.current.value?.request.id != id, let checkIn else { return nil }
-        debug(.service, "AI requests: the watch opened \(id) before Trio had it, so it checks in first")
+        debug(.remote, "AI requests: the watch opened \(id) before Trio had it, so it checks in first")
         await checkIn()
         return await connection.coordinator.open(id: id, on: .watch)
     }

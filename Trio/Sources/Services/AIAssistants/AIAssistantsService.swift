@@ -136,7 +136,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
         store.lastDevice = nil
         uploadLock.withLock { lastSentStatus = nil }
         state.send(.linked(host: Self.host(of: baseURL), lastUpload: nil, lastError: nil))
-        debug(.service, "AI Assistants: linked to \(Self.host(of: baseURL))")
+        debug(.remote, "AI Assistants: linked to \(Self.host(of: baseURL))")
         await uploadNow()
     }
 
@@ -151,7 +151,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
         do {
             try await api.deleteDevice()
         } catch {
-            debug(.service, "AI Assistants: unlink request failed: \(error)")
+            debug(.remote, "AI Assistants: unlink request failed: \(error)")
             deleted = false
         }
         store.clear()
@@ -262,7 +262,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
             // The client has told `signedOut(of:)` too, unless another call found out first.
             finish(host: host) { _ in .signedOut(host: host) }
         } catch {
-            debug(.service, "AI Assistants: upload failed: \(error)")
+            debug(.remote, "AI Assistants: upload failed: \(error)")
             let message = Self.message(for: error)
             finish(host: host) { lastUpload in .linked(host: host, lastUpload: lastUpload, lastError: message) }
         }
@@ -271,7 +271,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
     /// Any call to the service can find Trio signed out: an upload, a check-in or a state report.
     private func signedOut(of baseURL: URL) {
         let host = Self.host(of: baseURL)
-        debug(.service, "AI Assistants: signed out of \(host)")
+        debug(.remote, "AI Assistants: signed out of \(host)")
         finish(host: host) { _ in .signedOut(host: host) }
     }
 
@@ -292,7 +292,7 @@ final class BaseAIAssistantsService: AIAssistantsService {
         } catch AIAssistantsAPIError.signedOut {
             throw AIAssistantsAPIError.signedOut
         } catch {
-            debug(.service, "AI Assistants: device registration failed: \(error)")
+            debug(.remote, "AI Assistants: device registration failed: \(error)")
         }
     }
 

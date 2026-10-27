@@ -96,7 +96,7 @@ enum AIRequestHooks {
     ) -> Bool {
         guard wakesTrio(userInfo) else { return false }
         guard let checkIn else {
-            debug(.service, "AI requests: a check-in push arrived before the runtime, the next loop checks in")
+            debug(.remote, "AI requests: a check-in push arrived before the runtime, the next loop checks in")
             completion(.noData)
             return true
         }
@@ -147,7 +147,7 @@ final class AIRequestMessageHolder {
         case let .receive(receiver):
             return receiver(message)
         case .hold:
-            debug(.service, "AI requests: held a watch message until the runtime is ready")
+            debug(.remote, "AI requests: held a watch message until the runtime is ready")
             return true
         case .leave:
             return false

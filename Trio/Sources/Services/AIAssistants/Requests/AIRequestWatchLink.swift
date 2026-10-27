@@ -17,7 +17,7 @@ protocol AIRequestWatchSession: AnyObject {
 extension WCSession: AIRequestWatchSession {
     func sendMessage(_ message: [String: Any]) {
         sendMessage(message, replyHandler: nil) { [weak self] error in
-            debug(.service, "AI requests: couldn't message the watch, queueing it instead: \(error.localizedDescription)")
+            debug(.remote, "AI requests: couldn't message the watch, queueing it instead: \(error.localizedDescription)")
             self?.queueUserInfo(message)
         }
     }
@@ -117,7 +117,7 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
             if let id = opened as? String {
                 onOpen(id)
             } else {
-                debug(.service, "AI requests: ignored an open message without a request ID")
+                debug(.remote, "AI requests: ignored an open message without a request ID")
             }
         }
         if let confirm = message[AIRequestIdentifiers.keyConfirm] {
@@ -125,7 +125,7 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
             if let confirm = decode(AIRequestWatchConfirm.self, from: confirm) {
                 onConfirm(confirm)
             } else {
-                debug(.service, "AI requests: couldn't read a confirmation from the watch")
+                debug(.remote, "AI requests: couldn't read a confirmation from the watch")
             }
         }
         if let close = message[AIRequestIdentifiers.keyClose] {
@@ -133,7 +133,7 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
             if let close = decode(AIRequestWatchClose.self, from: close) {
                 onClose(close)
             } else {
-                debug(.service, "AI requests: couldn't read a close from the watch")
+                debug(.remote, "AI requests: couldn't read a close from the watch")
             }
         }
         if let token = message[AIRequestIdentifiers.keyWatchPushToken] as? String {
@@ -159,7 +159,7 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
         do {
             send([key: try JSONEncoder().encode(message)])
         } catch {
-            debug(.service, "AI requests: couldn't encode a \(key) message for the watch: \(error)")
+            debug(.remote, "AI requests: couldn't encode a \(key) message for the watch: \(error)")
         }
     }
 
@@ -174,7 +174,7 @@ final class AIRequestWatchLink: AIRequestWatchDelivery {
     /// device registration for it, the phone's own push token included.
     private func store(_ token: String) {
         guard (64 ... 200).contains(token.count), token.allSatisfy({ $0.isASCII && $0.isHexDigit }) else {
-            debug(.service, "AI requests: ignored a watch push token that isn't 64 to 200 hex digits")
+            debug(.remote, "AI requests: ignored a watch push token that isn't 64 to 200 hex digits")
             return
         }
         let token = token.lowercased()

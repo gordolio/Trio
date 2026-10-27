@@ -79,7 +79,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
 
     func endIfExpired() {
         guard let session = activeSession, session.expiresAt <= Date() else { return }
-        debug(.service, "SettingsTest: \(session.kind.rawValue) test expired, restoring settings")
+        debug(.settings, "SettingsTest: \(session.kind.rawValue) test expired, restoring settings")
         end()
     }
 
@@ -92,7 +92,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
                 // Leave a mode the user picked themselves alone.
                 guard settingsManager.settings.dosingMode == testMode else { continue }
                 settingsManager.settings.dosingMode = previous
-                debug(.service, "SettingsTest: dosing mode restored to \(previous.rawValue)")
+                debug(.settings, "SettingsTest: dosing mode restored to \(previous.rawValue)")
             }
         }
     }

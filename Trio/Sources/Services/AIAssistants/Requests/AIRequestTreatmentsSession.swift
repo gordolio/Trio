@@ -127,7 +127,7 @@ import UserNotifications
             .sink { [weak self] screen in
                 MainActor.assumeIsolated { self?.modalChanged(to: screen, for: id) }
             }
-        debug(.service, "AI requests: opening the Treatments sheet for \(id)")
+        debug(.remote, "AI requests: opening the Treatments sheet for \(id)")
     }
 
     static func makeGramFormatter() -> NumberFormatter {
@@ -171,16 +171,16 @@ import UserNotifications
         let id = sheet.requestID
         guard var active, active.pending.request.id == id else {
             // The sheet closed for its request: it was answered here, or it left pending and the notice said so.
-            debug(.service, "AI requests: the Treatments sheet of \(id) has closed, so its submit logs nothing")
+            debug(.remote, "AI requests: the Treatments sheet of \(id) has closed, so its submit logs nothing")
             return true
         }
         guard !active.leftElsewhere, active.submission == nil else {
-            debug(.service, "AI requests: the Treatments sheet of \(id) is closing or submitted, so this submit logs nothing")
+            debug(.remote, "AI requests: the Treatments sheet of \(id) is closing or submitted, so this submit logs nothing")
             return true
         }
         guard let coordinator = coordinator() else { return false }
         guard coordinator.current.value?.request.id == id else {
-            debug(.service, "AI requests: \(id) left pending as its Treatments sheet's Log was pressed, so it logs nothing")
+            debug(.remote, "AI requests: \(id) left pending as its Treatments sheet's Log was pressed, so it logs nothing")
             active.leftElsewhere = true
             self.active = active
             noticeOwed = active.pending
@@ -192,7 +192,7 @@ import UserNotifications
         // Taken here, before upstream's submit goes ahead: the claim below reaches the coordinator a moment later, and
         // a watch confirm that reaches it first is refused. A watch confirm that took it first wins instead.
         guard coordinator.take(id, by: .phone) else {
-            debug(.service, "AI requests: the watch took \(id) as its Treatments sheet's Log was pressed, so it logs nothing")
+            debug(.remote, "AI requests: the watch took \(id) as its Treatments sheet's Log was pressed, so it logs nothing")
             active.leftElsewhere = true
             self.active = active
             noticeOwed = active.pending
@@ -217,7 +217,7 @@ import UserNotifications
         self.active = active
         Task { [weak submission] in
             if await claim.value == false {
-                debug(.service, "AI requests: the Treatments sheet couldn't claim \(id), so it reports nothing")
+                debug(.remote, "AI requests: the Treatments sheet couldn't claim \(id), so it reports nothing")
                 submission?.stop()
             }
         }
@@ -261,7 +261,7 @@ import UserNotifications
         }
         state.note = request.note
         self.active?.filled = true
-        debug(.service, "AI requests: filled in the Treatments sheet for \(id)")
+        debug(.remote, "AI requests: filled in the Treatments sheet for \(id)")
         recalculate()
     }
 
@@ -290,7 +290,7 @@ import UserNotifications
         routerSubscription = nil
         guard !active.leftElsewhere else { return }
         guard active.appeared else {
-            debug(.service, "AI requests: the Treatments sheet for \(active.pending.request.id) went before it appeared")
+            debug(.remote, "AI requests: the Treatments sheet for \(active.pending.request.id) went before it appeared")
             return
         }
         if let submission = active.submission {
@@ -314,7 +314,7 @@ import UserNotifications
         active.leftElsewhere = true
         active.submission?.stop()
         self.active = active
-        debug(.service, "AI requests: \(id) left pending with its Treatments sheet up, so the sheet closes")
+        debug(.remote, "AI requests: \(id) left pending with its Treatments sheet up, so the sheet closes")
 
         postNotice(for: active.pending, left: left, source: source)
         closeSheet()
@@ -326,7 +326,7 @@ import UserNotifications
         guard var active, active.pending.request.id == id, !active.leftElsewhere else { return }
         active.leftElsewhere = true
         self.active = active
-        debug(.service, "AI requests: \(id)'s time ran out as its Treatments sheet opened, so the sheet closes")
+        debug(.remote, "AI requests: \(id)'s time ran out as its Treatments sheet opened, so the sheet closes")
         closeSheet()
     }
 
@@ -596,7 +596,7 @@ import UserNotifications
         if let outcome {
             report(outcome)
         } else {
-            debug(.service, "AI requests: what the Treatments sheet did for \(id) isn't known, so it reports nothing")
+            debug(.remote, "AI requests: what the Treatments sheet did for \(id) isn't known, so it reports nothing")
             end()
         }
     }

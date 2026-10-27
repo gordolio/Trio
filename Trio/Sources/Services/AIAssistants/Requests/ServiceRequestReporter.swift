@@ -44,13 +44,13 @@ final class ServiceRequestReporter: AIRequestReporter {
     private func log(_ error: Error, reporting state: AIRequestState, for id: String) {
         switch error as? AIAssistantsAPIError {
         case .http(409, _)?:
-            debug(.service, "AI requests: \(id) is already final on the service, dropped its \(state.rawValue) report")
+            debug(.remote, "AI requests: \(id) is already final on the service, dropped its \(state.rawValue) report")
         case .network?:
-            debug(.service, "AI requests: couldn't report \(id) as \(state.rawValue), offline")
+            debug(.remote, "AI requests: couldn't report \(id) as \(state.rawValue), offline")
         case .signedOut?:
-            debug(.service, "AI requests: couldn't report \(id) as \(state.rawValue), signed out")
+            debug(.remote, "AI requests: couldn't report \(id) as \(state.rawValue), signed out")
         default:
-            debug(.service, "AI requests: couldn't report \(id) as \(state.rawValue): \(error)")
+            debug(.remote, "AI requests: couldn't report \(id) as \(state.rawValue): \(error)")
         }
     }
 }

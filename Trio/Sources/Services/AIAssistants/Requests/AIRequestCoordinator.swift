@@ -201,7 +201,7 @@ actor AIRequestCoordinator {
         savePending(pending)
         scheduleExpiryCheck(at: request.expiresAt)
         phoneBackup.schedule(prompt, after: phoneDelay, askedOn: askedOn)
-        debug(.service, "AI requests: \(request.id) is pending, asked on the \(askedOn.rawValue)")
+        debug(.remote, "AI requests: \(request.id) is pending, asked on the \(askedOn.rawValue)")
 
         if let replaced {
             await reportFinal(.replaced, id: replaced.request.id, via: replaced.channel)
@@ -220,7 +220,7 @@ actor AIRequestCoordinator {
         guard let request else {
             let resent = await resendFinalReport(for: id, via: channel)
             if !resent {
-                debug(.service, "AI requests: \(id) was withdrawn, but it isn't pending")
+                debug(.remote, "AI requests: \(id) was withdrawn, but it isn't pending")
             }
             return
         }
@@ -264,7 +264,7 @@ actor AIRequestCoordinator {
         savePending(pending)
         phoneBackup.cancel(id: id)
         phoneBackup.schedule(pending.prompt, after: Self.backupPostponement, askedOn: pending.askedOn)
-        debug(.service, "AI requests: the watch opened \(id), so the iPhone waits \(Int(Self.backupPostponement)) s")
+        debug(.remote, "AI requests: the watch opened \(id), so the iPhone waits \(Int(Self.backupPostponement)) s")
     }
 
     // MARK: Screens
@@ -280,13 +280,13 @@ actor AIRequestCoordinator {
         ensureLoaded()
         if let pending = current.value, pending.request.id == id, now() >= pending.request.expiresAt {
             openOn.remove(side)
-            debug(.service, "AI requests: the \(side.rawValue) opened \(id) after its time, so it isn't opened")
+            debug(.remote, "AI requests: the \(side.rawValue) opened \(id) after its time, so it isn't opened")
             await expireIfDue()
             return nil
         }
         await expireIfDue()
         guard let pending = current.value, pending.request.id == id else {
-            debug(.service, "AI requests: the \(side.rawValue) opened \(id), but it isn't pending")
+            debug(.remote, "AI requests: the \(side.rawValue) opened \(id), but it isn't pending")
             return nil
         }
         openOn.insert(side)
@@ -297,7 +297,7 @@ actor AIRequestCoordinator {
         let dose = await treatments.dose(forCarbs: request.carbs)
         // It may have left pending while the dose was worked out.
         guard current.value?.request.id == id else { return nil }
-        debug(.service, "AI requests: the \(side.rawValue) opened \(id)")
+        debug(.remote, "AI requests: the \(side.rawValue) opened \(id)")
         return AIRequestWatchDetails(
             id: id,
             carbs: request.carbs,
@@ -319,7 +319,7 @@ actor AIRequestCoordinator {
         ensureLoaded()
         await expireIfDue()
         if side == .watch, dismissed, openOn.contains(.phone), current.value?.request.id == id {
-            debug(.service, "AI requests: \(id)'s watch notification was swiped away with the iPhone's sheet open, so it waits")
+            debug(.remote, "AI requests: \(id)'s watch notification was swiped away with the iPhone's sheet open, so it waits")
             return
         }
         let declinedOn: AIRequestDeclinedOn = switch side {
@@ -327,7 +327,7 @@ actor AIRequestCoordinator {
         case .watch: dismissed ? .dismissed : .watch
         }
         guard let pending = takePending(.declined(declinedOn), id: id) else {
-            debug(.service, "AI requests: the \(side.rawValue) closed \(id), which isn't pending")
+            debug(.remote, "AI requests: the \(side.rawValue) closed \(id), which isn't pending")
             return
         }
         await reportFinal(.declined(on: declinedOn), id: pending.request.id, via: pending.channel)
@@ -340,7 +340,7 @@ actor AIRequestCoordinator {
     func claim(id: String, on side: AIRequestAnswerSide) async -> Bool {
         ensureLoaded()
         guard side == .phone else {
-            debug(.service, "AI requests: refused the watch's claim on \(id), it confirms with carryOutWatchConfirm")
+            debug(.remote, "AI requests: refused the watch's claim on \(id), it confirms with carryOutWatchConfirm")
             return false
         }
         guard let pending = await takeClaimed(id: id, on: side) else { return false }
@@ -378,7 +378,7 @@ actor AIRequestCoordinator {
     func reportPhoneResult(id: String, _ result: AIRequestPhoneResult) async {
         ensureLoaded()
         guard let claim = claims[id], claim.side == .phone else {
-            debug(.service, "AI requests: ignored the iPhone's result for \(id), the iPhone hasn't claimed it")
+            debug(.remote, "AI requests: ignored the iPhone's result for \(id), the iPhone hasn't claimed it")
             return
         }
         claims[id] = nil
@@ -422,16 +422,16 @@ actor AIRequestCoordinator {
     /// the other device didn't take it first.
     private func takeClaimed(id: String, on side: AIRequestAnswerSide) async -> PendingAIRequest? {
         guard take(id, by: side) else {
-            debug(.service, "AI requests: the \(side.rawValue) couldn't claim \(id), the other device took it")
+            debug(.remote, "AI requests: the \(side.rawValue) couldn't claim \(id), the other device took it")
             return nil
         }
         // A request whose time is up, with no screen holding it, can't be claimed.
         await expireIfDue()
         guard let pending = takePending(.claimed(side), id: id) else {
-            debug(.service, "AI requests: the \(side.rawValue) couldn't claim \(id), it isn't pending")
+            debug(.remote, "AI requests: the \(side.rawValue) couldn't claim \(id), it isn't pending")
             return nil
         }
-        debug(.service, "AI requests: the \(side.rawValue) claimed \(id)")
+        debug(.remote, "AI requests: the \(side.rawValue) claimed \(id)")
         return pending
     }
 
@@ -500,7 +500,7 @@ actor AIRequestCoordinator {
     private func mark(_ marker: AIRequestCarryOutMarker) {
         carryOutMarker = marker
         guard leftoverCarryOut == .absent else {
-            debug(.service, "AI requests: kept \(marker.id)'s carry-out marker in memory, an older one can't be read yet")
+            debug(.remote, "AI requests: kept \(marker.id)'s carry-out marker in memory, an older one can't be read yet")
             return
         }
         marker.save(to: carryOutMarkerURL)
@@ -540,7 +540,7 @@ actor AIRequestCoordinator {
             return
         }
         let reason = stopped.stage == .enacting ? Self.stoppedWhileEnactingReason : Self.stoppedReason
-        debug(.service, "AI requests: Trio stopped while carrying out \(stopped.id), at \(stopped.stage.rawValue)")
+        debug(.remote, "AI requests: Trio stopped while carrying out \(stopped.id), at \(stopped.stage.rawValue)")
         let failed = AIRequestReport.failed(reason: reason, carbsLogged: stopped.stage != .checking)
         await reportFinal(failed, id: stopped.id, via: stopped.channel)
     }
@@ -554,11 +554,11 @@ actor AIRequestCoordinator {
         do {
             return try seen.observe(id)
         } catch AIRequestSeenStore.SeenError.missingID {
-            debug(.service, "AI requests: dropped a request without an ID")
+            debug(.remote, "AI requests: dropped a request without an ID")
             return nil
         } catch AIRequestSeenStore.SeenError.notReadableYet {
             // It may be one Trio already handled. The service lists it again until it's final.
-            debug(.service, "AI requests: left \(id) for the next check-in, the seen IDs can't be read yet")
+            debug(.remote, "AI requests: left \(id) for the next check-in, the seen IDs can't be read yet")
             return nil
         } catch {
             // Without the saved ID, a relaunch couldn't tell a repeat of this request from a new one.
@@ -659,7 +659,7 @@ actor AIRequestCoordinator {
         saveFinalReport(report, for: id)
         // After the final report is saved, so a launch that finds the marker can tell it was reported.
         removeCarryOutMarker(for: id)
-        debug(.service, "AI requests: \(id) is \(report.state.rawValue)")
+        debug(.remote, "AI requests: \(id) is \(report.state.rawValue)")
         return report
     }
 
@@ -669,7 +669,7 @@ actor AIRequestCoordinator {
         if let outcome {
             let resent = await resendFinalReport(for: id, via: channel)
             if !resent {
-                debug(.service, "AI requests: \(id) is already \(outcome.rawValue), but its report isn't on record")
+                debug(.remote, "AI requests: \(id) is already \(outcome.rawValue), but its report isn't on record")
             }
         } else if let pending = current.value, pending.request.id == id {
             await reporters[channel]?.report(Self.pendingReport(for: pending), for: id)
@@ -720,7 +720,7 @@ actor AIRequestCoordinator {
                 current.send(pending)
                 scheduleExpiryCheck(at: pending.request.expiresAt)
             } catch {
-                debug(.service, "AI requests: pending request file doesn't decode, dropping it: \(error)")
+                debug(.remote, "AI requests: pending request file doesn't decode, dropping it: \(error)")
                 deletePendingFile()
             }
         case .unreadable:
@@ -733,7 +733,7 @@ actor AIRequestCoordinator {
         do {
             try JSONEncoder().encode(pending).write(to: pendingFileURL, options: .atomic)
         } catch {
-            debug(.service, "AI requests: couldn't save the pending request: \(error)")
+            debug(.remote, "AI requests: couldn't save the pending request: \(error)")
         }
     }
 
@@ -741,7 +741,7 @@ actor AIRequestCoordinator {
         do {
             try FileManager.default.removeItem(at: pendingFileURL)
         } catch {
-            debug(.service, "AI requests: couldn't delete the pending request file: \(error)")
+            debug(.remote, "AI requests: couldn't delete the pending request file: \(error)")
         }
     }
 
@@ -757,7 +757,7 @@ actor AIRequestCoordinator {
             do {
                 finalReports = try JSONDecoder().decode([FinalReport].self, from: data) + finalReports
             } catch {
-                debug(.service, "AI requests: final reports file doesn't decode, starting over: \(error)")
+                debug(.remote, "AI requests: final reports file doesn't decode, starting over: \(error)")
             }
         case .unreadable:
             return
@@ -775,7 +775,7 @@ actor AIRequestCoordinator {
         dropOldFinalReports()
         finalReports.append(FinalReport(id: id, reportedAt: now(), report: report))
         guard finalReportsRead else {
-            debug(.service, "AI requests: kept \(id)'s final report in memory, the file can't be read yet")
+            debug(.remote, "AI requests: kept \(id)'s final report in memory, the file can't be read yet")
             return
         }
         writeFinalReports()
@@ -785,7 +785,7 @@ actor AIRequestCoordinator {
         do {
             try JSONEncoder().encode(finalReports).write(to: finalReportsURL, options: .atomic)
         } catch {
-            debug(.service, "AI requests: couldn't save the final reports: \(error)")
+            debug(.remote, "AI requests: couldn't save the final reports: \(error)")
         }
     }
 
