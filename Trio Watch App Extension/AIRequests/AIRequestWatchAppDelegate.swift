@@ -9,6 +9,6 @@ final class AIRequestWatchAppDelegate: NSObject, WKApplicationDelegate {
     }
 
     func didFailToRegisterForRemoteNotificationsWithError(_ error: Error) {
-        Task { await WatchLogger.shared.log("AI requests: couldn't register for pushes: \(error)") }
+        WatchLogger.shared.warning(.connectivity, "AI requests: couldn't register for pushes", error: error)
     }
 }

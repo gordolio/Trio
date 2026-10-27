@@ -60,7 +60,7 @@ private struct AIRequestFlowModifier: ViewModifier {
         let isFirst = old == new
         if new.phase != old.phase {
             let phase = Self.describe(new.phase)
-            Task { await WatchLogger.shared.log("AI requests: the watch flow is \(phase)") }
+            WatchLogger.shared.info(.lifecycle, "AI requests: the watch flow is \(phase)")
         }
         if let notice = new.notice, notice != old.notice {
             show(notice)

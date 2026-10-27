@@ -371,6 +371,6 @@ final class AIRequestWatchCenter: NSObject, UNUserNotificationCenterDelegate, WC
     }
 
     private static func log(_ message: String) {
-        Task { await WatchLogger.shared.log("AI requests: \(message)") }
+        WatchLogger.shared.info(.connectivity, "AI requests: \(message)")
     }
 }

@@ -183,10 +183,14 @@ struct OpenRouterRequestOptions: Equatable {
         // Reasoning shares the completion budget. Reserve room for structured output at gateway effort allocations.
         let multiplier: Int
         switch effort {
-        case .some(.none), nil: multiplier = 1
-        case .minimal, .low, .medium: multiplier = 2
+        case nil,
+             .some(.none): multiplier = 1
+        case .low,
+             .medium,
+             .minimal: multiplier = 2
         case .high: multiplier = 5
-        case .xhigh, .max: multiplier = 20
+        case .max,
+             .xhigh: multiplier = 20
         }
         return visibleTokens * multiplier
     }
