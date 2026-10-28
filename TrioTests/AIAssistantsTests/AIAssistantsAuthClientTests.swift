@@ -20,13 +20,13 @@ import Testing
     func makeClient() -> AIAssistantsAuthClient {
         let now = self.now
         return AIAssistantsAuthClient(
-            session: AIAssistantsAuthClient.makeSession(protocolClasses: [StubURLProtocol.self]),
+            session: AIAssistantsAuthClient.makeSession(protocolClasses: [AIStubURLProtocol.self]),
             now: { now }
         )
     }
 
-    func stub(_ handler: StubURLProtocol.Handler?) {
-        StubURLProtocol.setHandler(for: Self.host, handler)
+    func stub(_ handler: AIStubURLProtocol.Handler?) {
+        AIStubURLProtocol.setHandler(for: Self.host, handler)
     }
 
     @Test("Session never stores or sends cookies") func sessionNeverStoresOrSendsCookies() {

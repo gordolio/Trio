@@ -39,15 +39,15 @@ final class FakeAIAssistantsService: AIAssistantsService {
         state.service = service
         let now = self.now
         state.authClient = AIAssistantsAuthClient(
-            session: AIAssistantsAuthClient.makeSession(protocolClasses: [StubURLProtocol.self]),
+            session: AIAssistantsAuthClient.makeSession(protocolClasses: [AIStubURLProtocol.self]),
             now: { now }
         )
         state.serviceURL = serviceURL
         return state
     }
 
-    func stub(_ handler: StubURLProtocol.Handler?) {
-        StubURLProtocol.setHandler(for: Self.host, handler)
+    func stub(_ handler: AIStubURLProtocol.Handler?) {
+        AIStubURLProtocol.setHandler(for: Self.host, handler)
     }
 
     @Test("A build without a service shows a message and makes no request") func unconfiguredBuildShowsMessageAndMakesNoRequest(

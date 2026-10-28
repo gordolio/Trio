@@ -97,7 +97,7 @@
 		B292BEADFDBF996C36A59E97 /* PKCE.swift in Sources */ = {isa = PBXBuildFile; fileRef = C138515B3CDFDCF581EFE5F3 /* PKCE.swift */; };
 		A1EA5427391555823887DC85 /* AIAssistantsAuthClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23F556F1FE151A63018FA796 /* AIAssistantsAuthClientTests.swift */; };
 		4B10E1B8690EC90FBC81E8DE /* PKCETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077E6275FC4538F0EE4BE56C /* PKCETests.swift */; };
-		8668A01FAEDB0BDA2C97646D /* StubURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD72C3DF81A91E07C4D8BFD3 /* StubURLProtocol.swift */; };
+		8668A01FAEDB0BDA2C97646D /* AIStubURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD72C3DF81A91E07C4D8BFD3 /* AIStubURLProtocol.swift */; };
 		BDA100012F80000000000001 /* BuildReleaseNotesClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA100032F80000000000001 /* BuildReleaseNotesClient.swift */; };
 		BDA100022F80000000000001 /* BuildReleaseNotesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA100042F80000000000001 /* BuildReleaseNotesView.swift */; };
 		00B4CF9DD4CCC22F174FEB33 /* CarbRatioCalibrationRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82F381A1A8A4F0F7BB7A45CF /* CarbRatioCalibrationRootView.swift */; };
@@ -1487,7 +1487,7 @@
 		C138515B3CDFDCF581EFE5F3 /* PKCE.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PKCE.swift; sourceTree = "<group>"; };
 		23F556F1FE151A63018FA796 /* AIAssistantsAuthClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAssistantsAuthClientTests.swift; sourceTree = "<group>"; };
 		077E6275FC4538F0EE4BE56C /* PKCETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PKCETests.swift; sourceTree = "<group>"; };
-		CD72C3DF81A91E07C4D8BFD3 /* StubURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubURLProtocol.swift; sourceTree = "<group>"; };
+		CD72C3DF81A91E07C4D8BFD3 /* AIStubURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIStubURLProtocol.swift; sourceTree = "<group>"; };
 		BDA100032F80000000000001 /* BuildReleaseNotesClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildReleaseNotesClient.swift; sourceTree = "<group>"; };
 		BDA100042F80000000000001 /* BuildReleaseNotesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildReleaseNotesView.swift; sourceTree = "<group>"; };
 		072D110FB0FE1823106BAC66 /* AIFoodItem.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AIFoodItem.swift; sourceTree = "<group>"; };
@@ -2924,7 +2924,7 @@
 				E53E196F652544AC804B3DCE /* AIAssistantsScreenRenderTests.swift */,
 				C37C354EBA6549C8B31F178C /* AIAssistantsFlowLayoutTests.swift */,
 				69FBC552240E48288AF7D580 /* AIAssistantsConfigDisplayTests.swift */,
-				CD72C3DF81A91E07C4D8BFD3 /* StubURLProtocol.swift */,
+				CD72C3DF81A91E07C4D8BFD3 /* AIStubURLProtocol.swift */,
 				077E6275FC4538F0EE4BE56C /* PKCETests.swift */,
 				23F556F1FE151A63018FA796 /* AIAssistantsAuthClientTests.swift */,
 				D25B03A260F2C0DEACE12258 /* InMemoryKeychain.swift */,
@@ -7345,7 +7345,7 @@
 				BD8FC0712D661B0000B95AED /* TidepoolTherapySettingsTests.swift in Sources */,
 				CA03000000000000000010C2 /* AlertCatalogRegistryOmniFaultTests.swift in Sources */,
 				CD1235B000000000000000F2 /* TidepoolUploadSerializerTests.swift in Sources */,
-				8668A01FAEDB0BDA2C97646D /* StubURLProtocol.swift in Sources */,
+				8668A01FAEDB0BDA2C97646D /* AIStubURLProtocol.swift in Sources */,
 				4B10E1B8690EC90FBC81E8DE /* PKCETests.swift in Sources */,
 				A1EA5427391555823887DC85 /* AIAssistantsAuthClientTests.swift in Sources */,
 				06955E76DFD7E6A6F7B26F86 /* InMemoryKeychain.swift in Sources */,

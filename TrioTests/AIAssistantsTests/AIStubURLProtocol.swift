@@ -3,7 +3,7 @@ import Foundation
 /// Answers requests from a handler registered for the request's host, so suites that use
 /// different hosts can't see each other's requests even when they run at the same time.
 /// A handler that throws a `URLError` makes the request fail with it.
-final class StubURLProtocol: URLProtocol {
+final class AIStubURLProtocol: URLProtocol {
     typealias Handler = (URLRequest, Data?) throws -> (Int, Data)
 
     private static let lock = NSLock()

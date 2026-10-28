@@ -40,7 +40,7 @@ private final class SignedOutLog {
         let store = AIAssistantsTokenStore(keychain: keychain)
         store.baseURL = baseURL
         store.tokens = AIAssistantsTokens(accessToken: "a", refreshToken: "r", expiresAt: expiry ?? now.addingTimeInterval(600))
-        let session = AIAssistantsAuthClient.makeSession(protocolClasses: [StubURLProtocol.self])
+        let session = AIAssistantsAuthClient.makeSession(protocolClasses: [AIStubURLProtocol.self])
         let now = self.now
         let api = AIAssistantsAPI(
             store: store,
@@ -51,8 +51,8 @@ private final class SignedOutLog {
         return (api, store)
     }
 
-    func stub(_ handler: StubURLProtocol.Handler?) {
-        StubURLProtocol.setHandler(for: Self.host, handler)
+    func stub(_ handler: AIStubURLProtocol.Handler?) {
+        AIStubURLProtocol.setHandler(for: Self.host, handler)
     }
 
     @Test("Token store round-trips and clear removes every key") func storeRoundTripsAndClearRemovesAllKeys() {
