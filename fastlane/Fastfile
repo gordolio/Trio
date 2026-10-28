@@ -148,7 +148,20 @@ platform :ios do
       key_content: "#{FASTLANE_KEY}"
     )
     
-    if TESTFLIGHT_GROUPS.empty?
+    # A group set to automatic distribution already gets every build, and Apple refuses to add
+    # one to it by hand, so only the checked manual groups get this build added.
+    groups = []
+    unless TESTFLIGHT_GROUPS.empty?
+      app = Spaceship::ConnectAPI::App.find(ENV["BUNDLE_ID"])
+      found = app.get_beta_groups.select { |group| TESTFLIGHT_GROUPS.include?(group.name) }
+      missing = TESTFLIGHT_GROUPS - found.map(&:name)
+      UI.user_error!("No TestFlight group named #{missing.join(', ')}") unless missing.empty?
+      automatic, manual = found.partition(&:has_access_to_all_builds)
+      automatic.each { |group| UI.message("#{group.name} gets every build automatically, so it isn't added by hand") }
+      groups = manual.map(&:name)
+    end
+
+    if groups.empty?
       upload_to_testflight(
         api_key: api_key,
         skip_submission: false,
@@ -166,7 +179,7 @@ platform :ios do
         skip_waiting_for_build_processing: false,
         distribute_external: false,
         submit_beta_review: false,
-        groups: TESTFLIGHT_GROUPS,
+        groups: groups,
         changelog: git_branch+" "+last_git_commit[:abbreviated_commit_hash],
       )
     end

@@ -3,7 +3,8 @@ run-name: Build Trio (${{ github.ref_name }})
 on:
   workflow_dispatch:
     inputs:
-      # Checked groups get this build and no one else does. Nothing checked = the usual upload.
+      # Checked groups get this build. A group set to automatic distribution in App Store Connect
+      # (Testers) gets every build, checked or not. Nothing checked = the usual upload.
       testflight_group_gordon:
         description: "Send to TestFlight group: Gordon"
         type: boolean
