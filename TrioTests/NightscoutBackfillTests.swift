@@ -305,11 +305,8 @@ private final class BackfillURLProtocol: URLProtocol {
                     container.register(NightscoutBackfill.self) { _ in backfill }
                     let state = Home.StateModel()
                     state.currentIOB = 1.13
-                    let home = Home.RootView(
-                        resolver: container,
-                        state: state,
-                        alarmsSnoozeUntil: snoozed ? Date().addingTimeInterval(120 * 60) : .distantPast
-                    )
+                    state.alarmsSnoozeUntil = snoozed ? Date().addingTimeInterval(120 * 60) : .distantPast
+                    let home = Home.RootView(resolver: container, state: state)
                     let scheme: ColorScheme = dark ? .dark : .light
                     let content = VStack(spacing: 24) {
                         home.mealPanel().frame(height: HomeLayout.mealSlotHeight)

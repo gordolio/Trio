@@ -58,6 +58,7 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
         }
         broadcaster.register(SettingsObserver.self, observer: self)
         broadcaster.register(PumpSettingsObserver.self, observer: self)
+        broadcaster.register(SnoozeObserver.self, observer: self)
 
         // Observer for OrefDetermination and adjustments
         coreDataPublisher =
@@ -207,6 +208,8 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
 
             return await context.perform {
                 var watchState = WatchState(date: Date())
+                watchState.snoozeUntilDate = UserDefaults.standard
+                    .object(forKey: "UserNotificationsManager.snoozeUntilDate") as? Date ?? .distantPast
 
                 // Set lastLoopDate
                 let lastLoopMinutes = Int((Date().timeIntervalSince(self.apsManager.lastLoopDate) - 30) / 60) + 1
@@ -324,17 +327,9 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
 
                 // Calculate delta if we have at least 2 readings
                 if glucoseObjects.count >= 2 {
-                    var glucoseLast = Decimal(glucoseObjects[0].glucose)
-                    var glucoseSecondLast = Decimal(glucoseObjects[1].glucose)
-                    if self.units == .mmolL {
-                        glucoseLast = glucoseLast.asMmolL
-                        glucoseSecondLast = glucoseSecondLast.asMmolL
-                    }
-
-                    let deltaValue = glucoseLast - glucoseSecondLast
-                    let formattedDelta = Formatter.glucoseFormatter(for: self.units)
-                        .string(from: deltaValue as NSNumber) ?? "0"
-                    watchState.delta = deltaValue < 0 ? "\(formattedDelta)" : "+\(formattedDelta)"
+                    let glucoseLast = Decimal(glucoseObjects[0].glucose)
+                    let glucoseSecondLast = Decimal(glucoseObjects[1].glucose)
+                    watchState.delta = (glucoseLast - glucoseSecondLast).formattedDelta(for: self.units)
                 }
 
                 // Set temp target presets with their enabled status
@@ -539,7 +534,8 @@ final class BaseWatchManager: NSObject, WCSessionDelegate, Injectable, WatchMana
             WatchMessageKeys.confirmBolusFaster: state.confirmBolusFaster,
             WatchMessageKeys.units: state.units.rawValue,
             WatchMessageKeys.showForecastWatch: state.showForecast,
-            WatchMessageKeys.isForecastCone: state.isForecastCone
+            WatchMessageKeys.isForecastCone: state.isForecastCone,
+            WatchMessageKeys.snoozeUntilDate: state.snoozeUntilDate.timeIntervalSince1970
         ]
 
         var forecastData: [String: Any] = [
@@ -1098,6 +1094,16 @@ extension BaseWatchManager: SettingsObserver, PumpSettingsObserver {
         // Skip if no watch is paired or app not installed
         guard let session = self.session, session.isPaired, session.isReachable, session.isWatchAppInstalled else { return }
 
+        Task {
+            let state = await self.setupWatchState()
+            await self.sendDataToWatch(state)
+        }
+    }
+}
+
+extension BaseWatchManager: SnoozeObserver {
+    @MainActor func snoozeDidChange(_: Date) {
+        guard let session = self.session, session.isPaired, session.isReachable, session.isWatchAppInstalled else { return }
         Task {
             let state = await self.setupWatchState()
             await self.sendDataToWatch(state)
