@@ -416,7 +416,7 @@ extension CGMSettings {
 
                                 Spacer()
 
-                                Text(state.units == .mgdL ? centerValue.description : centerValue.formattedAsMmolL).bold()
+                                Text(centerValue.formatted(for: state.units)).bold()
 
                                 Text(state.units.rawValue).foregroundStyle(Color.secondary)
                             }.padding(.top)
@@ -444,7 +444,7 @@ extension CGMSettings {
                                 Spacer()
 
                                 Text("±")
-                                Text(state.units == .mgdL ? amplitude.description : amplitude.formattedAsMmolL).bold()
+                                Text(amplitude.formatted(for: state.units)).bold()
 
                                 Text(state.units.rawValue).foregroundStyle(Color.secondary)
                             }.padding(.top)
@@ -457,7 +457,7 @@ extension CGMSettings {
                                 .padding(.vertical)
 
                             Text(
-                                "Range: \(state.units == .mgdL ? (centerValue - amplitude).description : (centerValue - amplitude).formattedAsMmolL)–\(state.units == .mgdL ? (centerValue + amplitude).description : (centerValue + amplitude).formattedAsMmolL) \(state.units.rawValue)"
+                                "Range: \((centerValue - amplitude).formatted(for: state.units))–\((centerValue + amplitude).formatted(for: state.units)) \(state.units.rawValue)"
                             )
                             .bold()
                             .font(.footnote)
@@ -508,7 +508,7 @@ extension CGMSettings {
 
                                 Text("±")
 
-                                Text(state.units == .mgdL ? noiseAmplitude.description : noiseAmplitude.formattedAsMmolL).bold()
+                                Text(noiseAmplitude.formatted(for: state.units)).bold()
 
                                 Text(state.units.rawValue).foregroundStyle(Color.secondary)
                             }.padding(.top)

@@ -108,7 +108,7 @@ extension CarbRatioCalibration {
         /// Format glucose value in user's preferred units
         func formatGlucose(_ value: Int) -> String {
             if glucoseUnits == .mmolL {
-                return value.formattedAsMmolL
+                return value.formatted(for: .mmolL)
             }
             return "\(value)"
         }
