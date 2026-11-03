@@ -149,19 +149,29 @@ import Testing
         #expect(evaluate(end: 200, elapsedHours: 1, reason: .interrupted).outcome == .invalid)
     }
 
-    @Test("The steady band is what one docs step moves glucose over the fast") func bandForFast() {
-        #expect(BasalTestEvaluator.steadyBand(isf: 50, scheduledBasal: 0.8, hours: 4) == 16)
+    @Test("The steady band stays a whole mg/dL under the change one docs step is worth") func bandForFast() {
+        // 50 × 0.8 × 0.1 × 4 = 16 exactly, which is a step, so the band is 15.
+        #expect(BasalTestEvaluator.steadyBand(isf: 50, scheduledBasal: 0.8, hours: 4) == 15)
         // 45 × 0.75 × 0.1 × 6 = 20.25
         #expect(BasalTestEvaluator.steadyBand(isf: 45, scheduledBasal: 0.75, hours: 6) == 20)
         // 52 × 0.75 × 0.1 × 4 = 15.6
-        #expect(BasalTestEvaluator.steadyBand(isf: 52, scheduledBasal: 0.75, hours: 4) == 16)
-        #expect(BasalTestEvaluator.steadyBand(isf: 50, scheduledBasal: 0.8, hours: 4, step: 0.2) == 32)
+        #expect(BasalTestEvaluator.steadyBand(isf: 52, scheduledBasal: 0.75, hours: 4) == 15)
+        // 50 × 0.8 × 0.2 × 4 = 32 exactly
+        #expect(BasalTestEvaluator.steadyBand(isf: 50, scheduledBasal: 0.8, hours: 4, step: 0.2) == 31)
+        // 50 × 0.8 × 0.1 × 4.25 = 17 exactly
+        #expect(BasalTestEvaluator.steadyBand(isf: 50, scheduledBasal: 0.8, hours: 4.25) == 16)
     }
 
-    @Test("A change at the edge of the band agrees with the evaluation") func bandMatchesEvaluation() {
+    @Test("A change at the edge of the band agrees with the verdict") func bandMatchesVerdict() {
         let band = BasalTestEvaluator.steadyBand(isf: 50, scheduledBasal: 0.8, hours: 4)
-        #expect(evaluate(end: 100 + band - 1).outcome == .steady)
-        #expect(evaluate(end: 100 + band).outcome == .rising)
+        #expect(band == 15)
+        // 16 mg/dL is exactly one docs step, so it is rising; 15 is inside the band and steady.
+        #expect(evaluate(end: 100 + 16).outcome == .rising)
+        #expect(evaluate(end: 100 + 15).outcome == .steady)
+        #expect(evaluate(end: 100 + band).outcome == .steady)
+        #expect(evaluate(end: 100 + band + 1).outcome == .rising)
+        #expect(evaluate(end: 100 - 16).outcome == .falling)
+        #expect(evaluate(end: 100 - band).outcome == .steady)
     }
 
     @Test("Only steady, rising and falling say anything about basal") func conclusive() {
@@ -176,11 +186,100 @@ import Testing
         let now = Date()
         let readings = (0 ..< 6).map { BasalTestReading(date: now.addingTimeInterval(Double($0) * 300), glucose: 100 + $0 * 10) }
         // Last three are 130, 140, 150.
-        #expect(BasalTestEvaluator.endGlucose(from: readings) == 140)
+        #expect(BasalTestEvaluator.endGlucose(from: readings, endingAt: now.addingTimeInterval(5 * 300)) == 140)
     }
 
     @Test("There is no end glucose when the CGM recorded nothing") func noEndGlucoseWithoutReadings() {
-        #expect(BasalTestEvaluator.endGlucose(from: []) == nil)
+        #expect(BasalTestEvaluator.endGlucose(from: [], endingAt: Date()) == nil)
+    }
+
+    @Test("A CGM that stopped early in the fast gives no end glucose") func endGlucoseNeedsARecentReading() {
+        let end = Date()
+        // The CGM stopped an hour before the end of the fast.
+        let readings = (0 ..< 6).map {
+            BasalTestReading(date: end.addingTimeInterval(-3600 - Double($0) * 300), glucose: 100 + $0 * 10)
+        }
+        #expect(BasalTestEvaluator.endGlucose(from: readings, endingAt: end) == nil)
+    }
+
+    @Test("The newest reading may be as old as Trio's loop accepts, and no older") func endGlucoseReadingAgeLimit() {
+        #expect(BasalTest.Config.endReadingMaxAge == 12 * 60)
+        let end = Date()
+        func endGlucose(newestAge: TimeInterval) -> Int? {
+            // Readings 5 minutes apart, the newest `newestAge` before the end: 130, 140, 150 at the tail.
+            let readings = (0 ..< 6).map {
+                BasalTestReading(date: end.addingTimeInterval(-newestAge - Double(5 - $0) * 300), glucose: 100 + $0 * 10)
+            }
+            return BasalTestEvaluator.endGlucose(from: readings, endingAt: end)
+        }
+        #expect(endGlucose(newestAge: 0) == 140)
+        #expect(endGlucose(newestAge: 10 * 60) == 140)
+        #expect(endGlucose(newestAge: 12 * 60) == 140)
+        #expect(endGlucose(newestAge: 12 * 60 + 1) == nil)
+    }
+
+    @Test("A low end is described as Trio's suspend; a fall from the readings as a fall") func summaryForLowEnd() {
+        // A low's result is "falling" whatever the readings were, and Trio's suspend can come from its forecast while
+        // glucose is still above the threshold, so it is not described as a measured fall.
+        #expect(BasalTestEvaluator.summary(for: .falling, reason: .low) == "Trio suspended insulin for a low")
+        #expect(BasalTestEvaluator.summary(for: .falling, reason: .completed) == "Glucose fell")
+        #expect(BasalTestEvaluator.summary(for: .falling, reason: .endedEarly) == "Glucose fell")
+        // Other outcomes keep their text.
+        #expect(BasalTestEvaluator.summary(for: .steady, reason: .completed) == "Glucose stayed steady")
+        #expect(BasalTestEvaluator.summary(for: .rising, reason: .completed) == "Glucose rose")
+        #expect(BasalTestEvaluator.summary(for: .inconclusive, reason: .endedEarly) == "Ended too soon to tell")
+        #expect(BasalTestEvaluator.summary(for: .invalid, reason: .interrupted) == "Fast was interrupted")
+        // A low that something else spoiled is still an interrupted fast.
+        #expect(BasalTestEvaluator.summary(for: .invalid, reason: .low) == "Fast was interrupted")
+    }
+
+    private struct ReadFailure: Error {}
+
+    /// Counts how many times a check was read.
+    private final class Reads {
+        var calls = 0
+    }
+
+    @Test("A read that fails doesn't hide a later one") func failedReadDoesntHideALaterOne() async {
+        let found = await BasalTestEvaluator.firstInterference([
+            (name: "carbs", read: { throw ReadFailure() }),
+            (name: "boluses", read: { "A bolus was given during the fast." })
+        ])
+        #expect(found == "A bolus was given during the fast.")
+    }
+
+    @Test("Nothing found, or only failed reads, is no interference") func noInterference() async {
+        #expect(await BasalTestEvaluator.firstInterference([]) == nil)
+        #expect(await BasalTestEvaluator.firstInterference([
+            (name: "carbs", read: { nil }),
+            (name: "boluses", read: { nil }),
+            (name: "dosing", read: { nil })
+        ]) == nil)
+        #expect(await BasalTestEvaluator.firstInterference([
+            (name: "carbs", read: { throw ReadFailure() }),
+            (name: "boluses", read: { nil }),
+            (name: "dosing", read: { throw ReadFailure() })
+        ]) == nil)
+    }
+
+    @Test("The first interference found wins, and the checks after it aren't read") func firstInterferenceWins() async {
+        let later = Reads()
+        let found = await BasalTestEvaluator.firstInterference([
+            (name: "carbs", read: { nil }),
+            (name: "boluses", read: { "A bolus was given during the fast." }),
+            (name: "dosing", read: {
+                later.calls += 1
+                return "Trio dosed during the fast."
+            })
+        ])
+        #expect(found == "A bolus was given during the fast.")
+        #expect(later.calls == 0)
+
+        let first = await BasalTestEvaluator.firstInterference([
+            (name: "carbs", read: { "Carbs were logged during the fast." }),
+            (name: "boluses", read: { "A bolus was given during the fast." })
+        ])
+        #expect(first == "Carbs were logged during the fast.")
     }
 
     @Test("A fast with no readings is inconclusive, never steady") func noReadingsIsInconclusive() {
@@ -1020,11 +1119,12 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
             expiresAt: Date().addingTimeInterval(3600),
             restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
         )
+        // Set before the service exists, because a recovered session is checked as soon as it is made.
+        let suspendedAt = startedAt.addingTimeInterval(600)
+        events.temps = [BasalTestTempBasal(date: suspendedAt, rate: 0, minutes: 30)]
         let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
         defer { cleanUp(storage) }
 
-        let suspendedAt = startedAt.addingTimeInterval(600)
-        events.temps = [BasalTestTempBasal(date: suspendedAt, rate: 0, minutes: 30)]
         await service.endIfLowOrCarbsLogged()
         #expect(service.activeSession == nil)
         #expect(settings.settings.dosingMode == .closed)
@@ -1149,6 +1249,110 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         #expect(service.lastEnd() == nil)
     }
 
+    @Test("A low is kept when the session had already run past its deadline") func lowIsKeptWhenSessionExpired() async {
+        let events = FakeSettingsTestEvents()
+        // On a whole second, so the suspend reads back exactly.
+        let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 7200).rounded(.down))
+        let session = SettingsTestSession(
+            kind: .basal,
+            startedAt: startedAt,
+            expiresAt: Date().addingTimeInterval(-60),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )
+        let suspendedAt = startedAt.addingTimeInterval(600)
+        events.temps = [BasalTestTempBasal(date: suspendedAt, rate: 0, minutes: 30)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.checkSession()
+        // The low is on record, then the usual mode is back, so the screen reports the low and not "interrupted".
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .low, date: suspendedAt))
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(storage.retrieve(sessionPath, as: SettingsTestSession.self) == nil)
+    }
+
+    @Test("A session recovered at launch past its deadline is checked for a low first") func lowIsKeptWhenExpiredAtLaunch() async {
+        let events = FakeSettingsTestEvents()
+        let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 7200).rounded(.down))
+        let session = SettingsTestSession(
+            kind: .basal,
+            startedAt: startedAt,
+            expiresAt: Date().addingTimeInterval(-60),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )
+        let suspendedAt = startedAt.addingTimeInterval(600)
+        events.temps = [BasalTestTempBasal(date: suspendedAt, rate: 0, minutes: 30)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        // Nothing calls the check here: the service runs it itself once it is made, and the session ends within it.
+        var waits = 0
+        while service.activeSession != nil, waits < 100 {
+            try? await Task.sleep(for: .milliseconds(50))
+            waits += 1
+        }
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .low, date: suspendedAt))
+    }
+
+    @Test("An expired session with no low ends without a record") func expiredSessionWithoutALow() async {
+        let events = FakeSettingsTestEvents()
+        let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 7200).rounded(.down))
+        let session = SettingsTestSession(
+            kind: .basal,
+            startedAt: startedAt,
+            expiresAt: Date().addingTimeInterval(-60),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )
+        // What the service kept for an earlier test, which this one mustn't touch.
+        let earlier = SettingsTestEnd(
+            sessionID: UUID(),
+            cause: .carbsLogged,
+            date: Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 86400).rounded(.down))
+        )
+        BaseFileStorage().save(earlier, as: lastEndPath)
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events, keepingFiles: true)
+        defer { cleanUp(storage) }
+
+        await service.checkSession()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(storage.retrieve(sessionPath, as: SettingsTestSession.self) == nil)
+        #expect(service.lastEnd() == earlier)
+    }
+
+    @Test("A running session isn't ended by the check") func checkSessionLeavesALiveSession() async {
+        let events = FakeSettingsTestEvents()
+        let (service, settings, storage, session) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        await service.checkSession()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(events.reads > 0)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A session whose history can't be read still ends at its deadline") func expiredSessionEndsWhenHistoryUnreadable() async {
+        let events = FakeSettingsTestEvents()
+        events.failing = true
+        let session = SettingsTestSession(
+            kind: .basal,
+            startedAt: Date().addingTimeInterval(-7200),
+            expiresAt: Date().addingTimeInterval(-60),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.checkSession()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == nil)
+    }
+
     private func cleanUp(_ storage: FileStorage) {
         storage.remove(sessionPath)
         storage.remove(historyPath)
@@ -1216,7 +1420,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         #expect(stored?.restore == first?.restore)
     }
 
-    @Test("A session that ran past its deadline is closed on launch") func expiredSessionRestoresOnLaunch() {
+    @Test("A session that ran past its deadline is closed on launch") func expiredSessionRestoresOnLaunch() async {
         let stale = SettingsTestSession(
             kind: .basal,
             startedAt: Date().addingTimeInterval(-6 * 3600),
@@ -1226,6 +1430,8 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         let (service, settings, storage) = makeService(mode: .basalTesting, existing: stale)
         defer { cleanUp(storage) }
 
+        // The launch check reads the history for a low first, so it finishes a moment after the service is made.
+        await service.checkSession()
         #expect(settings.settings.dosingMode == .closed)
         #expect(service.activeSession == nil)
     }
@@ -1469,6 +1675,31 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(spoken.components(separatedBy: "from your settings").count == 2)
         // Units are spelled out, not read as letters.
         #expect(spoken.contains(UnitSpelling.spoken("mg/dL")))
+    }
+
+    @Test("A rounded result follows ≈, is read as about, and the card says so") func approximateResult() {
+        let share = SettingsTestFormulaTerm(
+            label: "Share",
+            value: "+31%",
+            unit: "of basal",
+            fromSettings: false,
+            approximate: true
+        )
+        let line: [SettingsTestFormulaPart] = [.term(term("Rate", "+0.15", "U/h")), .op("÷"), .term(term("Basal", "0.50", "U/h"))]
+        #expect(SettingsTestFormulaCard.relation(for: share) == "≈")
+        #expect(SettingsTestFormulaCard.relation(for: term("Rate", "+0.6", "U")) == "=")
+
+        let spoken = SettingsTestFormulaCard.spokenLabel(line, result: share)
+        #expect(spoken.contains(String(localized: "is about")))
+        #expect(!spoken.contains(String(localized: "equals")))
+        #expect(!spoken.contains("≈"))
+        #expect(SettingsTestFormulaCard.spokenLabel(line, result: term("Share", "30%", "")).contains(String(localized: "equals")))
+
+        let exact = term("Rate", "+0.6", "U")
+        #expect(SettingsTestFormulaCard.showsApproximate(result: [exact, share], lineCount: 2))
+        #expect(!SettingsTestFormulaCard.showsApproximate(result: [exact], lineCount: 1))
+        // A result with no line isn't shown, so its ≈ doesn't count.
+        #expect(!SettingsTestFormulaCard.showsApproximate(result: [exact, share], lineCount: 1))
     }
 
     @Test("A glucose and its unit stay on one line, and read the same") func keepTogether() {

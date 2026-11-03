@@ -204,16 +204,17 @@ enum BasalTestEvaluator {
         return shareOfBasal > 0 ? result(.rising, .increase) : result(.falling, .decrease)
     }
 
-    /// How far glucose can move over the fast, in mg/dL, before it is worth one docs step of the
-    /// scheduled basal.
+    /// How far glucose can move over the fast, in mg/dL, and still be steady: the largest whole number strictly below
+    /// the change that is worth one docs step of the scheduled basal. A change of exactly one step is rising or
+    /// falling (`evaluate`), so it must be outside the band, and so must any whole mg/dL past it. Never below 0.
     static func steadyBand(
         isf: Decimal,
         scheduledBasal: Decimal,
         hours: Decimal,
         step: Decimal = BasalTest.Config.docsSmallestStep
     ) -> Int {
-        let band = rounded(isf * scheduledBasal * step * hours, scale: 0, roundingMode: .plain)
-        return NSDecimalNumber(decimal: band).intValue
+        let limit = rounded(isf * scheduledBasal * step * hours, scale: 0, roundingMode: .up)
+        return max(0, NSDecimalNumber(decimal: limit).intValue - 1)
     }
 
     /// The ISF in force at `date`, in mg/dL: the entry that started most recently at or before that time of day.
@@ -375,8 +376,9 @@ enum BasalTestEvaluator {
         return covered.isEmpty ? nil : covered
     }
 
-    /// `value` rounded toward zero to `scale` decimals, so a number shown is never more than it is. The rate and the
-    /// share are both shown this way, so the working agrees with itself and with the verdict.
+    /// `value` rounded toward zero to `scale` decimals, so a number shown is never more than it is and a share just
+    /// under the docs' step never reads as the step. Rounded values don't always reproduce each other, so the result
+    /// card marks them "≈"; the verdict uses the exact values.
     static func towardZero(_ value: Decimal, scale: Int) -> Decimal {
         let magnitude = rounded(abs(value), scale: scale, roundingMode: .down)
         // Negating zero would give a Decimal that isn't a number.
@@ -422,11 +424,45 @@ enum BasalTestEvaluator {
     }
 
     /// The end glucose smooths over the last few readings so one noisy value doesn't decide it. Nil when the CGM
-    /// recorded nothing, so a fast with no readings can't pass as one where glucose didn't move.
-    static func endGlucose(from readings: [BasalTestReading]) -> Int? {
+    /// recorded nothing, so a fast with no readings can't pass as one where glucose didn't move, and nil when the
+    /// newest reading is more than `BasalTest.Config.endReadingMaxAge` before `end`, so a CGM that stopped early in the
+    /// fast can't have its first hours judged as the whole fast.
+    static func endGlucose(from readings: [BasalTestReading], endingAt end: Date) -> Int? {
         let tail = readings.sorted { $0.date < $1.date }.suffix(3)
-        guard !tail.isEmpty else { return nil }
+        guard let newest = tail.last, end.timeIntervalSince(newest.date) <= BasalTest.Config.endReadingMaxAge else {
+            return nil
+        }
         return tail.map(\.glucose).reduce(0, +) / tail.count
+    }
+
+    /// What the archived record says about a result. A low ends the test as a fall whatever the readings were, and
+    /// Trio's suspend can come from its forecast while glucose is still above the threshold, so for a low it says what
+    /// Trio did and not that glucose fell.
+    static func summary(for outcome: BasalTestOutcome, reason: BasalTestEndReason) -> String {
+        switch outcome {
+        case .steady: return String(localized: "Glucose stayed steady")
+        case .rising: return String(localized: "Glucose rose")
+        case .falling:
+            return reason == .low
+                ? String(localized: "Trio suspended insulin for a low")
+                : String(localized: "Glucose fell")
+        case .inconclusive: return String(localized: "Ended too soon to tell")
+        case .invalid: return String(localized: "Fast was interrupted")
+        }
+    }
+
+    /// The message of the first check that finds something that spoils the fast, or nil if none does. The checks run
+    /// in order and stop at the first hit. One whose read throws is logged and counts as finding nothing, so a record
+    /// that can't be read never hides what a later one would have found.
+    static func firstInterference(_ checks: [(name: String, read: () async throws -> String?)]) async -> String? {
+        for check in checks {
+            do {
+                if let message = try await check.read() { return message }
+            } catch {
+                warning(.settings, "BasalTest: couldn't read \(check.name) to check the fast", error: error)
+            }
+        }
+        return nil
     }
 
     /// A share of the basal as a whole percent, rounded toward zero, so a share just under the docs' step never

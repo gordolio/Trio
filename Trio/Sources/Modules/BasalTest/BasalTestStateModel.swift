@@ -78,8 +78,8 @@ extension BasalTest {
             isf.formattedISF(for: glucoseUnits)
         }
 
-        /// A number with its sign, e.g. "+0.15", rounded toward zero like the share beside it, so the working adds up.
-        /// The sign follows the number as shown, so one that rounds to zero has none.
+        /// A number with its sign, e.g. "+0.15", rounded toward zero like the share beside it, so neither is shown as
+        /// more than it is. The sign follows the number as shown, so one that rounds to zero has none.
         func formatSigned(_ value: Decimal, fractionDigits: Int) -> String {
             let shown = BasalTestEvaluator.towardZero(value, scale: fractionDigits)
             let text = abs(shown).formatted(.number.precision(.fractionLength(fractionDigits)))
@@ -687,6 +687,9 @@ extension BasalTest {
         /// the dosing mode was changed, or something spoiled it.
         func checkRunningTest() async {
             guard let test, test.phase == .running, !isFinishing else { return }
+            // What the check finishes below is this fast, and only this one: the reads in between give the user time to
+            // discard it and start another, which this check knows nothing about.
+            let testID = test.id
 
             let now = Date()
             // Only the fast itself: a zero temp after the planned end isn't this test's low.
@@ -715,23 +718,33 @@ extension BasalTest {
                 mode: mode
             ) {
             case let .low(suspendedAt):
-                await finish(reason: .low, at: suspendedAt)
+                await finish(for: testID, reason: .low, at: suspendedAt)
             case let .carbsLogged(endedAt):
-                await finish(reason: .interrupted, at: endedAt, note: String(localized: "Carbs were logged during the fast."))
+                await finish(
+                    for: testID,
+                    reason: .interrupted,
+                    at: endedAt,
+                    note: String(localized: "Carbs were logged during the fast.")
+                )
             case .completed:
-                await finish(reason: .completed)
+                await finish(for: testID, reason: .completed)
             case .completedUnchecked:
-                await finish(reason: .unchecked)
+                await finish(for: testID, reason: .unchecked)
             case .modeChanged:
-                await finish(reason: .interrupted, note: String(localized: "The dosing mode changed during the fast."))
+                await finish(
+                    for: testID,
+                    reason: .interrupted,
+                    note: String(localized: "The dosing mode changed during the fast.")
+                )
             case .unexplainedSuspend:
                 await finish(
+                    for: testID,
                     reason: .interrupted,
                     note: String(localized: "Basal was stopped during the fast, and Trio can't tell whether it was for a low.")
                 )
             case nil:
                 if await wasInterrupted(test, until: now) != nil {
-                    await finish(reason: .interrupted)
+                    await finish(for: testID, reason: .interrupted)
                 }
             }
         }
@@ -748,9 +761,18 @@ extension BasalTest {
         }
 
         /// `endedAt` is when a low ended the fast, or when the service ended it for carbs; without it the fast ends now,
-        /// or at the planned end if that came first. `note` says what interrupted it when the records don't.
-        func finish(reason: BasalTestEndReason, at endedAt: Date? = nil, note: String? = nil) async {
-            guard var current = test, current.phase == .running, !isFinishing else { return }
+        /// or at the planned end if that came first. `note` says what interrupted it when the records don't. With
+        /// `testID`, it finishes only that fast: a check that read the history for one fast must not end another that
+        /// was started while it waited.
+        func finish(
+            for testID: UUID? = nil,
+            reason: BasalTestEndReason,
+            at endedAt: Date? = nil,
+            note: String? = nil
+        ) async {
+            guard var current = test, current.phase == .running, !isFinishing,
+                  testID == nil || current.id == testID
+            else { return }
             isFinishing = true
             defer { isFinishing = false }
 
@@ -769,7 +791,7 @@ extension BasalTest {
                 warning(.settings, "BasalTest: couldn't read the fast's glucose", error: error)
                 readings = []
             }
-            let endGlucose = BasalTestEvaluator.endGlucose(from: readings)
+            let endGlucose = BasalTestEvaluator.endGlucose(from: readings, endingAt: end)
             let interference = await wasInterrupted(current, until: end) ?? note
 
             let evaluation = BasalTestEvaluator.evaluate(
@@ -802,7 +824,7 @@ extension BasalTest {
                         // Only a low can get here without one: it says falling whatever the readings were.
                         endGlucose: endGlucose ?? current.startGlucose,
                         direction: direction,
-                        summary: summary(for: evaluation.outcome),
+                        summary: BasalTestEvaluator.summary(for: evaluation.outcome, reason: reason),
                         // Only what the hours it ran covered, so a fast ended early doesn't vouch for the rest.
                         coveredEntries: BasalTestEvaluator.coveredEntries(for: current, endingAt: end)
                     )
@@ -814,25 +836,31 @@ extension BasalTest {
             try? await loadFastingSource()
         }
 
-        /// What spoiled the fast, if anything: carbs, a bolus, or Trio dosing, which it doesn't in Basal Testing. A
-        /// record that can't be read is logged and taken as nothing found.
+        /// What spoiled the fast, if anything: carbs, a bolus, or Trio dosing, which it doesn't in Basal Testing. Each
+        /// record is read on its own, so one that can't be read is logged and taken as nothing found without hiding
+        /// what the others show.
         private func wasInterrupted(_ test: BasalTestState, until end: Date) async -> String? {
-            do {
-                if try await provider.hasCarbEntries(from: test.startedAt, to: end) {
-                    return String(localized: "Carbs were logged during the fast.")
-                }
-                if try await provider.hasManualBolus(from: test.startedAt, to: end) {
-                    return String(localized: "A bolus was given during the fast.")
-                }
-                let smbs = try await provider.fetchSMBs(since: test.startedAt)
-                let temps = try await provider.fetchTempBasals(from: test.startedAt, to: end)
-                if BasalTestEvaluator.dosedDuringFast(smbs: smbs, temps: temps, since: test.startedAt, until: end) {
-                    return String(localized: "Trio dosed during the fast, so Basal Testing wasn't on the whole time.")
-                }
-            } catch {
-                warning(.settings, "BasalTest: couldn't read what happened during the fast", error: error)
-            }
-            return nil
+            let start = test.startedAt
+            let provider: Provider = self.provider
+            return await BasalTestEvaluator.firstInterference([
+                (name: "carbs", read: {
+                    try await provider.hasCarbEntries(from: start, to: end)
+                        ? String(localized: "Carbs were logged during the fast.")
+                        : nil
+                }),
+                (name: "manual boluses", read: {
+                    try await provider.hasManualBolus(from: start, to: end)
+                        ? String(localized: "A bolus was given during the fast.")
+                        : nil
+                }),
+                (name: "Trio's dosing", read: {
+                    let smbs = try await provider.fetchSMBs(since: start)
+                    let temps = try await provider.fetchTempBasals(from: start, to: end)
+                    return BasalTestEvaluator.dosedDuringFast(smbs: smbs, temps: temps, since: start, until: end)
+                        ? String(localized: "Trio dosed during the fast, so Basal Testing wasn't on the whole time.")
+                        : nil
+                })
+            ])
         }
 
         /// Clears a finished result so the user can start over.
@@ -844,16 +872,6 @@ extension BasalTest {
             provider.storage.remove(Config.statePath)
             test = nil
             Task { await refresh() }
-        }
-
-        func summary(for outcome: BasalTestOutcome) -> String {
-            switch outcome {
-            case .steady: return String(localized: "Glucose stayed steady")
-            case .rising: return String(localized: "Glucose rose")
-            case .falling: return String(localized: "Glucose fell")
-            case .inconclusive: return String(localized: "Ended too soon to tell")
-            case .invalid: return String(localized: "Fast was interrupted")
-            }
         }
 
         // MARK: - Notifications

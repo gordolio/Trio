@@ -19,6 +19,10 @@ enum BasalTest {
         static let trendWindow: TimeInterval = 30 * 60
         /// How far from that point the reading it compares with may be: a CGM reads about every 5 minutes.
         static let trendTolerance: TimeInterval = 5 * 60
+        /// How old the newest reading may be at the end of the fast and still stand for the end glucose: the age at
+        /// which Trio's own loop calls glucose "too old" (`OpenAPSSwift/DetermineBasal/DetermineBasalGenerator.swift`,
+        /// `minAgo > 12`).
+        static let endReadingMaxAge: TimeInterval = 12 * 60
         static let statePath = "trio/basal_test_state.json"
     }
 

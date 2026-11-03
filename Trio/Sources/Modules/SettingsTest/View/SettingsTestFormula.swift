@@ -96,13 +96,24 @@ struct SettingsTestFormulaTerm {
     let fromSettings: Bool
     /// How VoiceOver says the unit, when spelling out its letters isn't enough (e.g. "h").
     let spokenUnit: String?
+    /// A result rounded for display. The card puts "≈" before it instead of "=", because rounded values don't always
+    /// reproduce each other; what the test decides is worked out from the exact ones. Only read on a result.
+    let approximate: Bool
 
-    init(label: String, value: String, unit: String, fromSettings: Bool, spokenUnit: String? = nil) {
+    init(
+        label: String,
+        value: String,
+        unit: String,
+        fromSettings: Bool,
+        spokenUnit: String? = nil,
+        approximate: Bool = false
+    ) {
         self.label = label
         self.value = value
         self.unit = unit
         self.fromSettings = fromSettings
         self.spokenUnit = spokenUnit
+        self.approximate = approximate
     }
 }
 
@@ -112,7 +123,8 @@ enum SettingsTestFormulaPart {
 }
 
 /// Formulas laid out like the Bolus Calculator Details sheet: labels above, values in the middle, units below.
-/// `result[i]` is the answer to `rows[i]`, shown after the "=". Only the rows that have a result are shown.
+/// `result[i]` is the answer to `rows[i]`, shown after the "=" (or "≈" when it is rounded). Only the rows that have a
+/// result are shown.
 /// `conclusion` is a line under the formulas that says what the answer means.
 struct SettingsTestFormulaCard: View {
     let title: String
@@ -166,7 +178,28 @@ struct SettingsTestFormulaCard: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
             }
+
+            if Self.showsApproximate(result: result, lineCount: lineCount) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(verbatim: "≈")
+                        .accessibilityHidden(true)
+                    Text("Rounded to show. Trio works from the exact numbers.")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+            }
         }
+    }
+
+    /// Whether any line the card shows ends in a rounded result, so the card says what the "≈" means.
+    static func showsApproximate(result: [SettingsTestFormulaTerm], lineCount: Int) -> Bool {
+        result.prefix(lineCount).contains(where: \.approximate)
+    }
+
+    /// The sign between a formula and its result: "≈" before a rounded result, otherwise "=".
+    static func relation(for result: SettingsTestFormulaTerm) -> String {
+        result.approximate ? "≈" : "="
     }
 
     /// A formula line as VoiceOver reads it: each term's label, value and unit, the operators as words, and which
@@ -193,7 +226,8 @@ struct SettingsTestFormulaCard: View {
             case let .op(symbol): return word(for: symbol)
             }
         }
-        return (formula + [String(localized: "equals"), spoken(result)]).joined(separator: ", ")
+        let relation = result.approximate ? String(localized: "is about") : String(localized: "equals")
+        return (formula + [relation, spoken(result)]).joined(separator: ", ")
     }
 
     /// Every part adds one cell to each of the three rows, so the columns line up. A flexible spacer column before
@@ -229,7 +263,7 @@ struct SettingsTestFormulaCard: View {
                     }
                 }
                 spacerCell
-                Text(verbatim: "=")
+                Text(verbatim: Self.relation(for: result))
                     .formulaOperatorStyle()
                     .fixedSize()
                 Text(result.value)

@@ -16,8 +16,8 @@ extension BasalTest {
 
                     chartCard(for: test)
 
-                    // A low ends the fast at Trio's suspend, which is the point of this result; the working would only
-                    // repeat that glucose fell.
+                    // A low ends the fast at Trio's suspend, which is the point of this result. The suspend can come
+                    // from Trio's forecast before glucose itself is low, so there is no working to show.
                     if test.endReason == .low, let suspendedAt = test.endedAt {
                         lowCard(at: suspendedAt)
                     } else if let working {
@@ -236,7 +236,7 @@ extension BasalTest {
             let end = (test.endedAt ?? test.plannedEnd).formatted(date: .omitted, time: .shortened)
             let reason: String
             switch test.endReason {
-            case .low: reason = String(localized: ". Ended early: glucose went low.")
+            case .low: reason = String(localized: ". Ended early: Trio suspended insulin for a low.")
             case .endedEarly: reason = String(localized: ". You ended it early.")
             case .interrupted: reason = String(localized: ". Ended early: it was interrupted.")
             case .completed,
@@ -318,12 +318,15 @@ extension BasalTest {
                 fromSettings: false,
                 spokenUnit: String(localized: "hours")
             )
+            // The rate and the share are rounded toward zero for display, so each follows "≈": worked out from the shown
+            // numbers they can be a percent apart. The verdict and the comparison under the card use the exact share.
             let rateTerm = SettingsTestFormulaTerm(
                 label: String(localized: "Rate"),
                 value: rate,
                 unit: "U/h",
                 fromSettings: false,
-                spokenUnit: ratePerHour
+                spokenUnit: ratePerHour,
+                approximate: true
             )
             let basal = SettingsTestFormulaTerm(
                 label: String(localized: "Basal"),
@@ -338,18 +341,13 @@ extension BasalTest {
                 [.term(rateTerm), .op("÷"), .term(basal)]
             ]
             let results = [
-                SettingsTestFormulaTerm(
-                    label: String(localized: "Rate"),
-                    value: rate,
-                    unit: "U/h",
-                    fromSettings: false,
-                    spokenUnit: ratePerHour
-                ),
+                rateTerm,
                 SettingsTestFormulaTerm(
                     label: String(localized: "Share"),
                     value: state.formatPercent(working.share),
                     unit: String(localized: "of basal"),
-                    fromSettings: false
+                    fromSettings: false,
+                    approximate: true
                 )
             ]
             return SettingsTestFormulaCard(

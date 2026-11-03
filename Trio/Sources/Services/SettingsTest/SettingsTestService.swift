@@ -113,11 +113,12 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         self.events = events ?? CoreDataSettingsTestEvents(context: CoreDataStack.shared.newTaskContext())
         injectServices(resolver)
 
-        // A session left over from a previous launch is either still running or past its deadline.
+        // A session left over from a previous launch is either still running or past its deadline. Either way it is
+        // checked for a low first, so one that ran past its deadline while the app was closed keeps the low it had.
         if let existing = storage.retrieve(SettingsTestStorage.sessionPath, as: SettingsTestSession.self) {
             sessionSubject.send(existing)
             startWatchdog()
-            endIfExpired()
+            checkSessionInBackground()
         }
     }
 
@@ -183,6 +184,20 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
+    /// What the watchdog does on each tick, and what a session recovered at launch gets once: the low and carbs check
+    /// first, then the expiry check. In that order because a session past its deadline is ended whatever it finds, and
+    /// ending it first would lose the low, which the basal screen would then report as an interrupted fast. The expiry
+    /// check runs even when the history can't be read, so the usual mode always comes back.
+    func checkSession() async {
+        await endIfLowOrCarbsLogged()
+        // Where the watchdog's timer ran it before, so the mode and the session are changed on the main actor.
+        await MainActor.run { endIfExpired() }
+    }
+
+    private func checkSessionInBackground() {
+        Task { [weak self] in await self?.checkSession() }
+    }
+
     func lastEnd() -> SettingsTestEnd? {
         storage.retrieve(SettingsTestStorage.lastEndPath, as: SettingsTestEnd.self)
     }
@@ -214,10 +229,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     private func startWatchdog() {
         watchdog = Timer.publish(every: 60, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in
-                self?.endIfExpired()
-                Task { [weak self] in await self?.endIfLowOrCarbsLogged() }
-            }
+            .sink { [weak self] _ in self?.checkSessionInBackground() }
     }
 
     // MARK: - History
