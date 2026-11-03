@@ -739,10 +739,10 @@ extension BasalTest {
                     for: testID,
                     reason: .interrupted,
                     at: stoppedAt,
-                    note: String(localized: "Basal was stopped during the fast, and Trio can't tell whether it was for a low.")
+                    note: BasalTestEvaluator.basalStoppedNote
                 )
             case nil:
-                if await wasInterrupted(test, until: now) != nil {
+                if case .found = await wasInterrupted(test, until: now) {
                     await finish(for: testID, reason: .interrupted)
                 }
             }
@@ -761,8 +761,9 @@ extension BasalTest {
 
         /// `endedAt` is when a low ended the fast, when basal was stopped in a way Trio can't put down to a low, or when the
         /// service ended it for carbs; without it the fast ends now, or at the planned end if that came first. `note`
-        /// says what interrupted it when the records don't. With `testID`, it finishes only that fast: a check that read
-        /// the history for one fast must not end another that was started while it waited.
+        /// says what interrupted it when the records don't. `reason` is what the caller saw; the history up to the end
+        /// can still make it a low or an interruption (`settle`). With `testID`, it finishes only that fast: a check that
+        /// read the history for one fast must not end another that was started while it waited.
         func finish(
             for testID: UUID? = nil,
             reason: BasalTestEndReason,
@@ -777,11 +778,16 @@ extension BasalTest {
 
             // Fixed before normal dosing comes back, so nothing the usual mode does next falls inside the fast. A test
             // that ran out while the app was closed covers only its planned window, and a low only up to the suspend.
-            let end = min(endedAt ?? Date(), current.plannedEnd)
+            let endedBy = min(endedAt ?? Date(), current.plannedEnd)
 
             // Normal dosing comes back first; the rest is bookkeeping.
             testService.end(kind: .basal)
             cancelFinishedNotification()
+
+            // The history up to the end decides how the fast ended, so a low the periodic checks hadn't seen yet isn't
+            // lost. Read once normal dosing is back, so the read never holds it up.
+            let (reason, end, stopped) = await settle(current, reason: reason, at: endedBy)
+            let note = note ?? stopped
 
             let readings: [BasalTestReading]
             do {
@@ -791,7 +797,14 @@ extension BasalTest {
                 readings = []
             }
             let endGlucose = BasalTestEvaluator.endGlucose(from: readings, endingAt: end)
-            let interference = await wasInterrupted(current, until: end) ?? note
+            let checked = await wasInterrupted(current, until: end)
+            let interference: String?
+            if case let .found(message) = checked {
+                interference = message
+            } else {
+                interference = note
+            }
+            let interferenceUnread = checked == .unreadable
 
             let evaluation = BasalTestEvaluator.evaluate(
                 startGlucose: current.startGlucose,
@@ -799,6 +812,7 @@ extension BasalTest {
                 elapsed: end.timeIntervalSince(current.startedAt),
                 reason: reason,
                 interference: interference,
+                interferenceUnread: interferenceUnread,
                 isf: current.isf,
                 scheduledBasal: BasalTestEvaluator.scheduledBasal(for: current, endingAt: end)
             )
@@ -810,6 +824,7 @@ extension BasalTest {
             current.readings = readings
             current.outcome = evaluation.outcome
             current.interference = interference
+            current.interferenceUnread = interferenceUnread
             provider.storage.save(current, as: Config.statePath)
 
             if evaluation.outcome.isConclusive, let direction = evaluation.direction {
@@ -835,31 +850,38 @@ extension BasalTest {
             try? await loadFastingSource()
         }
 
+        /// How the fast ends, from what the pump history and Trio's determinations up to `end` say: see
+        /// `BasalTestEvaluator.finishing`. A low or an interruption already decided needs no read.
+        private func settle(
+            _ test: BasalTestState,
+            reason: BasalTestEndReason,
+            at end: Date
+        ) async -> (reason: BasalTestEndReason, end: Date, note: String?) {
+            guard reason != .low, reason != .interrupted else { return (reason, end, nil) }
+            let suspend: BasalTestEvaluator.SuspendReading
+            do {
+                suspend = try await provider.fetchSuspendReading(from: test.startedAt, to: end)
+            } catch {
+                warning(.settings, "BasalTest: couldn't read temp basals to check the finished fast for a low", error: error)
+                suspend = .unreadable
+            }
+            return BasalTestEvaluator.finishing(reason: reason, at: end, suspend: suspend)
+        }
+
         /// What spoiled the fast, if anything: carbs, a bolus, or Trio dosing, which it doesn't in Basal Testing. Each
-        /// record is read on its own, so one that can't be read is logged and taken as nothing found without hiding
-        /// what the others show.
-        private func wasInterrupted(_ test: BasalTestState, until end: Date) async -> String? {
+        /// record is read on its own, so one that can't be read is logged without hiding what the others show; with
+        /// nothing found, the fast is left unchecked.
+        private func wasInterrupted(_ test: BasalTestState, until end: Date) async -> BasalTestEvaluator.Interference {
             let start = test.startedAt
             let provider: Provider = self.provider
-            return await BasalTestEvaluator.firstInterference([
-                (name: "carbs", read: {
-                    try await provider.hasCarbEntries(from: start, to: end)
-                        ? String(localized: "Carbs were logged during the fast.")
-                        : nil
-                }),
-                (name: "manual boluses", read: {
-                    try await provider.hasManualBolus(from: start, to: end)
-                        ? String(localized: "A bolus was given during the fast.")
-                        : nil
-                }),
-                (name: "Trio's dosing", read: {
-                    let smbs = try await provider.fetchSMBs(since: start)
-                    let temps = try await provider.fetchTempBasals(from: start, to: end)
-                    return BasalTestEvaluator.dosedDuringFast(smbs: smbs, temps: temps, since: start, until: end)
-                        ? String(localized: "Trio dosed during the fast, so Basal Testing wasn't on the whole time.")
-                        : nil
-                })
-            ])
+            return await BasalTestEvaluator.firstInterference(BasalTestEvaluator.interferenceChecks(
+                hasCarbs: { try await provider.hasCarbEntries(from: start, to: end) },
+                hasManualBolus: { try await provider.hasManualBolus(from: start, to: end) },
+                smbs: { try await provider.fetchSMBs(since: start) },
+                temps: { try await provider.fetchTempBasals(from: start, to: end) },
+                since: start,
+                until: end
+            ))
         }
 
         /// Clears a finished result so the user can start over.

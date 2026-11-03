@@ -80,6 +80,9 @@ struct BasalTestState: JSON, Equatable {
     var readings: [BasalTestReading] = []
     var outcome: BasalTestOutcome?
     var interference: String?
+    /// Whether a record read to check for what spoils a fast couldn't be read when it finished, so something may have
+    /// been missed. Optional so a state saved before it was kept still decodes.
+    var interferenceUnread: Bool?
 
     var plannedEnd: Date { startedAt.addingTimeInterval(plannedDuration) }
 }
@@ -143,13 +146,15 @@ enum BasalTestEvaluator {
 
     /// The result comes from the docs' smallest basal change: drift worth less than that much of the
     /// scheduled basal, over a fast of at least the docs' shortest length, is steady. Without an end glucose
-    /// (the CGM recorded nothing during the fast) there is nothing to compare, so it is inconclusive.
+    /// (the CGM recorded nothing during the fast) there is nothing to compare, so it is inconclusive. So is a fast
+    /// whose records couldn't all be read for what spoils it (`interferenceUnread`).
     static func evaluate(
         startGlucose: Int,
         endGlucose: Int?,
         elapsed: TimeInterval,
         reason: BasalTestEndReason,
         interference: String?,
+        interferenceUnread: Bool = false,
         isf: Decimal?,
         scheduledBasal: Decimal?,
         step: Decimal = BasalTest.Config.docsSmallestStep
@@ -173,6 +178,11 @@ enum BasalTestEvaluator {
 
         if interference != nil || reason == .interrupted {
             return result(.invalid, nil)
+        }
+
+        // Something that spoils the fast may have been missed, a bolus that brought on a low among them.
+        if interferenceUnread {
+            return result(.inconclusive, nil)
         }
 
         // A low ends the test, and a fall into one points the same way as any other fall.
@@ -264,6 +274,7 @@ enum BasalTestEvaluator {
             elapsed: end.timeIntervalSince(test.startedAt),
             reason: reason,
             interference: test.interference,
+            interferenceUnread: test.interferenceUnread ?? false,
             isf: test.isf,
             scheduledBasal: scheduledBasal(for: test, endingAt: end, calendar: calendar)
         )
@@ -478,18 +489,87 @@ enum BasalTestEvaluator {
         }
     }
 
-    /// The message of the first check that finds something that spoils the fast, or nil if none does. The checks run
-    /// in order and stop at the first hit. One whose read throws is logged and counts as finding nothing, so a record
-    /// that can't be read never hides what a later one would have found.
-    static func firstInterference(_ checks: [(name: String, read: () async throws -> String?)]) async -> String? {
+    /// What the checks for what spoils a fast found.
+    enum Interference: Equatable {
+        /// Every record was read, and none spoils the fast.
+        case none
+        /// The message of the first check that found something.
+        case found(String)
+        /// Nothing was found, but a record couldn't be read, so something that spoils the fast may have been missed.
+        case unreadable
+    }
+
+    /// The first check that finds something that spoils the fast. The checks run in order and stop at the first hit.
+    /// One whose read throws is logged and the rest still run, so a record that can't be read never hides what a later
+    /// one would have found; with nothing found, it leaves the fast unchecked.
+    static func firstInterference(_ checks: [(name: String, read: () async throws -> String?)]) async -> Interference {
+        var unreadable = false
         for check in checks {
             do {
-                if let message = try await check.read() { return message }
+                if let message = try await check.read() { return .found(message) }
             } catch {
                 warning(.settings, "BasalTest: couldn't read \(check.name) to check the fast", error: error)
+                unreadable = true
             }
         }
-        return nil
+        return unreadable ? .unreadable : .none
+    }
+
+    /// What `firstInterference` reads for a fast from `start` to `end`, in order: carbs, a bolus, then Trio's own
+    /// dosing, which it doesn't do in Basal Testing. Trio's SMBs and its temp basals are read apart, so one that can't
+    /// be read doesn't hide what the other shows.
+    static func interferenceChecks(
+        hasCarbs: @escaping () async throws -> Bool,
+        hasManualBolus: @escaping () async throws -> Bool,
+        smbs: @escaping () async throws -> [BasalTestSMB],
+        temps: @escaping () async throws -> [BasalTestTempBasal],
+        since start: Date,
+        until end: Date
+    ) -> [(name: String, read: () async throws -> String?)] {
+        let dosed = String(localized: "Trio dosed during the fast, so Basal Testing wasn't on the whole time.")
+        return [
+            (name: "carbs", read: {
+                try await hasCarbs() ? String(localized: "Carbs were logged during the fast.") : nil
+            }),
+            (name: "manual boluses", read: {
+                try await hasManualBolus() ? String(localized: "A bolus was given during the fast.") : nil
+            }),
+            (name: "Trio's SMBs", read: {
+                dosedDuringFast(smbs: try await smbs(), temps: [], since: start, until: end) ? dosed : nil
+            }),
+            (name: "Trio's temp basals", read: {
+                dosedDuringFast(smbs: [], temps: try await temps(), since: start, until: end) ? dosed : nil
+            })
+        ]
+    }
+
+    /// What the screen says when basal was stopped inside the fast and it can't be told that was Trio's suspend for a
+    /// low.
+    static var basalStoppedNote: String {
+        String(localized: "Basal was stopped during the fast, and Trio can't tell whether it was for a low.")
+    }
+
+    /// How a fast the screen finishes for `reason` at `end` ends, once the history up to then is read. The periodic
+    /// checks run every half minute, and the service's can lose its record to a finish that ends the session while it
+    /// reads, so a low Trio suspended for may not have been seen yet: it still ends the fast as a low, judged up to the
+    /// suspend. Basal stopped without Trio asking interrupts it at the stop. A fast whose history couldn't be read at
+    /// its planned end, read now with nothing in it, completed. A low or an interruption already decided stays.
+    static func finishing(
+        reason: BasalTestEndReason,
+        at end: Date,
+        suspend: SuspendReading
+    ) -> (reason: BasalTestEndReason, end: Date, note: String?) {
+        guard reason != .low, reason != .interrupted else { return (reason, end, nil) }
+        switch suspend {
+        case let .suspended(at):
+            return (.low, at, nil)
+        case let .unexplained(at):
+            return (.interrupted, at, basalStoppedNote)
+        case .none:
+            return (reason == .unchecked ? .completed : reason, end, nil)
+        case .unreadable:
+            return (reason, end, nil)
+        }
     }
 
     /// A share of the basal as a whole percent, rounded toward zero, so a share just under the docs' step never

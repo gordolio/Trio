@@ -162,6 +162,13 @@ extension BasalTest {
                 return [String(localized: "A lower basal number gives less insulin.")]
                     + (test.endGlucose == nil ? [noReadings] : missingWorking ? [noWorking] : [])
             case .inconclusive:
+                if test.interferenceUnread == true {
+                    return [
+                        String(
+                            localized: "Trio couldn't read all its records of carbs, boluses and its own dosing, so it can't tell whether something interrupted this fast."
+                        )
+                    ] + (test.endGlucose == nil ? [noReadings] : [])
+                }
                 if test.endReason == .unchecked {
                     return [
                         String(localized: "Trio couldn't read the pump history to check for a low, so it can't judge this fast.")

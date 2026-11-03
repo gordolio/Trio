@@ -19,6 +19,7 @@ import Testing
         elapsedHours: Double = 4,
         reason: BasalTestEndReason = .completed,
         interference: String? = nil,
+        interferenceUnread: Bool = false,
         isf: Decimal? = 50,
         scheduledBasal: Decimal? = 0.8,
         step: Decimal = BasalTest.Config.docsSmallestStep
@@ -29,6 +30,7 @@ import Testing
             elapsed: elapsedHours * hour,
             reason: reason,
             interference: interference,
+            interferenceUnread: interferenceUnread,
             isf: isf,
             scheduledBasal: scheduledBasal,
             step: step
@@ -150,6 +152,21 @@ import Testing
         #expect(evaluate(end: 200, elapsedHours: 1, reason: .interrupted).outcome == .invalid)
     }
 
+    @Test(
+        "A fast whose records couldn't all be read for interruptions says nothing, a low included"
+    ) func unreadInterferenceIsInconclusive() {
+        for end in [60, 100, 140] {
+            let result = evaluate(end: end, interferenceUnread: true)
+            #expect(result.outcome == .inconclusive, "\(end)")
+            #expect(result.direction == nil, "\(end)")
+        }
+        // A bolus that couldn't be read may be what brought the low.
+        #expect(evaluate(start: 95, end: 68, elapsedHours: 2, reason: .low, interferenceUnread: true).outcome == .inconclusive)
+        // Something that spoiled it still says so.
+        #expect(evaluate(end: 140, interference: "Carbs", interferenceUnread: true).outcome == .invalid)
+        #expect(evaluate(end: 140, reason: .interrupted, interferenceUnread: true).outcome == .invalid)
+    }
+
     @Test("The steady band stays a whole mg/dL under the change one docs step is worth") func bandForFast() {
         // 50 × 0.8 × 0.1 × 4 = 16 exactly, which is a step, so the band is 15.
         #expect(BasalTestEvaluator.steadyBand(isf: 50, scheduledBasal: 0.8, hours: 4) == 15)
@@ -246,21 +263,24 @@ import Testing
             (name: "carbs", read: { throw ReadFailure() }),
             (name: "boluses", read: { "A bolus was given during the fast." })
         ])
-        #expect(found == "A bolus was given during the fast.")
+        #expect(found == .found("A bolus was given during the fast."))
     }
 
-    @Test("Nothing found, or only failed reads, is no interference") func noInterference() async {
-        #expect(await BasalTestEvaluator.firstInterference([]) == nil)
+    @Test("Nothing found is no interference") func noInterference() async {
+        #expect(await BasalTestEvaluator.firstInterference([]) == BasalTestEvaluator.Interference.none)
         #expect(await BasalTestEvaluator.firstInterference([
             (name: "carbs", read: { nil }),
             (name: "boluses", read: { nil }),
             (name: "dosing", read: { nil })
-        ]) == nil)
+        ]) == BasalTestEvaluator.Interference.none)
+    }
+
+    @Test("Nothing found with a read that failed means something may have been missed") func unreadInterference() async {
         #expect(await BasalTestEvaluator.firstInterference([
             (name: "carbs", read: { throw ReadFailure() }),
             (name: "boluses", read: { nil }),
             (name: "dosing", read: { throw ReadFailure() })
-        ]) == nil)
+        ]) == .unreadable)
     }
 
     @Test("The first interference found wins, and the checks after it aren't read") func firstInterferenceWins() async {
@@ -273,14 +293,14 @@ import Testing
                 return "Trio dosed during the fast."
             })
         ])
-        #expect(found == "A bolus was given during the fast.")
+        #expect(found == .found("A bolus was given during the fast."))
         #expect(later.calls == 0)
 
         let first = await BasalTestEvaluator.firstInterference([
             (name: "carbs", read: { "Carbs were logged during the fast." }),
             (name: "boluses", read: { "A bolus was given during the fast." })
         ])
-        #expect(first == "Carbs were logged during the fast.")
+        #expect(first == .found("Carbs were logged during the fast."))
     }
 
     @Test("A fast with no readings is inconclusive, never steady") func noReadingsIsInconclusive() {
@@ -884,6 +904,18 @@ import Testing
         #expect(evaluation?.share == -0.2)
     }
 
+    @Test("A saved result whose records couldn't all be read stays inconclusive") func savedUnreadInterference() {
+        var test = runningTest(covered: [scheduleEntry(0, 1440, 0.8)], scheduledBasal: 0.8)
+        test.isf = 50
+        test.phase = .finished
+        test.endedAt = test.plannedEnd
+        test.endReason = .completed
+        test.endGlucose = 140
+        #expect(BasalTestEvaluator.evaluation(of: test, calendar: utc)?.outcome == .rising)
+        test.interferenceUnread = true
+        #expect(BasalTestEvaluator.evaluation(of: test, calendar: utc)?.outcome == .inconclusive)
+    }
+
     @Test("A test records only the entries the hours it ran covered") func coveredByActualWindow() {
         let saved = [scheduleEntry(0, 360, 0.8), scheduleEntry(360, 1320, 1.0)]
         let test = runningTest(covered: saved, scheduledBasal: 0.9)
@@ -930,6 +962,92 @@ import Testing
         #expect(!dosed(temps: [temp(0, minutes: 0, after: 0)]))
         #expect(!dosed(temps: [temp(0.4, minutes: 30, after: -60), temp(0.4, minutes: 30, after: 4 * hour + 60)]))
         #expect(!dosed())
+    }
+
+    private func interferenceChecks(
+        smbs: @escaping () async throws -> [BasalTestSMB],
+        temps: @escaping () async throws -> [BasalTestTempBasal]
+    ) -> [(name: String, read: () async throws -> String?)] {
+        BasalTestEvaluator.interferenceChecks(
+            hasCarbs: { false },
+            hasManualBolus: { false },
+            smbs: smbs,
+            temps: temps,
+            since: testStart,
+            until: testEnd
+        )
+    }
+
+    private func isFound(_ interference: BasalTestEvaluator.Interference) -> Bool {
+        if case .found = interference { return true }
+        return false
+    }
+
+    @Test("Trio's SMBs and temp basals are read apart, so one that fails doesn't hide the other") func dosingReadApart() async {
+        let delivering = temp(0.4, minutes: 30, after: 600)
+        let failedSMBs = await BasalTestEvaluator.firstInterference(
+            interferenceChecks(smbs: { throw ReadFailure() }, temps: { [delivering] })
+        )
+        #expect(isFound(failedSMBs))
+        let failedTemps = await BasalTestEvaluator.firstInterference(
+            interferenceChecks(smbs: { [self.smbAfter(600)] }, temps: { throw ReadFailure() })
+        )
+        #expect(isFound(failedTemps))
+        // With nothing found in the other, the failed one leaves the fast unchecked.
+        let nothingElse = await BasalTestEvaluator.firstInterference(
+            interferenceChecks(smbs: { throw ReadFailure() }, temps: { [] })
+        )
+        #expect(nothingElse == .unreadable)
+    }
+
+    // MARK: Finishing on the screen
+
+    private func finishing(
+        _ reason: BasalTestEndReason,
+        _ suspend: BasalTestEvaluator.SuspendReading
+    ) -> (reason: BasalTestEndReason, end: Date, note: String?) {
+        // Ended two hours in.
+        BasalTestEvaluator.finishing(reason: reason, at: at(seconds: 2 * hour), suspend: suspend)
+    }
+
+    @Test("A low the checks hadn't seen yet still ends the fast as a low, at the suspend") func finishingFindsLow() {
+        for reason in [BasalTestEndReason.endedEarly, .completed, .unchecked] {
+            let finished = finishing(reason, .suspended(at: at(seconds: hour)))
+            #expect(finished.reason == .low, "\(reason)")
+            #expect(finished.end == at(seconds: hour), "\(reason)")
+            #expect(finished.note == nil, "\(reason)")
+        }
+    }
+
+    @Test("Basal stopped without Trio asking interrupts the fast, at the stop") func finishingFindsUnexplained() {
+        for reason in [BasalTestEndReason.endedEarly, .completed, .unchecked] {
+            let finished = finishing(reason, .unexplained(at: at(seconds: hour)))
+            #expect(finished.reason == .interrupted, "\(reason)")
+            #expect(finished.end == at(seconds: hour), "\(reason)")
+            #expect(finished.note != nil, "\(reason)")
+        }
+    }
+
+    @Test("Nothing found keeps the reason, except that an unchecked fast is now checked") func finishingFindsNothing() {
+        let end = at(seconds: 2 * hour)
+        #expect(finishing(.endedEarly, .none).reason == .endedEarly)
+        #expect(finishing(.completed, .none).reason == .completed)
+        #expect(finishing(.unchecked, .none).reason == .completed)
+        #expect(finishing(.endedEarly, .none).end == end)
+        #expect(finishing(.endedEarly, .none).note == nil)
+        // A read that fails again changes nothing.
+        #expect(finishing(.endedEarly, .unreadable).reason == .endedEarly)
+        #expect(finishing(.unchecked, .unreadable).reason == .unchecked)
+    }
+
+    @Test("A low or an interruption already decided stays as it was") func finishingKeepsDecided() {
+        let end = at(seconds: 2 * hour)
+        let low = finishing(.low, .unexplained(at: at(seconds: hour)))
+        #expect(low.reason == .low)
+        #expect(low.end == end)
+        let interrupted = finishing(.interrupted, .suspended(at: at(seconds: hour)))
+        #expect(interrupted.reason == .interrupted)
+        #expect(interrupted.end == end)
     }
 
     /// The session the running test started with.
@@ -1109,6 +1227,8 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     var zeroTempDeterminations: [Date] = []
     var carbs: [Date] = []
     var failing = false
+    /// Fails only the temp basal read.
+    var failingTemps = false
     private(set) var reads = 0
 
     struct Failure: Error {}
@@ -1121,7 +1241,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
 
     func tempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal] {
         reads += 1
-        if failing { throw Failure() }
+        if failing || failingTemps { throw Failure() }
         return temps.filter { $0.date >= start && $0.date <= end }
     }
 
@@ -1285,6 +1405,19 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         #expect(modeChanges == 1)
         #expect(recordWhenModeChanged?.sessionID == session.id)
         #expect(recordWhenModeChanged?.cause == .low)
+    }
+
+    @Test("Carbs end a basal test even when the temp basals can't be read") func carbsEndWhenTempsUnreadable() async {
+        let events = FakeSettingsTestEvents()
+        let (service, settings, storage, session) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        events.failingTemps = true
+        events.carbs = [session.startedAt]
+        await service.endIfLowOrCarbsLogged()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd()?.cause == .carbsLogged)
     }
 
     @Test("Carbs end only a basal test; another kind in Basal Testing keeps running") func carbsEndOnlyBasal() async {

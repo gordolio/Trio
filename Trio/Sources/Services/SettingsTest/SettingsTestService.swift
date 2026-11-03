@@ -201,24 +201,26 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
               settingsManager.settings.dosingMode == .basalTesting
         else { return }
         let now = Date()
-        let ending: SettingsTestEnd
+        let suspend: BasalTestEvaluator.SuspendReading
         do {
-            let suspend = try await events.suspendReading(from: session.startedAt, to: now)
-            if case let .suspended(suspendedAt) = suspend {
-                debug(.settings, "SettingsTest: Trio suspended for a low, ending the \(session.kind.rawValue) test")
-                ending = SettingsTestEnd(sessionID: session.id, cause: .low, date: suspendedAt)
-            } else if case let .unexplained(stoppedAt) = suspend {
-                debug(.settings, "SettingsTest: basal was stopped without Trio asking, ending the \(session.kind.rawValue) test")
-                ending = SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt)
-            } else if session.kind == .basal, try await events.hasCarbEntries(from: session.startedAt, to: now) {
-                // Only the basal test tells the user that logging carbs ends it.
-                debug(.settings, "SettingsTest: carbs were logged, ending the \(session.kind.rawValue) test")
-                ending = SettingsTestEnd(sessionID: session.id, cause: .carbsLogged, date: now)
-            } else {
-                return
-            }
+            suspend = try await events.suspendReading(from: session.startedAt, to: now)
         } catch {
-            warning(.settings, "SettingsTest: couldn't read the history to watch the \(session.kind.rawValue) test", error: error)
+            // Carbs are still read: Basal Testing gives no insulin for food, so carbs must end it even then.
+            warning(.settings, "SettingsTest: couldn't read temp basals to watch the \(session.kind.rawValue) test", error: error)
+            suspend = .unreadable
+        }
+        let ending: SettingsTestEnd
+        if case let .suspended(suspendedAt) = suspend {
+            debug(.settings, "SettingsTest: Trio suspended for a low, ending the \(session.kind.rawValue) test")
+            ending = SettingsTestEnd(sessionID: session.id, cause: .low, date: suspendedAt)
+        } else if case let .unexplained(stoppedAt) = suspend {
+            debug(.settings, "SettingsTest: basal was stopped without Trio asking, ending the \(session.kind.rawValue) test")
+            ending = SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt)
+        } else if session.kind == .basal, await carbsLogged(during: session, until: now) {
+            // Only the basal test tells the user that logging carbs ends it.
+            debug(.settings, "SettingsTest: carbs were logged, ending the \(session.kind.rawValue) test")
+            ending = SettingsTestEnd(sessionID: session.id, cause: .carbsLogged, date: now)
+        } else {
             return
         }
         await MainActor.run {
@@ -226,6 +228,16 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
             // Kept before the usual mode comes back, so the screen never finds the mode changed without the reason.
             storage.save(ending, as: SettingsTestStorage.lastEndPath)
             end(session)
+        }
+    }
+
+    /// Whether carbs were logged since `session` began. False when they can't be read, so the test keeps running.
+    private func carbsLogged(during session: SettingsTestSession, until end: Date) async -> Bool {
+        do {
+            return try await events.hasCarbEntries(from: session.startedAt, to: end)
+        } catch {
+            warning(.settings, "SettingsTest: couldn't read carbs to watch the \(session.kind.rawValue) test", error: error)
+            return false
         }
     }
 
