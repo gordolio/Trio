@@ -33,8 +33,8 @@ protocol SettingsTestService: AnyObject {
     /// Ends the session if it ran past its deadline. Safe to call at any time.
     func endIfExpired()
 
-    /// The last session the service ended on its own, for a low, for logged carbs or for basal stopped without Trio
-    /// asking, and why. Kept until the next one.
+    /// The last session the service ended on its own, for a low, for carbs logged or unreadable, or for basal stopped
+    /// without Trio asking, and why. Kept until the next one.
     func lastEnd() -> SettingsTestEnd?
 
     func archive(_ record: SettingsTestRecord)
@@ -60,6 +60,9 @@ extension SettingsTestEvents {
     /// determinations are read a little either side of the window, so one that asked for a zero temp at its edge counts.
     func suspendReading(from start: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading {
         let temps = try await tempBasals(from: start, to: end)
+        // Without a zero temp there is no one to ask about, so a failed read of the determinations can't leave a fast
+        // with no suspend unchecked.
+        guard BasalTestEvaluator.firstSuspend(temps, since: start, until: end) != nil else { return .none }
         let determinations = try await zeroTempDeterminations(
             from: start.addingTimeInterval(-BasalTestEvaluator.zeroTempAskedBefore),
             to: end.addingTimeInterval(BasalTestEvaluator.zeroTempAskedAfter)
@@ -138,10 +141,13 @@ final class CoreDataSettingsTestEvents: SettingsTestEvents {
 final class BaseSettingsTestService: SettingsTestService, Injectable {
     @Injected() private var storage: FileStorage!
     @Injected() private var settingsManager: SettingsManager!
+    @Injected() private var broadcaster: Broadcaster!
 
     private let sessionSubject = CurrentValueSubject<SettingsTestSession?, Never>(nil)
     private var watchdog: AnyCancellable?
     private let lock = NSLock()
+    /// While the service puts a session's changes back, so its own change of mode isn't taken for the user's.
+    private var restoring = false
 
     var activeSession: SettingsTestSession? { sessionSubject.value }
     var sessionPublisher: AnyPublisher<SettingsTestSession?, Never> { sessionSubject.eraseToAnyPublisher() }
@@ -153,6 +159,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     init(resolver: Resolver, events: SettingsTestEvents? = nil) {
         self.events = events ?? CoreDataSettingsTestEvents(context: CoreDataStack.shared.newTaskContext())
         injectServices(resolver)
+        broadcaster.register(SettingsObserver.self, observer: self)
 
         // A session left over from a previous launch is either still running or past its deadline. Either way it is
         // checked for a low first, so one that ran past its deadline while the app was closed keeps the low it had.
@@ -191,19 +198,22 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// Ends a running test in Basal Testing when Trio suspended insulin for a low since it began, and a basal test when
     /// carbs were logged: the two things the basal Fast screen says end the test. The watchdog calls this, so either
     /// one brings the usual dosing back whether or not that screen is open. Basal stopped without Trio asking, by a
-    /// zero temp set on the pump, ends it too: the fast is spoiled, and it isn't kept as a low. Why and when is kept
+    /// zero temp set on the pump, ends it too: the fast is spoiled, and it isn't kept as a low. So do carbs that can't
+    /// be read: Basal Testing gives no insulin for food, so it mustn't stay on unchecked. Why and when is kept
     /// (`lastEnd()`), so the screen, when opened again, finishes the result for the same reason with the usual mode
-    /// already back. Only a session that switched to Basal Testing and is still in it: a mode the user picked since is
-    /// theirs, and the basal screen reads that as an interrupted fast.
+    /// already back. Only a session that switched to Basal Testing: a mode the user picked since is theirs, and the
+    /// basal screen reads that as an interrupted fast, unless Basal Testing suspended for a low before the change
+    /// (`noteTestModeLeft`). That low is still this test's.
     func endIfLowOrCarbsLogged() async {
-        guard let session = activeSession,
-              session.restore.contains(where: \.switchesToBasalTesting),
-              settingsManager.settings.dosingMode == .basalTesting
-        else { return }
+        guard let session = activeSession, session.restore.contains(where: \.switchesToBasalTesting) else { return }
+        let watching = session.leftTestModeAt == nil
+        guard !watching || settingsManager.settings.dosingMode == .basalTesting else { return }
         let now = Date()
+        // Once another mode was picked, only what happened before then is Basal Testing's.
+        let until = session.leftTestModeAt.map { min($0, now) } ?? now
         let suspend: BasalTestEvaluator.SuspendReading
         do {
-            suspend = try await events.suspendReading(from: session.startedAt, to: now)
+            suspend = try await events.suspendReading(from: session.startedAt, to: until)
         } catch {
             // Carbs are still read: Basal Testing gives no insulin for food, so carbs must end it even then.
             warning(.settings, "SettingsTest: couldn't read temp basals to watch the \(session.kind.rawValue) test", error: error)
@@ -213,13 +223,15 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         if case let .suspended(suspendedAt) = suspend {
             debug(.settings, "SettingsTest: Trio suspended for a low, ending the \(session.kind.rawValue) test")
             ending = SettingsTestEnd(sessionID: session.id, cause: .low, date: suspendedAt)
+        } else if !watching {
+            return
         } else if case let .unexplained(stoppedAt) = suspend {
             debug(.settings, "SettingsTest: basal was stopped without Trio asking, ending the \(session.kind.rawValue) test")
             ending = SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt)
-        } else if session.kind == .basal, await carbsLogged(during: session, until: now) {
+        } else if session.kind == .basal, let cause = await carbsEnding(of: session, until: now) {
             // Only the basal test tells the user that logging carbs ends it.
-            debug(.settings, "SettingsTest: carbs were logged, ending the \(session.kind.rawValue) test")
-            ending = SettingsTestEnd(sessionID: session.id, cause: .carbsLogged, date: now)
+            debug(.settings, "SettingsTest: \(cause.rawValue), ending the \(session.kind.rawValue) test")
+            ending = SettingsTestEnd(sessionID: session.id, cause: cause, date: now)
         } else {
             return
         }
@@ -231,14 +243,30 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
-    /// Whether carbs were logged since `session` began. False when they can't be read, so the test keeps running.
-    private func carbsLogged(during session: SettingsTestSession, until end: Date) async -> Bool {
+    /// What carbs since `session` began say: they end it if any were logged, and also if they can't be read, so the
+    /// usual dosing comes back. Nil to keep going.
+    private func carbsEnding(of session: SettingsTestSession, until end: Date) async -> SettingsTestEndCause? {
         do {
-            return try await events.hasCarbEntries(from: session.startedAt, to: end)
+            return try await events.hasCarbEntries(from: session.startedAt, to: end) ? .carbsLogged : nil
         } catch {
             warning(.settings, "SettingsTest: couldn't read carbs to watch the \(session.kind.rawValue) test", error: error)
-            return false
+            return .carbsUnreadable
         }
+    }
+
+    /// Notes when a session that switched to Basal Testing first finds another mode picked, so a low Basal Testing
+    /// suspended for before then is still kept (`endIfLowOrCarbsLogged`). True if this was that change. Reads the mode
+    /// in force, not the one a notification carried. The service's own restore isn't such a change: it ends the session.
+    @discardableResult func noteTestModeLeft(at date: Date = Date()) -> Bool {
+        guard !restoring, settingsManager.settings.dosingMode != .basalTesting,
+              var session = activeSession, session.leftTestModeAt == nil,
+              session.restore.contains(where: \.switchesToBasalTesting)
+        else { return false }
+        session.leftTestModeAt = date
+        storage.save(session, as: SettingsTestStorage.sessionPath)
+        sessionSubject.send(session)
+        debug(.settings, "SettingsTest: Basal Testing was left during the \(session.kind.rawValue) test")
+        return true
     }
 
     /// What the watchdog does on each tick, and what a session recovered at launch gets once: the low and carbs check
@@ -262,7 +290,9 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// Puts back what `session` changed and clears it, if it is still the one running.
     private func end(_ session: SettingsTestSession) {
         guard activeSession?.id == session.id else { return }
+        restoring = true
         apply(session.restore)
+        restoring = false
         storage.remove(SettingsTestStorage.sessionPath)
         sessionSubject.send(nil)
         watchdog = nil
@@ -334,5 +364,14 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [SettingsTestStorage.expiryNotificationID])
         center.removeDeliveredNotifications(withIdentifiers: [SettingsTestStorage.expiryNotificationID])
+    }
+}
+
+extension BaseSettingsTestService: SettingsObserver {
+    /// A mode picked during a test that switched to Basal Testing: a low from before the change is checked for at once,
+    /// before the basal screen's next check reads the change as an interrupted fast.
+    func settingsDidChange(_: TrioSettings) {
+        guard noteTestModeLeft() else { return }
+        checkSessionInBackground()
     }
 }

@@ -21,6 +21,7 @@ extension BasalTest {
         private(set) var currentCOB: Decimal = 0
         private(set) var lastCarb: Date?
         private(set) var hasActiveAdjustment = false
+        private(set) var hasPumpSetTempBasal = false
         private(set) var hasDevices = true
         /// The CGM's own trend arrow for the newest reading.
         private(set) var trendDirection: BloodGlucose.Direction?
@@ -163,7 +164,7 @@ extension BasalTest {
 
         /// What has to be true before the fast starts: the docs' rule about food, and facts about the app.
         var blockingChecks: [Check] {
-            [devicesCheck, foodCheck, adjustmentsCheck, modeCheck, otherTestCheck]
+            [devicesCheck, foodCheck, adjustmentsCheck, pumpTempBasalCheck, modeCheck, otherTestCheck]
         }
 
         /// Readings that go with the docs' words but set no rule, so they never hold up the start.
@@ -256,6 +257,21 @@ extension BasalTest {
                     ),
                     quote: Docs.fastingRule,
                     links: [Docs.fastingTestsLink]
+                )
+            )
+        }
+
+        private var pumpTempBasalCheck: Check {
+            Check(
+                id: "pumpTempBasal",
+                title: String(localized: "No temp basal set on the pump"),
+                detail: hasPumpSetTempBasal ? String(localized: "Cancel it on the pump first") : nil,
+                state: hasPumpSetTempBasal ? .failed : .passed,
+                info: SettingsTestInfo(
+                    title: String(localized: "No temp basal set on the pump"),
+                    body: String(
+                        localized: "Basal Testing cancels a temp basal Trio set, but not one set on the pump itself. That one would keep running, so the fast wouldn't show what your basal rates do."
+                    )
                 )
             )
         }
@@ -590,6 +606,7 @@ extension BasalTest {
                 let cob = try await provider.getCurrentCOB()
                 let carb = try await provider.lastCarbEntry(withinHours: 6)
                 let adjustment = try await provider.hasActiveAdjustment()
+                let pumpTempBasal = provider.hasPumpSetTempBasal()
                 let devices = provider.hasCgmAndPump()
                 let direction = try await provider.fetchNewestDirection()
                 await MainActor.run {
@@ -598,6 +615,7 @@ extension BasalTest {
                     currentCOB = cob
                     lastCarb = carb
                     hasActiveAdjustment = adjustment
+                    hasPumpSetTempBasal = pumpTempBasal
                     hasDevices = devices
                     trendDirection = direction
                 }
@@ -741,6 +759,15 @@ extension BasalTest {
                     at: stoppedAt,
                     note: BasalTestEvaluator.basalStoppedNote
                 )
+            case let .carbsUnreadable(endedAt):
+                await finish(
+                    for: testID,
+                    reason: .interrupted,
+                    at: endedAt,
+                    note: String(
+                        localized: "Trio couldn't read your carbs to check the fast, so it brought your usual dosing back."
+                    )
+                )
             case nil:
                 if case .found = await wasInterrupted(test, until: now) {
                     await finish(for: testID, reason: .interrupted)
@@ -770,11 +797,16 @@ extension BasalTest {
             at endedAt: Date? = nil,
             note: String? = nil
         ) async {
-            guard var current = test, current.phase == .running, !isFinishing,
-                  testID == nil || current.id == testID
-            else { return }
-            isFinishing = true
-            defer { isFinishing = false }
+            // Claimed on the main actor, where Discard and Start run, so the claim and the save below are ordered with
+            // them.
+            let claimed: BasalTestState? = await MainActor.run {
+                guard let current = test, current.phase == .running, !isFinishing,
+                      testID == nil || current.id == testID
+                else { return nil }
+                isFinishing = true
+                return current
+            }
+            guard var current = claimed else { return }
 
             // Fixed before normal dosing comes back, so nothing the usual mode does next falls inside the fast. A test
             // that ran out while the app was closed covers only its planned window, and a low only up to the suspend.
@@ -825,28 +857,39 @@ extension BasalTest {
             current.outcome = evaluation.outcome
             current.interference = interference
             current.interferenceUnread = interferenceUnread
-            provider.storage.save(current, as: Config.statePath)
 
+            var record: SettingsTestRecord?
             if evaluation.outcome.isConclusive, let direction = evaluation.direction {
-                testService.archive(
-                    SettingsTestRecord(
-                        kind: .basal,
-                        startedAt: current.startedAt,
-                        completedAt: end,
-                        timeBlock: current.timeBlock,
-                        startGlucose: current.startGlucose,
-                        // Only a low can get here without one: it says falling whatever the readings were.
-                        endGlucose: endGlucose ?? current.startGlucose,
-                        direction: direction,
-                        summary: BasalTestEvaluator.summary(for: evaluation.outcome, reason: reason),
-                        // Only what the hours it ran covered, so a fast ended early doesn't vouch for the rest.
-                        coveredEntries: BasalTestEvaluator.coveredEntries(for: current, endingAt: end)
-                    )
+                record = SettingsTestRecord(
+                    kind: .basal,
+                    startedAt: current.startedAt,
+                    completedAt: end,
+                    timeBlock: current.timeBlock,
+                    startGlucose: current.startGlucose,
+                    // Only a low can get here without one: it says falling whatever the readings were.
+                    endGlucose: endGlucose ?? current.startGlucose,
+                    direction: direction,
+                    summary: BasalTestEvaluator.summary(for: evaluation.outcome, reason: reason),
+                    // Only what the hours it ran covered, so a fast ended early doesn't vouch for the rest.
+                    coveredEntries: BasalTestEvaluator.coveredEntries(for: current, endingAt: end)
                 )
             }
 
+            // Kept only if it is still the fast on screen: a Discard or a new Start while the history was read owns the
+            // screen and the saved state now. One step on the main actor, so neither can come in between.
             let finished = current
-            await MainActor.run { test = finished }
+            let archived = record
+            let kept = await MainActor.run { () -> Bool in
+                isFinishing = false
+                guard let shown = test, shown.id == finished.id, shown.phase == .running else { return false }
+                provider.storage.save(finished, as: Config.statePath)
+                if let archived {
+                    testService.archive(archived)
+                }
+                test = finished
+                return true
+            }
+            guard kept else { return }
             try? await loadFastingSource()
         }
 
@@ -877,7 +920,7 @@ extension BasalTest {
             return await BasalTestEvaluator.firstInterference(BasalTestEvaluator.interferenceChecks(
                 hasCarbs: { try await provider.hasCarbEntries(from: start, to: end) },
                 hasManualBolus: { try await provider.hasManualBolus(from: start, to: end) },
-                smbs: { try await provider.fetchSMBs(since: start) },
+                smbs: { try await provider.fetchSMBs(since: start, until: end) },
                 temps: { try await provider.fetchTempBasals(from: start, to: end) },
                 since: start,
                 until: end

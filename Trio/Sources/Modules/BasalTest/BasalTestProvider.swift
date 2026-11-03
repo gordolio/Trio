@@ -25,6 +25,11 @@ extension BasalTest {
             fetchGlucoseManager.cgmGlucoseSourceType != .none && deviceManager.pumpManager != nil
         }
 
+        /// Whether the pump is running a temp basal set on the pump itself. Basal Testing cancels only Trio's own.
+        func hasPumpSetTempBasal() -> Bool {
+            deviceManager.pumpManager?.status.basalDeliveryState?.isManualTempBasal ?? false
+        }
+
         // MARK: - Settings the test runs on
 
         /// The basal schedule, empty when there is none saved.
@@ -107,13 +112,14 @@ extension BasalTest {
         // MARK: - Fasting SMBs
 
         /// Oldest first.
-        func fetchSMBs(since start: Date) async throws -> [BasalTestSMB] {
+        func fetchSMBs(since start: Date, until end: Date = .distantFuture) async throws -> [BasalTestSMB] {
             let results = try await CoreDataStack.shared.fetchEntitiesAsync(
                 ofType: PumpEventStored.self,
                 onContext: context,
                 predicate: NSPredicate(
-                    format: "bolus != nil AND bolus.isSMB == YES AND timestamp >= %@",
-                    start as NSDate
+                    format: "bolus != nil AND bolus.isSMB == YES AND timestamp >= %@ AND timestamp <= %@",
+                    start as NSDate,
+                    end as NSDate
                 ),
                 key: "timestamp",
                 ascending: true,

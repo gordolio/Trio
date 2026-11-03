@@ -1163,6 +1163,13 @@ import Testing
         #expect(check(unexplained: 1800, now: 3600, mode: .closed) == .modeChanged)
     }
 
+    @Test("The service's record of carbs it couldn't read interrupts the fast at it") func runningServiceEndCarbsUnreadable() {
+        #expect(
+            check(ended: serviceEnd(.carbsUnreadable, after: 1800), now: 3600, mode: .closed)
+                == .carbsUnreadable(at: at(seconds: 1800))
+        )
+    }
+
     @Test("The service's record of basal stopped without Trio asking stops the fast at it") func runningServiceEndBasalStopped() {
         #expect(
             check(ended: serviceEnd(.basalStopped, after: 1800), now: 3600, mode: .closed)
@@ -1220,6 +1227,14 @@ private final class FakeSettingsManager: SettingsManager {
     func updateInsulinCurve(_: InsulinType?) {}
 }
 
+/// Tells no one: a test calls the service's observer itself.
+private final class SilentBroadcaster: Broadcaster {
+    func register<T>(_: T.Type, observer _: T) {}
+    func unregister<T>(_: T.Type, observer _: T) {}
+    func unregister<T>(_: T.Type) {}
+    func notify<T>(_: T.Type, on _: DispatchQueue, block _: @escaping (T) -> Void) {}
+}
+
 /// Pump history, Trio's determinations and carbs as a test sets them, with how often the service asked.
 private final class FakeSettingsTestEvents: SettingsTestEvents {
     var temps: [BasalTestTempBasal] = []
@@ -1227,8 +1242,10 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     var zeroTempDeterminations: [Date] = []
     var carbs: [Date] = []
     var failing = false
-    /// Fails only the temp basal read.
+    /// Fail only one read each.
     var failingTemps = false
+    var failingDeterminations = false
+    var failingCarbs = false
     private(set) var reads = 0
 
     struct Failure: Error {}
@@ -1247,13 +1264,13 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
 
     func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date] {
         reads += 1
-        if failing { throw Failure() }
+        if failing || failingDeterminations { throw Failure() }
         return zeroTempDeterminations.filter { $0 >= start && $0 <= end }
     }
 
     func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
         reads += 1
-        if failing { throw Failure() }
+        if failing || failingCarbs { throw Failure() }
         return carbs.contains { $0 >= start && $0 <= end }
     }
 }
@@ -1283,6 +1300,8 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         let container = Container()
         container.register(FileStorage.self) { _ in storage }
         container.register(SettingsManager.self) { _ in settings }
+        // The app's broadcaster is shared, so another suite's settings change would reach this service.
+        container.register(Broadcaster.self) { _ in SilentBroadcaster() }
         return (BaseSettingsTestService(resolver: container, events: events), settings, storage)
     }
 
@@ -1482,17 +1501,123 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         #expect(events.reads == 0)
     }
 
-    @Test("When the history can't be read, the test keeps running") func readFailureLeavesSession() async {
+    @Test(
+        "When the temp basals can't be read and no carbs were logged, the test keeps running"
+    ) func readFailureLeavesSession() async {
         let events = FakeSettingsTestEvents()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
-        events.failing = true
+        events.failingTemps = true
         events.temps = [BasalTestTempBasal(date: session.startedAt, rate: 0, minutes: 30)]
         await service.endIfLowOrCarbsLogged()
         #expect(service.activeSession?.id == session.id)
         #expect(settings.settings.dosingMode == .basalTesting)
         #expect(service.lastEnd() == nil)
+    }
+
+    @Test("Carbs that can't be read end a basal test, so the usual dosing comes back") func carbsUnreadableEndsSession() async {
+        let events = FakeSettingsTestEvents()
+        let (service, settings, storage, session) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        events.failingCarbs = true
+        await service.endIfLowOrCarbsLogged()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd()?.sessionID == session.id)
+        #expect(service.lastEnd()?.cause == .carbsUnreadable)
+    }
+
+    @Test("A low still comes first when carbs can't be read") func lowBeforeCarbsUnreadable() async {
+        let events = FakeSettingsTestEvents()
+        let (service, _, storage, session) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        events.failingCarbs = true
+        events.trioSuspends(at: session.startedAt)
+        await service.endIfLowOrCarbsLogged()
+        #expect(service.lastEnd()?.cause == .low)
+    }
+
+    // MARK: Leaving Basal Testing
+
+    @Test("A low from before the mode was changed is still kept") func lowBeforeModeChange() async {
+        let events = FakeSettingsTestEvents()
+        let (service, settings, storage, session) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        events.trioSuspends(at: session.startedAt)
+        settings.settings.dosingMode = .closed
+        #expect(service.noteTestModeLeft())
+        await service.endIfLowOrCarbsLogged()
+        #expect(service.activeSession == nil)
+        let ended = service.lastEnd()
+        #expect(ended?.sessionID == session.id)
+        #expect(ended?.cause == .low)
+        // When Trio suspended, within what a date keeps on disk (milliseconds).
+        #expect(abs((ended?.date ?? .distantPast).timeIntervalSince(session.startedAt)) < 0.01)
+        // The mode the user picked stays.
+        #expect(settings.settings.dosingMode == .closed)
+    }
+
+    @Test("After the mode was changed, a zero temp or carbs aren't Basal Testing's to act on") func afterModeChange() async {
+        let events = FakeSettingsTestEvents()
+        let (service, settings, storage, session) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        settings.settings.dosingMode = .closed
+        #expect(service.noteTestModeLeft(at: session.startedAt.addingTimeInterval(1)))
+        // The new mode's zero temp, after the change.
+        events.trioSuspends(at: session.startedAt.addingTimeInterval(2))
+        events.temps.append(BasalTestTempBasal(date: session.startedAt.addingTimeInterval(3), rate: 0, minutes: 30))
+        events.carbs = [session.startedAt]
+        await service.endIfLowOrCarbsLogged()
+        #expect(service.activeSession?.id == session.id)
+        #expect(service.lastEnd() == nil)
+        #expect(settings.settings.dosingMode == .closed)
+    }
+
+    @Test("Only the first change away from Basal Testing is noted") func modeLeftOnce() async {
+        let events = FakeSettingsTestEvents()
+        let (service, settings, storage, session) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        // Still in Basal Testing: nothing to note.
+        #expect(!service.noteTestModeLeft())
+        settings.settings.dosingMode = .lowGlucoseSuspend
+        let left = session.startedAt.addingTimeInterval(60)
+        #expect(service.noteTestModeLeft(at: left))
+        settings.settings.dosingMode = .closed
+        #expect(!service.noteTestModeLeft(at: left.addingTimeInterval(60)))
+        #expect(service.activeSession?.leftTestModeAt == left)
+        // Kept on disk with the session, to what a date keeps there (milliseconds).
+        let saved = storage.retrieve(sessionPath, as: SettingsTestSession.self)?.leftTestModeAt
+        #expect(abs((saved ?? .distantPast).timeIntervalSince(left)) < 0.01)
+    }
+
+    @Test("The service's own restore isn't a change away from Basal Testing") func restoreIsNotLeaving() async {
+        let events = FakeSettingsTestEvents()
+        let (service, settings, storage, _) = startBasalTest(events: events)
+        defer { cleanUp(storage) }
+
+        var noted: Bool?
+        settings.onSettingsChange = { noted = service.noteTestModeLeft() }
+        service.end(kind: .basal)
+        #expect(noted == false)
+    }
+
+    @Test("Without a zero temp, Trio's determinations aren't read") func noZeroTempSkipsDeterminations() async throws {
+        let events = FakeSettingsTestEvents()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        events.failingDeterminations = true
+        events.temps = [BasalTestTempBasal(date: start.addingTimeInterval(60), rate: 0.4, minutes: 30)]
+        // A failed read of them can't leave a fast with no suspend unchecked.
+        #expect(try await events.suspendReading(from: start, to: start.addingTimeInterval(3600)) == .none)
+        events.temps.append(BasalTestTempBasal(date: start.addingTimeInterval(120), rate: 0, minutes: 30))
+        await #expect(throws: FakeSettingsTestEvents.Failure.self) {
+            try await events.suspendReading(from: start, to: start.addingTimeInterval(3600))
+        }
     }
 
     @Test("A low is kept when the session had already run past its deadline") func lowIsKeptWhenSessionExpired() async {
@@ -1584,8 +1709,9 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     @Test("A session whose history can't be read still ends at its deadline") func expiredSessionEndsWhenHistoryUnreadable() async {
         let events = FakeSettingsTestEvents()
         events.failing = true
+        // One whose carbs aren't read, so only the deadline ends it.
         let session = SettingsTestSession(
-            kind: .basal,
+            kind: .isf,
             startedAt: Date().addingTimeInterval(-7200),
             expiresAt: Date().addingTimeInterval(-60),
             restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]

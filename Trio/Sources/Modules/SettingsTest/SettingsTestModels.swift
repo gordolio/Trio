@@ -111,6 +111,9 @@ struct SettingsTestSession: JSON, Equatable, Identifiable {
     /// After this, the temporary changes are undone even if the user never comes back.
     var expiresAt: Date
     var restore: [SettingsTestRestoreAction]
+    /// When a session that switched to Basal Testing first saw another mode picked. Nil while it hasn't, and in a
+    /// session saved before this was kept.
+    var leftTestModeAt: Date?
 }
 
 /// Why the service ended a running test on its own.
@@ -121,6 +124,8 @@ enum SettingsTestEndCause: String, JSON, Equatable {
     case carbsLogged
     /// Basal was stopped, and none of Trio's determinations asked for it, so it wasn't Trio's suspend for a low.
     case basalStopped
+    /// Carbs couldn't be read, so it couldn't be told whether food was eaten.
+    case carbsUnreadable
 }
 
 /// What the service keeps when it ends a test on its own, so the test's screen, opened later, finishes it for the same
@@ -128,8 +133,8 @@ enum SettingsTestEndCause: String, JSON, Equatable {
 struct SettingsTestEnd: JSON, Equatable {
     var sessionID: UUID
     var cause: SettingsTestEndCause
-    /// For a low, when Trio first suspended; for carbs, when the service found them and brought the usual dosing back;
-    /// for basal stopped, when it was stopped.
+    /// For a low, when Trio first suspended; for carbs, logged or unreadable, when the service found that and brought the
+    /// usual dosing back; for basal stopped, when it was stopped.
     var date: Date
 }
 

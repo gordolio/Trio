@@ -357,12 +357,14 @@ enum BasalTestEvaluator {
         /// low: none of Trio's determinations asked for it, or Basal Testing was off by the time of the check and the
         /// service didn't end the test for it.
         case unexplainedSuspend(at: Date)
+        /// The service ended the test at this time because carbs couldn't be read.
+        case carbsUnreadable(at: Date)
     }
 
     /// What a running fast's periodic check decides. Nil to keep going.
     ///
-    /// First, the service's record of ending this test's session inside the fast, for a low, for carbs or for basal
-    /// stopped without Trio asking: the service brought the usual mode back then, so the record, not the mode, says
+    /// First, the service's record of ending this test's session inside the fast, for a low, for carbs logged or
+    /// unreadable, or for basal stopped without Trio asking: the service brought the usual mode back then, so the record, not the mode, says
     /// why. Without one, a mode other than Basal Testing before the planned end interrupts the fast, whatever the temps
     /// show, because a zero temp from another mode is not a low. Only while Basal Testing is still on is a zero temp in
     /// the fast that Trio asked for its suspend for a low; one it didn't ask for stops the fast in any mode. Time up
@@ -381,6 +383,7 @@ enum BasalTestEvaluator {
             case .low: return .low(at: serviceEnd.date)
             case .carbsLogged: return .carbsLogged(at: serviceEnd.date)
             case .basalStopped: return .unexplainedSuspend(at: serviceEnd.date)
+            case .carbsUnreadable: return .carbsUnreadable(at: serviceEnd.date)
             }
         }
         let timeUp = now >= plannedEnd
