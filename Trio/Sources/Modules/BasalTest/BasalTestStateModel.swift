@@ -696,9 +696,7 @@ extension BasalTest {
             let end = min(now, test.plannedEnd)
             let suspend: BasalTestEvaluator.SuspendReading
             do {
-                let temps = try await provider.fetchTempBasals(from: test.startedAt, to: end)
-                suspend = BasalTestEvaluator.firstSuspend(temps, since: test.startedAt, until: end)
-                    .map { .suspended(at: $0) } ?? .none
+                suspend = try await provider.fetchSuspendReading(from: test.startedAt, to: end)
             } catch {
                 // Without them a low can't be told from a fast that ran its course. Before the planned end nothing is
                 // decided on them this time; at it, the fast still ends, without a verdict.
@@ -736,10 +734,11 @@ extension BasalTest {
                     reason: .interrupted,
                     note: String(localized: "The dosing mode changed during the fast.")
                 )
-            case .unexplainedSuspend:
+            case let .unexplainedSuspend(stoppedAt):
                 await finish(
                     for: testID,
                     reason: .interrupted,
+                    at: stoppedAt,
                     note: String(localized: "Basal was stopped during the fast, and Trio can't tell whether it was for a low.")
                 )
             case nil:
@@ -760,10 +759,10 @@ extension BasalTest {
             cancelFinishedNotification()
         }
 
-        /// `endedAt` is when a low ended the fast, or when the service ended it for carbs; without it the fast ends now,
-        /// or at the planned end if that came first. `note` says what interrupted it when the records don't. With
-        /// `testID`, it finishes only that fast: a check that read the history for one fast must not end another that
-        /// was started while it waited.
+        /// `endedAt` is when a low ended the fast, when basal was stopped in a way Trio can't put down to a low, or when the
+        /// service ended it for carbs; without it the fast ends now, or at the planned end if that came first. `note`
+        /// says what interrupted it when the records don't. With `testID`, it finishes only that fast: a check that read
+        /// the history for one fast must not end another that was started while it waited.
         func finish(
             for testID: UUID? = nil,
             reason: BasalTestEndReason,

@@ -119,6 +119,8 @@ enum SettingsTestEndCause: String, JSON, Equatable {
     case low
     /// Carbs were logged.
     case carbsLogged
+    /// Basal was stopped, and none of Trio's determinations asked for it, so it wasn't Trio's suspend for a low.
+    case basalStopped
 }
 
 /// What the service keeps when it ends a test on its own, so the test's screen, opened later, finishes it for the same
@@ -126,7 +128,8 @@ enum SettingsTestEndCause: String, JSON, Equatable {
 struct SettingsTestEnd: JSON, Equatable {
     var sessionID: UUID
     var cause: SettingsTestEndCause
-    /// For a low, when Trio first suspended; for carbs, when the service found them and brought the usual dosing back.
+    /// For a low, when Trio first suspended; for carbs, when the service found them and brought the usual dosing back;
+    /// for basal stopped, when it was stopped.
     var date: Date
 }
 

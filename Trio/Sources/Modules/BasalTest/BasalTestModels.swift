@@ -269,17 +269,12 @@ enum BasalTestEvaluator {
         )
     }
 
-    /// Whether Trio suspended insulin while the test ran, from `start` to `end` inclusive. In Basal Testing, Trio
-    /// sets no temp basal except a zero one when glucose or the forecast drops below its threshold, so a zero temp
-    /// with time on it is a low. A zero rate for no time is a cancel, not a suspend. After the planned end the test
-    /// may still be open, but the previous mode can be back, and a zero temp then says nothing about the fast.
-    static func trioSuspended(_ temps: [BasalTestTempBasal], since start: Date, until end: Date) -> Bool {
-        firstSuspend(temps, since: start, until: end) != nil
-    }
-
-    /// When Trio first suspended insulin for a low while the test ran, from `start` to `end` inclusive, or nil if it
-    /// didn't. A low's result is judged up to this moment: after it Trio wasn't giving the basal being tested, and
-    /// the carbs that treat the low aren't part of the fast. What counts as a suspend is as for `trioSuspended`.
+    /// When basal was first stopped while the test ran, from `start` to `end` inclusive, or nil if it wasn't: the first
+    /// zero temp with time on it. A zero rate for no time is a cancel, not a suspend. The pump history doesn't say who
+    /// set it; `suspendReading` asks Trio's determinations. A low's result is judged up to this moment: after it Trio
+    /// wasn't giving the basal being tested, and the carbs that treat the low aren't part of the fast. After the planned
+    /// end the test may still be open, but the previous mode can be back, and a zero temp then says nothing about the
+    /// fast.
     static func firstSuspend(_ temps: [BasalTestTempBasal], since start: Date, until end: Date) -> Date? {
         temps.filter { $0.date >= start && $0.date <= end && $0.rate == 0 && $0.minutes > 0 }.map(\.date).min()
     }
@@ -299,13 +294,40 @@ enum BasalTestEvaluator {
             || temps.contains { inside($0.date) && $0.rate > 0 && $0.minutes > 0 }
     }
 
-    /// What the pump history says about a suspend inside the fast.
+    /// What the pump history and Trio's determinations say about a suspend inside the fast.
     enum SuspendReading: Equatable {
         case none
-        /// The first zero temp with time on it started at this time.
+        /// Trio suspended for a low: the first zero temp with time on it started at this time, and one of its
+        /// determinations asked for it.
         case suspended(at: Date)
+        /// The first zero temp with time on it started at this time, and none of Trio's determinations asked for it, so
+        /// it wasn't Trio's suspend for a low. One set on the pump, for example.
+        case unexplained(at: Date)
         /// The temp basals couldn't be read.
         case unreadable
+    }
+
+    /// How long before a zero temp started a determination can have asked for it: the pump starts a temp a moment after
+    /// Trio decides on it, and a slow pump command can stretch that.
+    static let zeroTempAskedBefore: TimeInterval = 10 * 60
+    /// How long after: a pump clock a little behind the phone's dates the temp early.
+    static let zeroTempAskedAfter: TimeInterval = 2 * 60
+
+    /// Whether basal was stopped inside the fast, from `start` to `end` inclusive, and whether Trio asked for it. Only
+    /// the first zero temp decides: a fast stopped by someone else is spoiled before any low of Trio's that follows,
+    /// and one Trio stopped for a low is over before anything after it. In Basal Testing, Trio asks for a zero temp
+    /// only when glucose or the forecast drops below its threshold.
+    static func suspendReading(
+        _ temps: [BasalTestTempBasal],
+        zeroTempDeterminations: [Date],
+        since start: Date,
+        until end: Date
+    ) -> SuspendReading {
+        guard let stoppedAt = firstSuspend(temps, since: start, until: end) else { return .none }
+        let earliest = stoppedAt.addingTimeInterval(-zeroTempAskedBefore)
+        let latest = stoppedAt.addingTimeInterval(zeroTempAskedAfter)
+        let asked = zeroTempDeterminations.contains { $0 >= earliest && $0 <= latest }
+        return asked ? .suspended(at: stoppedAt) : .unexplained(at: stoppedAt)
     }
 
     /// What a running fast's periodic check found that ends it.
@@ -320,17 +342,19 @@ enum BasalTestEvaluator {
         case completedUnchecked
         /// The dosing mode was changed before the planned end, so the rest of the fast didn't run in Basal Testing.
         case modeChanged
-        /// Basal was stopped inside the fast, but Basal Testing was off by the time of the check and the service didn't
-        /// end the test for it, so it can't be told whether that was Basal Testing's suspend for a low.
-        case unexplainedSuspend
+        /// Basal was stopped inside the fast at this time, and it can't be told that was Basal Testing's suspend for a
+        /// low: none of Trio's determinations asked for it, or Basal Testing was off by the time of the check and the
+        /// service didn't end the test for it.
+        case unexplainedSuspend(at: Date)
     }
 
     /// What a running fast's periodic check decides. Nil to keep going.
     ///
-    /// First, the service's record of ending this test's session for a low or for carbs inside the fast: the service
-    /// brought the usual mode back then, so the record, not the mode, says why. Without one, a mode other than Basal
-    /// Testing before the planned end interrupts the fast, whatever the temps show, because a zero temp from another
-    /// mode is not a low. Only while Basal Testing is still on is a zero temp in the fast its suspend for a low. Time up
+    /// First, the service's record of ending this test's session inside the fast, for a low, for carbs or for basal
+    /// stopped without Trio asking: the service brought the usual mode back then, so the record, not the mode, says
+    /// why. Without one, a mode other than Basal Testing before the planned end interrupts the fast, whatever the temps
+    /// show, because a zero temp from another mode is not a low. Only while Basal Testing is still on is a zero temp in
+    /// the fast that Trio asked for its suspend for a low; one it didn't ask for stops the fast in any mode. Time up
     /// completes the fast, and still ends it when the pump history can't be read, so the usual mode always comes back.
     static func runningCheck(
         sessionID: UUID?,
@@ -345,6 +369,7 @@ enum BasalTestEvaluator {
             switch serviceEnd.cause {
             case .low: return .low(at: serviceEnd.date)
             case .carbsLogged: return .carbsLogged(at: serviceEnd.date)
+            case .basalStopped: return .unexplainedSuspend(at: serviceEnd.date)
             }
         }
         let timeUp = now >= plannedEnd
@@ -352,7 +377,9 @@ enum BasalTestEvaluator {
         switch suspend {
         case let .suspended(at):
             // Only after the planned end can the mode be other than Basal Testing here.
-            return mode == .basalTesting ? .low(at: at) : .unexplainedSuspend
+            return mode == .basalTesting ? .low(at: at) : .unexplainedSuspend(at: at)
+        case let .unexplained(at):
+            return .unexplainedSuspend(at: at)
         case .unreadable:
             return timeUp ? .completedUnchecked : nil
         case .none:

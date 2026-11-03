@@ -1,4 +1,5 @@
 import Combine
+import CoreData
 import Foundation
 import LoopKit
 import Swinject
@@ -726,7 +727,7 @@ import Testing
         #expect(BasalTest.Config.smbLookback == 7 * 24 * hour)
     }
 
-    // MARK: Trio's own suspend
+    // MARK: Basal stopped
 
     private let testStart = Date(timeIntervalSince1970: 1_000_000)
     /// The planned end of a 4 hour fast.
@@ -736,13 +737,14 @@ import Testing
         BasalTestTempBasal(date: testStart.addingTimeInterval(seconds), rate: rate, minutes: minutes)
     }
 
+    /// Whether basal was stopped inside the fast, whoever stopped it.
     private func suspended(_ temps: [BasalTestTempBasal]) -> Bool {
-        BasalTestEvaluator.trioSuspended(temps, since: testStart, until: testEnd)
+        firstSuspend(temps) != nil
     }
 
-    @Test("A zero temp basal after the start means Trio suspended for a low") func zeroTempMeansSuspend() {
+    @Test("A zero temp basal after the start means basal was stopped") func zeroTempMeansSuspend() {
         let suspend = temp(0, minutes: 30, after: 600)
-        #expect(BasalTestEvaluator.trioSuspended([suspend], since: testStart, until: testEnd))
+        #expect(suspended([suspend]))
     }
 
     @Test("A zero temp at the very start counts, a moment before it doesn't") func suspendAtStartEdge() {
@@ -751,22 +753,22 @@ import Testing
     }
 
     @Test("A zero rate for no time is a cancelled temp, not a suspend") func ignoresCancelAtStart() {
-        #expect(!BasalTestEvaluator.trioSuspended([temp(0, minutes: 0, after: 600)], since: testStart, until: testEnd))
+        #expect(!suspended([temp(0, minutes: 0, after: 600)]))
     }
 
     @Test("A temp that still delivers is not a suspend") func ignoresNonZero() {
-        #expect(!BasalTestEvaluator.trioSuspended([temp(0.4, minutes: 30, after: 600)], since: testStart, until: testEnd))
+        #expect(!suspended([temp(0.4, minutes: 30, after: 600)]))
     }
 
     @Test("A suspend from before the test began is not this test's low") func ignoresBeforeStart() {
-        #expect(!BasalTestEvaluator.trioSuspended([temp(0, minutes: 30, after: -3600)], since: testStart, until: testEnd))
+        #expect(!suspended([temp(0, minutes: 30, after: -3600)]))
     }
 
     @Test("A suspend after the planned end is not this test's low; one at it is") func ignoresSuspendAfterPlannedEnd() {
         let atEnd = temp(0, minutes: 30, after: 4 * hour)
         let afterEnd = temp(0, minutes: 30, after: 4 * hour + 60)
-        #expect(BasalTestEvaluator.trioSuspended([atEnd], since: testStart, until: testEnd))
-        #expect(!BasalTestEvaluator.trioSuspended([afterEnd], since: testStart, until: testEnd))
+        #expect(suspended([atEnd]))
+        #expect(!suspended([afterEnd]))
     }
 
     @Test("Any one suspend among other temps is enough, whatever the order") func suspendAmongOthers() {
@@ -787,6 +789,58 @@ import Testing
 
     @Test("No temp basals means no suspend") func noTempsNoSuspend() {
         #expect(!suspended([]))
+    }
+
+    // MARK: Whose suspend
+
+    private func reading(
+        _ temps: [BasalTestTempBasal],
+        askedAt determinations: [TimeInterval]
+    ) -> BasalTestEvaluator.SuspendReading {
+        BasalTestEvaluator.suspendReading(
+            temps,
+            zeroTempDeterminations: determinations.map { testStart.addingTimeInterval($0) },
+            since: testStart,
+            until: testEnd
+        )
+    }
+
+    @Test("A zero temp one of Trio's determinations asked for is its suspend for a low") func askedForZeroTempIsLow() {
+        let suspend = temp(0, minutes: 30, after: 1800)
+        // The determination is made, then the pump starts the temp a little later.
+        #expect(reading([suspend], askedAt: [1770]) == .suspended(at: testStart.addingTimeInterval(1800)))
+    }
+
+    @Test("A zero temp no determination of Trio's asked for is unexplained, not a low") func unaskedZeroTempIsUnexplained() {
+        let suspend = temp(0, minutes: 30, after: 1800)
+        #expect(reading([suspend], askedAt: []) == .unexplained(at: testStart.addingTimeInterval(1800)))
+        // Trio asking for one an hour earlier doesn't make this one its.
+        #expect(reading([suspend], askedAt: [-1800, 5400]) == .unexplained(at: testStart.addingTimeInterval(1800)))
+    }
+
+    @Test("A determination up to 10 minutes before the zero temp or 2 after it asked for it") func askedForWindowEdges() {
+        let suspend = temp(0, minutes: 30, after: 1800)
+        let low = BasalTestEvaluator.SuspendReading.suspended(at: testStart.addingTimeInterval(1800))
+        let unexplained = BasalTestEvaluator.SuspendReading.unexplained(at: testStart.addingTimeInterval(1800))
+        #expect(reading([suspend], askedAt: [1800 - 600]) == low)
+        #expect(reading([suspend], askedAt: [1800 + 120]) == low)
+        #expect(reading([suspend], askedAt: [1800 - 601]) == unexplained)
+        #expect(reading([suspend], askedAt: [1800 + 121]) == unexplained)
+    }
+
+    @Test("Only the first zero temp in the fast decides whose it was") func firstZeroTempDecides() {
+        let unasked = temp(0, minutes: 30, after: 1800)
+        let asked = temp(0, minutes: 30, after: 3600)
+        // Basal stopped by someone else spoils the fast before Trio's low came.
+        #expect(reading([asked, unasked], askedAt: [3570]) == .unexplained(at: testStart.addingTimeInterval(1800)))
+        // Trio's low ended the fast before anything else happened.
+        #expect(reading([unasked, asked], askedAt: [1770]) == .suspended(at: testStart.addingTimeInterval(1800)))
+    }
+
+    @Test("Without a zero temp in the fast there is no suspend, whatever Trio asked for") func noZeroTempNoReading() {
+        #expect(reading([], askedAt: [1800]) == BasalTestEvaluator.SuspendReading.none)
+        let others = [temp(0, minutes: 0, after: 1800), temp(0.4, minutes: 30, after: 1800), temp(0, minutes: 30, after: -60)]
+        #expect(reading(others, askedAt: [1800, -60]) == BasalTestEvaluator.SuspendReading.none)
     }
 
     // MARK: The low's window
@@ -811,7 +865,6 @@ import Testing
         #expect(firstSuspend([]) == nil)
         #expect(firstSuspend([temp(0, minutes: 0, after: 600), temp(0.4, minutes: 30, after: 900)]) == nil)
         #expect(firstSuspend([temp(0, minutes: 30, after: -1), temp(0, minutes: 30, after: 4 * hour + 1)]) == nil)
-        // Its edges are in, the same as `trioSuspended`.
         #expect(firstSuspend([temp(0, minutes: 30, after: 0)]) == testStart)
         #expect(firstSuspend([temp(0, minutes: 30, after: 4 * hour)]) == testEnd)
     }
@@ -894,13 +947,16 @@ import Testing
         sessionID: UUID? = nil,
         ended: SettingsTestEnd? = nil,
         suspend: TimeInterval? = nil,
+        unexplained: TimeInterval? = nil,
         unreadable: Bool = false,
         now: TimeInterval,
         mode: DosingMode = .basalTesting
     ) -> BasalTestEvaluator.RunningCheck? {
         let reading: BasalTestEvaluator.SuspendReading = unreadable
             ? .unreadable
-            : suspend.map { .suspended(at: testStart.addingTimeInterval($0)) } ?? .none
+            : suspend.map { .suspended(at: testStart.addingTimeInterval($0)) }
+            ?? unexplained.map { .unexplained(at: testStart.addingTimeInterval($0)) }
+            ?? .none
         return BasalTestEvaluator.runningCheck(
             sessionID: sessionID ?? testSession,
             serviceEnd: ended,
@@ -978,7 +1034,25 @@ import Testing
         // Inside the grace after the planned end, Basal Testing is still on.
         #expect(check(suspend: 1800, now: 5 * hour) == .low(at: at(seconds: 1800)))
         // Off by now, with no record from the service: it can't be told whose zero temp it was.
-        #expect(check(suspend: 1800, now: 5 * hour, mode: .closed) == .unexplainedSuspend)
+        #expect(check(suspend: 1800, now: 5 * hour, mode: .closed) == .unexplainedSuspend(at: at(seconds: 1800)))
+    }
+
+    @Test("A zero temp Trio didn't ask for stops the fast at it, in any mode") func runningUnexplainedZeroTemp() {
+        #expect(check(unexplained: 1800, now: 3600) == .unexplainedSuspend(at: at(seconds: 1800)))
+        #expect(check(unexplained: 1800, now: 5 * hour) == .unexplainedSuspend(at: at(seconds: 1800)))
+        #expect(check(unexplained: 1800, now: 5 * hour, mode: .closed) == .unexplainedSuspend(at: at(seconds: 1800)))
+        // A mode changed before the planned end still reads as that.
+        #expect(check(unexplained: 1800, now: 3600, mode: .closed) == .modeChanged)
+    }
+
+    @Test("The service's record of basal stopped without Trio asking stops the fast at it") func runningServiceEndBasalStopped() {
+        #expect(
+            check(ended: serviceEnd(.basalStopped, after: 1800), now: 3600, mode: .closed)
+                == .unexplainedSuspend(at: at(seconds: 1800))
+        )
+        #expect(
+            check(ended: serviceEnd(.basalStopped, after: 4 * hour + 60), now: 5 * hour, mode: .closed) == .completed
+        )
     }
 
     @Test("Time up completes the fast, whatever the mode is by then") func runningCompletes() {
@@ -1028,19 +1102,33 @@ private final class FakeSettingsManager: SettingsManager {
     func updateInsulinCurve(_: InsulinType?) {}
 }
 
-/// Pump history and carbs as a test sets them, with how often the service asked.
+/// Pump history, Trio's determinations and carbs as a test sets them, with how often the service asked.
 private final class FakeSettingsTestEvents: SettingsTestEvents {
     var temps: [BasalTestTempBasal] = []
+    /// When Trio's determinations asked for a zero temp.
+    var zeroTempDeterminations: [Date] = []
     var carbs: [Date] = []
     var failing = false
     private(set) var reads = 0
 
     struct Failure: Error {}
 
+    /// Trio's suspend for a low at `date`: the zero temp the pump started, and the determination just before it.
+    func trioSuspends(at date: Date) {
+        temps.append(BasalTestTempBasal(date: date, rate: 0, minutes: 30))
+        zeroTempDeterminations.append(date.addingTimeInterval(-30))
+    }
+
     func tempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal] {
         reads += 1
         if failing { throw Failure() }
         return temps.filter { $0.date >= start && $0.date <= end }
+    }
+
+    func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date] {
+        reads += 1
+        if failing { throw Failure() }
+        return zeroTempDeterminations.filter { $0 >= start && $0 <= end }
     }
 
     func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
@@ -1121,7 +1209,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         )
         // Set before the service exists, because a recovered session is checked as soon as it is made.
         let suspendedAt = startedAt.addingTimeInterval(600)
-        events.temps = [BasalTestTempBasal(date: suspendedAt, rate: 0, minutes: 30)]
+        events.trioSuspends(at: suspendedAt)
         let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
         defer { cleanUp(storage) }
 
@@ -1134,6 +1222,31 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         // Kept on disk, so it is still there after a relaunch.
         let (relaunched, _, _) = makeService(mode: .closed, keepingFiles: true)
         #expect(relaunched.lastEnd() == expected)
+    }
+
+    @Test(
+        "Basal stopped without Trio asking ends a basal test, and isn't kept as a low"
+    ) func unaskedZeroTempEndsSession() async {
+        let events = FakeSettingsTestEvents()
+        // On a whole second, so the kept record reads back exactly.
+        let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 3600).rounded(.down))
+        let session = SettingsTestSession(
+            kind: .basal,
+            startedAt: startedAt,
+            expiresAt: Date().addingTimeInterval(3600),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )
+        // A zero temp set on the pump, with Trio's last zero temp determination long before it.
+        let stoppedAt = startedAt.addingTimeInterval(1200)
+        events.temps = [BasalTestTempBasal(date: stoppedAt, rate: 0, minutes: 60)]
+        events.zeroTempDeterminations = [startedAt.addingTimeInterval(-3600)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrCarbsLogged()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt))
     }
 
     @Test("Carbs logged during a basal test end it with nobody on its screen") func carbsEndSession() async {
@@ -1167,7 +1280,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
             modeChanges += 1
             recordWhenModeChanged = service.lastEnd()
         }
-        events.temps = [BasalTestTempBasal(date: session.startedAt, rate: 0, minutes: 30)]
+        events.trioSuspends(at: session.startedAt)
         await service.endIfLowOrCarbsLogged()
         #expect(modeChanges == 1)
         #expect(recordWhenModeChanged?.sessionID == session.id)
@@ -1260,7 +1373,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
             restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
         )
         let suspendedAt = startedAt.addingTimeInterval(600)
-        events.temps = [BasalTestTempBasal(date: suspendedAt, rate: 0, minutes: 30)]
+        events.trioSuspends(at: suspendedAt)
         let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
         defer { cleanUp(storage) }
 
@@ -1282,7 +1395,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
             restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
         )
         let suspendedAt = startedAt.addingTimeInterval(600)
-        events.temps = [BasalTestTempBasal(date: suspendedAt, rate: 0, minutes: 30)]
+        events.trioSuspends(at: suspendedAt)
         let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
         defer { cleanUp(storage) }
 
@@ -1531,6 +1644,42 @@ private final class FakeCalibrationModeService: CalibrationModeService {
     func postNightscoutNote(_: String) { calls.append("postNightscoutNote") }
     func archiveCompletedTest(_: CalibrationTestState, glucoseReadings _: [CalibrationGlucoseReading]) {
         calls.append("archiveCompletedTest")
+    }
+}
+
+@Suite("Settings test events") struct SettingsTestEventsTests {
+    @Test(
+        "Trio's determinations that asked for a zero temp with time on it, dated by when they were due"
+    ) func zeroTempDeterminations() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let context = stack.newTaskContext()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        await context.perform {
+            func determination(after seconds: TimeInterval, rate: Decimal?, minutes: Decimal?, due: Bool = true) {
+                let determination = OrefDetermination(context: context)
+                determination.id = UUID()
+                determination.deliverAt = due ? start.addingTimeInterval(seconds) : nil
+                // Made a moment after it was due, as the loop marks it once the pump has it.
+                determination.timestamp = start.addingTimeInterval(seconds + 20)
+                determination.rate = rate.map { NSDecimalNumber(decimal: $0) }
+                determination.duration = minutes.map { NSDecimalNumber(decimal: $0) }
+            }
+            determination(after: 600, rate: 0, minutes: 30)
+            // No change, a cancel, and a temp that delivers didn't ask for a zero temp.
+            determination(after: 900, rate: nil, minutes: nil)
+            determination(after: 1200, rate: 0, minutes: 0)
+            determination(after: 1500, rate: 0.4, minutes: 30)
+            // Without a time it was due, it goes by when it was made.
+            determination(after: 1800, rate: 0, minutes: 30, due: false)
+            // Outside the window.
+            determination(after: -60, rate: 0, minutes: 30)
+            determination(after: 7200, rate: 0, minutes: 30)
+            try? context.save()
+        }
+
+        let dates = try await CoreDataSettingsTestEvents(context: context)
+            .zeroTempDeterminations(from: start, to: start.addingTimeInterval(3600))
+        #expect(dates == [start.addingTimeInterval(600), start.addingTimeInterval(1820)])
     }
 }
 

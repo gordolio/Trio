@@ -33,7 +33,8 @@ protocol SettingsTestService: AnyObject {
     /// Ends the session if it ran past its deadline. Safe to call at any time.
     func endIfExpired()
 
-    /// The last session the service ended on its own, for a low or for logged carbs, and why. Kept until the next one.
+    /// The last session the service ended on its own, for a low, for logged carbs or for basal stopped without Trio
+    /// asking, and why. Kept until the next one.
     func lastEnd() -> SettingsTestEnd?
 
     func archive(_ record: SettingsTestRecord)
@@ -46,8 +47,25 @@ protocol SettingsTestEvents {
     /// Temp basals the pump started in the window, oldest first. Scheduled basal, which pumps also report as a temp,
     /// is left out: it is the basal being tested, not a change to it, and a 0 U/h entry is no suspend.
     func tempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal]
+    /// When Trio's determinations in the window asked for a zero temp basal with time on it, oldest first. A
+    /// determination is dated by when it was due, or when it was made if that is missing. The pump history doesn't say
+    /// who set a temp, so these are what tell Trio's suspend from a zero temp set on the pump.
+    func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date]
     /// Whether carbs were logged in the window.
     func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool
+}
+
+extension SettingsTestEvents {
+    /// Whether basal was stopped from `start` to `end` inclusive, and if it was, whether Trio asked for it. Trio's
+    /// determinations are read a little either side of the window, so one that asked for a zero temp at its edge counts.
+    func suspendReading(from start: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading {
+        let temps = try await tempBasals(from: start, to: end)
+        let determinations = try await zeroTempDeterminations(
+            from: start.addingTimeInterval(-BasalTestEvaluator.zeroTempAskedBefore),
+            to: end.addingTimeInterval(BasalTestEvaluator.zeroTempAskedAfter)
+        )
+        return BasalTestEvaluator.suspendReading(temps, zeroTempDeterminations: determinations, since: start, until: end)
+    }
 }
 
 /// Reads them from Core Data.
@@ -78,6 +96,29 @@ final class CoreDataSettingsTestEvents: SettingsTestEvents {
                 return BasalTestTempBasal(date: date, rate: rate.decimalValue, minutes: Int(temp.duration))
             }
         }
+    }
+
+    func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date] {
+        let due = NSPredicate(format: "deliverAt >= %@ AND deliverAt <= %@", start as NSDate, end as NSDate)
+        let made = NSPredicate(
+            format: "deliverAt == nil AND timestamp >= %@ AND timestamp <= %@",
+            start as NSDate,
+            end as NSDate
+        )
+        let results = try await CoreDataStack.shared.fetchEntitiesAsync(
+            ofType: OrefDetermination.self,
+            onContext: context,
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                NSPredicate(format: "rate == 0 AND duration > 0"),
+                NSCompoundPredicate(orPredicateWithSubpredicates: [due, made])
+            ]),
+            key: "deliverAt",
+            ascending: true,
+            propertiesToFetch: ["deliverAt", "timestamp"]
+        )
+        return ((results as? [[String: Any]]) ?? [])
+            .compactMap { row in (row["deliverAt"] as? Date) ?? (row["timestamp"] as? Date) }
+            .sorted()
     }
 
     func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
@@ -149,10 +190,11 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
 
     /// Ends a running test in Basal Testing when Trio suspended insulin for a low since it began, and a basal test when
     /// carbs were logged: the two things the basal Fast screen says end the test. The watchdog calls this, so either
-    /// one brings the usual dosing back whether or not that screen is open. Why and when is kept (`lastEnd()`), so the
-    /// screen, when opened again, finishes the result for the same reason with the usual mode already back. Only a
-    /// session that switched to Basal Testing and is still in it: a mode the user picked since is theirs, and the basal
-    /// screen reads that as an interrupted fast.
+    /// one brings the usual dosing back whether or not that screen is open. Basal stopped without Trio asking, by a
+    /// zero temp set on the pump, ends it too: the fast is spoiled, and it isn't kept as a low. Why and when is kept
+    /// (`lastEnd()`), so the screen, when opened again, finishes the result for the same reason with the usual mode
+    /// already back. Only a session that switched to Basal Testing and is still in it: a mode the user picked since is
+    /// theirs, and the basal screen reads that as an interrupted fast.
     func endIfLowOrCarbsLogged() async {
         guard let session = activeSession,
               session.restore.contains(where: \.switchesToBasalTesting),
@@ -161,10 +203,13 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         let now = Date()
         let ending: SettingsTestEnd
         do {
-            let temps = try await events.tempBasals(from: session.startedAt, to: now)
-            if let suspendedAt = BasalTestEvaluator.firstSuspend(temps, since: session.startedAt, until: now) {
+            let suspend = try await events.suspendReading(from: session.startedAt, to: now)
+            if case let .suspended(suspendedAt) = suspend {
                 debug(.settings, "SettingsTest: Trio suspended for a low, ending the \(session.kind.rawValue) test")
                 ending = SettingsTestEnd(sessionID: session.id, cause: .low, date: suspendedAt)
+            } else if case let .unexplained(stoppedAt) = suspend {
+                debug(.settings, "SettingsTest: basal was stopped without Trio asking, ending the \(session.kind.rawValue) test")
+                ending = SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt)
             } else if session.kind == .basal, try await events.hasCarbEntries(from: session.startedAt, to: now) {
                 // Only the basal test tells the user that logging carbs ends it.
                 debug(.settings, "SettingsTest: carbs were logged, ending the \(session.kind.rawValue) test")

@@ -158,6 +158,11 @@ extension BasalTest {
             try await events.tempBasals(from: start, to: end)
         }
 
+        /// Whether basal was stopped in the window, and whether Trio asked for it.
+        func fetchSuspendReading(from start: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading {
+            try await events.suspendReading(from: start, to: end)
+        }
+
         // MARK: - Things that spoil a fast
 
         /// When food was last logged, within the last `hours`.
