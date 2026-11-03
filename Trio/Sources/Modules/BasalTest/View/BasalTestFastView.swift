@@ -5,18 +5,14 @@ extension BasalTest {
         @Bindable var state: StateModel
 
         var body: some View {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                SettingsTestScreen {
+            // Minutes are all a fast of hours needs, so the countdown ticks once a minute.
+            TimelineView(.everyMinute) { context in
+                SettingsTestScreen(paintsBackground: false) {
                     countdown(now: context.date)
-                    glucoseCard
+                    // What to do about a low comes before the chart, so it is on screen without scrolling.
                     rulesCard
+                    glucoseCard
                 } footer: {
-                    if state.isHigh {
-                        Text("Glucose is already high, which tells you what you need to know. You can end the test now.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
                     Button("Stop Test") { state.showStopOptions = true }
                         .buttonStyle(.testSecondary)
                 }
@@ -35,24 +31,24 @@ extension BasalTest {
 
         // MARK: - Pieces
 
+        /// How long until the user can eat, and when that is.
         private func countdown(now: Date) -> some View {
             let end = state.test?.plannedEnd ?? now
             let total = state.test?.plannedDuration ?? 1
             let remaining = max(0, end.timeIntervalSince(now))
+            // Rounded up, so the last minute reads "1 m left" and not "0 m".
+            let minutesLeft = (remaining / 60).rounded(.up)
             return SettingsTestCard {
                 VStack(spacing: 10) {
-                    Text("Time left")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(SettingsTestFormat.clock(remaining))
-                        .font(.system(size: 44, weight: .bold, design: .rounded))
+                    Text("\(SettingsTestFormat.duration(minutesLeft * 60)) left")
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                     SettingsTestProgressBar(progress: 1 - remaining / max(1, total))
-                    if let test = state.test {
-                        Text("\(test.timeBlock) fast, started \(test.startedAt.formatted(date: .omitted, time: .shortened))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Ends at \(end.formatted(date: .omitted, time: .shortened))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -74,14 +70,18 @@ extension BasalTest {
                     SettingsTestGlucoseChart(
                         points: state.runningReadings.map { SettingsTestGlucosePoint(date: $0.date, glucose: $0.glucose) },
                         units: state.glucoseUnits,
-                        band: (test.startGlucose - Config.steadyTolerance) ... (test.startGlucose + Config.steadyTolerance)
+                        band: state.steadyBand
                     )
 
-                    Text(
-                        "The green band is steady: within \(state.formatWithUnits(Config.steadyTolerance)) of where you started."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    // Only with an ISF and a basal to work the band out from.
+                    if state.steadyBand != nil {
+                        Text(
+                            "Inside the green band, the change is smaller than the docs' smallest basal change (\(state.stepPercent)%)."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
 
                     if state.readingIsStale {
                         Label(
@@ -95,23 +95,39 @@ extension BasalTest {
             }
         }
 
+        /// The low comes first: it is the one thing to act on during a fast. Red is kept for it, and the rules use
+        /// neutral glyphs, so none of them looks like a failed check.
         private var rulesCard: some View {
             SettingsTestCard(title: String(localized: "During the fast")) {
-                rule("xmark.circle.fill", .red, "Don't eat or log carbs")
-                rule("xmark.circle.fill", .red, "Don't give a bolus")
-                rule("checkmark.circle.fill", .green, "You can close the app. Trio keeps watching")
-                rule("checkmark.circle.fill", .green, "Go about quiet activity; skip hard exercise")
-                Text("If you feel low, treat it. The test ends and your usual dosing returns.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                rule(
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red),
+                    "Feeling low? Treat it as usual and log the carbs. That stops the test.",
+                    emphasized: true
+                )
+                rule(nosign, "Don't eat. Anything you log stops the test.")
+                rule(nosign, "Don't give a bolus.")
+                rule(dot, "Quiet activity only; skip hard exercise.")
+                rule(dot, "You can leave this screen. Trio still ends the test for a low or for carbs you log.")
             }
         }
 
-        private func rule(_ icon: String, _ color: Color, _ text: LocalizedStringKey) -> some View {
-            HStack(spacing: 10) {
-                Image(systemName: icon).foregroundStyle(color)
-                Text(text).font(.subheadline)
+        private var nosign: some View {
+            Image(systemName: "nosign").foregroundStyle(.secondary)
+        }
+
+        private var dot: some View {
+            Text(verbatim: "•").foregroundStyle(.secondary)
+        }
+
+        private func rule(_ icon: some View, _ text: LocalizedStringKey, emphasized: Bool = false) -> some View {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                icon
+                    .frame(minWidth: 22)
+                    .accessibilityHidden(true)
+                Text(text)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .font(emphasized ? .subheadline.weight(.semibold) : .subheadline)
         }
     }
 }

@@ -35,14 +35,49 @@ enum SettingsTestKind: String, JSON, CaseIterable, Identifiable {
         }
     }
 
-    /// Tests that have a guided wizard today.
-    var isAvailable: Bool {
+    /// Whether the hub can open this test.
+    var availability: SettingsTestAvailability {
         switch self {
-        case .basal,
-             .carbRatio: return true
-        case .isf: return false
+        case .basal: return .available
+        case .isf: return .comingSoon
+        case .carbRatio: return .beingRebuilt
         }
     }
+}
+
+extension SettingsTestKind {
+    /// Whether the old carb ratio wizard has a test under way that only its own screen can finish: from its prep, when
+    /// its SMB-off override goes on, until the result is completed. A cancelled or timed-out test left on disk counts
+    /// too, because opening the screen is what turns the override off and clears it.
+    static func carbRatioTestInProgress(_ phase: CalibrationPhase?) -> Bool {
+        switch phase {
+        case .awaitingTabletConfirmation,
+             .bolusDelivered,
+             .cancelled,
+             .observing,
+             .prepping,
+             .readyToTest,
+             .resultsReady,
+             .timedOut:
+            return true
+        case .completed,
+             nil,
+             .notStarted,
+             .preflightChecking,
+             .preflightFailed,
+             .preflightPassed:
+            return false
+        }
+    }
+}
+
+/// Whether a test can be opened from the hub, and if not, why.
+enum SettingsTestAvailability: Equatable {
+    case available
+    /// There is no wizard for it yet.
+    case comingSoon
+    /// It had a wizard that is being rebuilt.
+    case beingRebuilt
 }
 
 /// What a test result says the setting's number should do. Never an amount: the wizard
@@ -58,6 +93,13 @@ enum SettingsTestRestoreAction: JSON, Equatable {
     /// The test switched the dosing mode to `testMode`. Put back `previous`, but only if the mode
     /// is still `testMode`, so a mode the user chose on their own is left alone.
     case dosingMode(testMode: DosingMode, previous: DosingMode)
+
+    /// Whether this is the switch to Basal Testing, the change a low or logged carbs undo.
+    var switchesToBasalTesting: Bool {
+        switch self {
+        case let .dosingMode(testMode, _): return testMode == .basalTesting
+        }
+    }
 }
 
 /// A running test that has changed something temporarily. Persisted so the change can be undone
@@ -69,6 +111,31 @@ struct SettingsTestSession: JSON, Equatable, Identifiable {
     /// After this, the temporary changes are undone even if the user never comes back.
     var expiresAt: Date
     var restore: [SettingsTestRestoreAction]
+    /// When a session that switched to Basal Testing first saw another mode picked. Nil while it hasn't, and in a
+    /// session saved before this was kept.
+    var leftTestModeAt: Date?
+}
+
+/// Why the service ended a running test on its own.
+enum SettingsTestEndCause: String, JSON, Equatable {
+    /// Trio suspended insulin for a low.
+    case low
+    /// Carbs were logged.
+    case carbsLogged
+    /// Basal was stopped, and none of Trio's determinations asked for it, so it wasn't Trio's suspend for a low.
+    case basalStopped
+    /// Carbs couldn't be read, so it couldn't be told whether food was eaten.
+    case carbsUnreadable
+}
+
+/// What the service keeps when it ends a test on its own, so the test's screen, opened later, finishes it for the same
+/// reason. By then the usual dosing mode is back, and without this a mode the user changed couldn't be told from a low.
+struct SettingsTestEnd: JSON, Equatable {
+    var sessionID: UUID
+    var cause: SettingsTestEndCause
+    /// For a low, when Trio first suspended; for carbs, logged or unreadable, when the service found that and brought the
+    /// usual dosing back; for basal stopped, when it was stopped.
+    var date: Date
 }
 
 /// A finished test, kept so results can be compared over time.
@@ -87,6 +154,9 @@ struct SettingsTestRecord: JSON, Equatable, Identifiable {
     var summary: String
     /// Whether the user changed the setting after seeing the result.
     var applied: Bool = false
+    /// The schedule entries the test's time window covered, as they were when the test ran. Nil for a
+    /// test saved before this was kept, and for tests of settings that aren't a schedule.
+    var coveredEntries: [SettingsTestScheduleEntry]? = nil
 }
 
 // The carb ratio wizard uses the shared step bar.
