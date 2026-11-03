@@ -392,6 +392,7 @@ extension Notification.Name {
             .onChange(of: showLoadingView) { _, isLoading in
                 if !isLoading {
                     presentDevelopmentBranchWarningIfNeeded()
+                    requestAlarmAuthorizationIfNeeded()
                 }
             }
             // A first-time user is still in onboarding when the loading screen goes away, so the
@@ -419,6 +420,7 @@ extension Notification.Name {
                     AppVersionChecker.shared.checkAndNotifyVersionStatus(in: rootVC)
                 }
                 presentDevelopmentBranchWarningIfNeeded()
+                requestAlarmAuthorizationIfNeeded()
                 if initState.complete {
                     performCleanupIfNecessary()
                 }
@@ -436,6 +438,16 @@ extension Notification.Name {
         }
 
         developmentBranchAlerter.alertIfNeeded()
+    }
+
+    /// Onboarding asks for AlarmKit, but users who onboarded before it existed were never asked,
+    /// leaving critical alarms on the in-app audio fallback. No-op once decided or below iOS 26.
+    @MainActor private func requestAlarmAuthorizationIfNeeded() {
+        guard initState.complete, !onboardingManager.shouldShowOnboarding else {
+            return
+        }
+
+        Task { await CriticalAlertAlarmScheduler.requestAuthorization() }
     }
 
     func configureTabBarAppearance() {
