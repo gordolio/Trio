@@ -84,7 +84,24 @@ struct BasalTestState: JSON, Equatable {
     /// been missed. Optional so a state saved before it was kept still decodes.
     var interferenceUnread: Bool?
 
+    /// The ending a check decided, saved before the usual mode comes back, so the next check finishes it for that ending
+    /// (`BasalTestRunner`). Nil while none is, once the test has finished, and in a state saved before it was kept.
+    var pendingEnd: BasalTestPendingEnd? = nil
+
     var plannedEnd: Date { startedAt.addingTimeInterval(plannedDuration) }
+}
+
+/// An ending decided and saved before the usual mode comes back (`BasalTestState.pendingEnd`), so a finish cut short, with
+/// Trio killed between the two, is finished for the same ending at the next check: never a verdict it didn't have, never
+/// another reason, and one notice.
+struct BasalTestPendingEnd: JSON, Equatable {
+    var reason: BasalTestEndReason
+    /// When the fast ends, worked out once as the ending is decided.
+    var at: Date
+    /// What to say about it when the records don't.
+    var note: String?
+    /// Whether the user ended it (End Now), which posts no notice.
+    var byUser: Bool
 }
 
 /// Which side of zero insulin on board sits on, judged at the two decimals the app shows, so anything
@@ -559,15 +576,50 @@ enum BasalTestEvaluator {
         ]
     }
 
+    /// How a running fast's periodic check ends it: the reason, the time to end it at (nil for now, or the planned end if
+    /// that came first), and what to say when the records don't.
+    static func ending(for check: RunningCheck) -> (reason: BasalTestEndReason, at: Date?, note: String?) {
+        switch check {
+        case let .low(suspendedAt):
+            return (.low, suspendedAt, nil)
+        case let .carbsLogged(endedAt):
+            return (.interrupted, endedAt, String(localized: "Carbs were logged during the fast."))
+        case let .bolusGiven(endedAt):
+            return (.interrupted, endedAt, String(localized: "A bolus was given during the fast."))
+        case .completed:
+            return (.completed, nil, nil)
+        case .completedUnchecked:
+            return (.unchecked, nil, nil)
+        case .modeChanged:
+            return (.interrupted, nil, String(localized: "The dosing mode changed during the fast."))
+        case .modeChangedRestored:
+            return (
+                .interrupted,
+                nil,
+                String(
+                    localized: "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
+                )
+            )
+        case let .unexplainedSuspend(stoppedAt):
+            return (.interrupted, stoppedAt, basalStoppedNote)
+        case let .carbsUnreadable(endedAt):
+            return (
+                .interrupted,
+                endedAt,
+                String(localized: "Trio couldn't read your carbs to check the fast, so it brought your usual dosing back.")
+            )
+        }
+    }
+
     /// What the screen says when basal was stopped inside the fast and it can't be told that was Trio's suspend for a
     /// low.
     static var basalStoppedNote: String {
         String(localized: "Basal was stopped during the fast, and Trio can't tell whether it was for a low.")
     }
 
-    /// How a fast the screen finishes for `reason` at `end` ends, once the history up to then is read. The periodic
-    /// checks run every half minute, and the service's can lose its record to a finish that ends the session while it
-    /// reads, so a low Trio suspended for may not have been seen yet: it still ends the fast as a low, judged up to the
+    /// How a fast the runner finishes for `reason` at `end` ends, once the history up to then is read. The checks run
+    /// only now and then, and the service's can lose its record to a finish that ends the session while it reads, so a
+    /// low Trio suspended for may not have been seen yet: it still ends the fast as a low, judged up to the
     /// suspend. Basal stopped without Trio asking interrupts it at the stop. A fast whose history couldn't be read at
     /// its planned end, read now with nothing in it, completed. A low or an interruption already decided stays.
     static func finishing(
@@ -592,5 +644,63 @@ enum BasalTestEvaluator {
     /// reads as the step itself.
     static func wholePercent(_ share: Decimal) -> Int {
         NSDecimalNumber(decimal: towardZero(share * 100, scale: 0)).intValue
+    }
+
+    /// The sentences under the docs' line on the Result, and the first of them in the notice that a fast ended with no
+    /// verdict. `evaluation` is the finished test's result worked out again (`evaluation(of:)`).
+    static func resultParagraphs(for outcome: BasalTestOutcome, test: BasalTestState, evaluation: Evaluation?) -> [String] {
+        let elapsed = (test.endedAt ?? test.plannedEnd).timeIntervalSince(test.startedAt)
+        let noReadings = String(
+            localized: "No CGM readings were recorded during the fast, so there is no end glucose to compare."
+        )
+        // With readings but no ISF or basal, so there is no rate or share to work out.
+        let noWorking = String(
+            localized: "Trio couldn't read your ISF or basal schedule for these hours, so there is no working to show."
+        )
+        let missingInputs = test.endGlucose != nil && (evaluation?.ratePerHour == nil || evaluation?.share == nil)
+        // A low has no working on purpose: its own card says when Trio suspended.
+        let missingWorking = missingInputs && test.endReason != .low
+        switch outcome {
+        case .steady:
+            return [String(localized: "Glucose moved less than the smallest basal change in Trio docs would explain.")]
+        case .rising:
+            return [String(localized: "A higher basal number gives more insulin.")] + (missingWorking ? [noWorking] : [])
+        case .falling:
+            return [String(localized: "A lower basal number gives less insulin.")]
+                + (test.endGlucose == nil ? [noReadings] : missingWorking ? [noWorking] : [])
+        case .inconclusive:
+            if test.interferenceUnread == true {
+                return [
+                    String(
+                        localized: "Trio couldn't read all its records of carbs, boluses and its own dosing, so it can't tell whether something interrupted this fast."
+                    )
+                ] + (test.endGlucose == nil ? [noReadings] : [])
+            }
+            if test.endReason == .unchecked {
+                return [
+                    String(localized: "Trio couldn't read the pump history to check for a low, so it can't judge this fast.")
+                ] + (test.endGlucose == nil ? [noReadings] : [])
+            }
+            if test.endGlucose == nil {
+                return [noReadings]
+            }
+            guard elapsed < BasalTest.Config.docsShortestFast else {
+                return [
+                    String(
+                        localized: "Trio couldn't read your ISF or basal schedule for these hours, so it can't tell what your basal did."
+                    )
+                ]
+            }
+            return [
+                String(
+                    localized: "The docs say to fast 4–6 hours, and this one ended after \(SettingsTestFormat.duration(elapsed)). That's too soon to trust."
+                )
+            ] + (missingInputs ? [noWorking] : [])
+        case .invalid:
+            return [
+                test.interference
+                    ?? String(localized: "Something changed during the fast, so the result can't be trusted. Try again.")
+            ]
+        }
     }
 }

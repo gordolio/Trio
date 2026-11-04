@@ -106,4 +106,19 @@ enum BasalTest {
     }
 }
 
-protocol BasalTestProvider {}
+/// What the basal screen reads for its steps, beside the runner's fast (`StateModel.refresh`). `BasalTest.Provider`
+/// conforms; a test gives the state model its own (`StateModel.screenReads`).
+protocol BasalTestProvider: AnyObject {
+    func basalEntries() -> [SettingsTestScheduleEntry]
+    /// Newest first.
+    func fetchRecentGlucose(minutes: Int) async throws -> [BasalTestReading]
+    func getCurrentIOB() -> Decimal
+    func getCurrentCOB() async throws -> Decimal
+    func lastCarbEntry(withinHours hours: Int) async throws -> Date?
+    func hasActiveAdjustment() async throws -> Bool
+    func hasPumpSetTempBasal() -> Bool
+    func hasCgmAndPump() -> Bool
+    func fetchNewestDirection() async throws -> BloodGlucose.Direction?
+    func fetchSMBs(since start: Date, until end: Date) async throws -> [BasalTestSMB]
+    func fetchCOBSamples(since start: Date) async throws -> [BasalTestCOBSample]
+}

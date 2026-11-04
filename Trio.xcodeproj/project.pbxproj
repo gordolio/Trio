@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		4CF281AA6BF01154300C30FD /* SettingsTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C199397780667503D6A80251 /* SettingsTestTests.swift */; };
+		CEA5D6471AF0BFCD670E79D1 /* SettingsTestRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C383D69796AE125090F53C99 /* SettingsTestRunnerTests.swift */; };
+		BED2A7C626471F04058A9C0B /* SettingsTestFakes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ABF07C02EC0E5F739963AFF /* SettingsTestFakes.swift */; };
+		55F85D02E2A68230870D7439 /* ISFTestRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA30C3E4C98D0A2694863917 /* ISFTestRunnerTests.swift */; };
+		DF03A3C5B75BD6AAAFF15713 /* BasalTestRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5750639D92F239CE8F9BEE55 /* BasalTestRunnerTests.swift */; };
 		DDF418230AA821E3B36192BE /* BasalTestResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D735FDFCDF087A632A52BAB /* BasalTestResultView.swift */; };
 		AE9B87A7BC5E40F2222136A0 /* BasalTestFastView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCA90C2D5FF77B3EFAA67910 /* BasalTestFastView.swift */; };
 		4917D5EBD1699E2EA5A59434 /* BasalTestCheckView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2025AA0CF7306A0310731747 /* BasalTestCheckView.swift */; };
@@ -17,6 +21,14 @@
 		D547B8AD410F85729F61613F /* BasalTestModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA67704B618B29C4D15300E2 /* BasalTestModels.swift */; };
 		C789970E3F8CF9A01A98F36B /* BasalTestDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEC2305AA2305D82E590BFE /* BasalTestDataFlow.swift */; };
 		90BF9CAB4E8FDFDE72837D98 /* SettingsTestService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AC769839F86616934537D1F /* SettingsTestService.swift */; };
+		68EB6700AAA06636A8E462F5 /* SettingsTestScreenOpener.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50504B8E11575E1AC027F79E /* SettingsTestScreenOpener.swift */; };
+		5048018EE8F43EC859D2096B /* SettingsTestNotices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33AD408B252B9D7E75397C23 /* SettingsTestNotices.swift */; };
+		4C1A5E7B90D24F6A8B3E0D11 /* SettingsTestLaunchNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C1A5E7B90D24F6A8B3E0D12 /* SettingsTestLaunchNotifications.swift */; };
+		1F9B7BECF18670161353DD17 /* SettingsTestRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F83416BE48E7867322FD78B /* SettingsTestRunner.swift */; };
+		BAEECA912148E96AE3E346E4 /* ISFTestRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CED33D2616B3823ABD0E05 /* ISFTestRunner.swift */; };
+		9622E890E953AA92CDF65717 /* ISFTestRunnerFinish.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1461AAF2A7641A4454E19DE /* ISFTestRunnerFinish.swift */; };
+		537105DB823AB66CCBA75552 /* ISFTestRunnerTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD70C0ECE11764091C7D8E00 /* ISFTestRunnerTypes.swift */; };
+		B97B44D43E65BD0AAA07FAB5 /* BasalTestRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0654B4FB207E54389B36753 /* BasalTestRunner.swift */; };
 		D99B13574381DBEF6C3767F0 /* SettingsTestComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A8434013F3CEEB0F1BDAF4 /* SettingsTestComponents.swift */; };
 		DB7704850C606DF3581FE9E4 /* SettingsTestFormula.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30A2E15C840E27948CB4FAA8 /* SettingsTestFormula.swift */; };
 		B4AD88A52448D8A1B45ABB5D /* SettingsTestRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B02FF2B93B6A53371CD05A5 /* SettingsTestRootView.swift */; };
@@ -1289,6 +1301,7 @@
 		FF42480CF46A31D00C817D8C /* WatchLogEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5D79872B74ADDBDD11682D0 /* WatchLogEntry.swift */; };
 		F55991797422E8041156542A /* ISFTestDataFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 690937810CF92A7854AD6690 /* ISFTestDataFlow.swift */; };
 		B8F367280DFB7EA1B72271B5 /* ISFTestModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E709D1659E9FCF6062F460D7 /* ISFTestModels.swift */; };
+		304A27D210F1772A2AAEA659 /* ISFTestRunnerRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C6798FC63969F4C39B531F /* ISFTestRunnerRules.swift */; };
 		E03A3F7B9ECEE868BD689C25 /* ISFTestTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD7B1AE713A04968126F65E3 /* ISFTestTests.swift */; };
 		6C072C855284499A2DD8D126 /* ISFTestProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63C97A06A6B2B37F0630332E /* ISFTestProvider.swift */; };
 		E6C729F78BCF1BC4DFD18E16 /* ISFTestStateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBDC53971EE229ED409658FC /* ISFTestStateModel.swift */; };
@@ -1418,6 +1431,10 @@
 
 /* Begin PBXFileReference section */
 		C199397780667503D6A80251 /* SettingsTestTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestTests.swift; sourceTree = "<group>"; };
+		C383D69796AE125090F53C99 /* SettingsTestRunnerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestRunnerTests.swift; sourceTree = "<group>"; };
+		6ABF07C02EC0E5F739963AFF /* SettingsTestFakes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestFakes.swift; sourceTree = "<group>"; };
+		BA30C3E4C98D0A2694863917 /* ISFTestRunnerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestRunnerTests.swift; sourceTree = "<group>"; };
+		5750639D92F239CE8F9BEE55 /* BasalTestRunnerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestRunnerTests.swift; sourceTree = "<group>"; };
 		1D735FDFCDF087A632A52BAB /* BasalTestResultView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestResultView.swift; sourceTree = "<group>"; };
 		FCA90C2D5FF77B3EFAA67910 /* BasalTestFastView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestFastView.swift; sourceTree = "<group>"; };
 		2025AA0CF7306A0310731747 /* BasalTestCheckView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestCheckView.swift; sourceTree = "<group>"; };
@@ -1427,6 +1444,14 @@
 		CA67704B618B29C4D15300E2 /* BasalTestModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestModels.swift; sourceTree = "<group>"; };
 		7CEC2305AA2305D82E590BFE /* BasalTestDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestDataFlow.swift; sourceTree = "<group>"; };
 		6AC769839F86616934537D1F /* SettingsTestService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestService.swift; sourceTree = "<group>"; };
+		50504B8E11575E1AC027F79E /* SettingsTestScreenOpener.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestScreenOpener.swift; sourceTree = "<group>"; };
+		33AD408B252B9D7E75397C23 /* SettingsTestNotices.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestNotices.swift; sourceTree = "<group>"; };
+		4C1A5E7B90D24F6A8B3E0D12 /* SettingsTestLaunchNotifications.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestLaunchNotifications.swift; sourceTree = "<group>"; };
+		0F83416BE48E7867322FD78B /* SettingsTestRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestRunner.swift; sourceTree = "<group>"; };
+		A5CED33D2616B3823ABD0E05 /* ISFTestRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestRunner.swift; sourceTree = "<group>"; };
+		F1461AAF2A7641A4454E19DE /* ISFTestRunnerFinish.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestRunnerFinish.swift; sourceTree = "<group>"; };
+		AD70C0ECE11764091C7D8E00 /* ISFTestRunnerTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestRunnerTypes.swift; sourceTree = "<group>"; };
+		D0654B4FB207E54389B36753 /* BasalTestRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BasalTestRunner.swift; sourceTree = "<group>"; };
 		02A8434013F3CEEB0F1BDAF4 /* SettingsTestComponents.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestComponents.swift; sourceTree = "<group>"; };
 		30A2E15C840E27948CB4FAA8 /* SettingsTestFormula.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestFormula.swift; sourceTree = "<group>"; };
 		6B02FF2B93B6A53371CD05A5 /* SettingsTestRootView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SettingsTestRootView.swift; sourceTree = "<group>"; };
@@ -2675,6 +2700,7 @@
 		226C7FB74E50839187288FD3 /* AIRequestSharedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestSharedTests.swift; sourceTree = "<group>"; };
 		690937810CF92A7854AD6690 /* ISFTestDataFlow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestDataFlow.swift; sourceTree = "<group>"; };
 		E709D1659E9FCF6062F460D7 /* ISFTestModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestModels.swift; sourceTree = "<group>"; };
+		B2C6798FC63969F4C39B531F /* ISFTestRunnerRules.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestRunnerRules.swift; sourceTree = "<group>"; };
 		DD7B1AE713A04968126F65E3 /* ISFTestTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestTests.swift; sourceTree = "<group>"; };
 		63C97A06A6B2B37F0630332E /* ISFTestProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestProvider.swift; sourceTree = "<group>"; };
 		CBDC53971EE229ED409658FC /* ISFTestStateModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ISFTestStateModel.swift; sourceTree = "<group>"; };
@@ -2819,6 +2845,7 @@
 				CBDC53971EE229ED409658FC /* ISFTestStateModel.swift */,
 				63C97A06A6B2B37F0630332E /* ISFTestProvider.swift */,
 				E709D1659E9FCF6062F460D7 /* ISFTestModels.swift */,
+				B2C6798FC63969F4C39B531F /* ISFTestRunnerRules.swift */,
 				690937810CF92A7854AD6690 /* ISFTestDataFlow.swift */,
 			);
 			path = ISFTest;
@@ -2840,6 +2867,14 @@
 			isa = PBXGroup;
 			children = (
 				6AC769839F86616934537D1F /* SettingsTestService.swift */,
+				50504B8E11575E1AC027F79E /* SettingsTestScreenOpener.swift */,
+				33AD408B252B9D7E75397C23 /* SettingsTestNotices.swift */,
+				4C1A5E7B90D24F6A8B3E0D12 /* SettingsTestLaunchNotifications.swift */,
+				0F83416BE48E7867322FD78B /* SettingsTestRunner.swift */,
+				A5CED33D2616B3823ABD0E05 /* ISFTestRunner.swift */,
+				F1461AAF2A7641A4454E19DE /* ISFTestRunnerFinish.swift */,
+				AD70C0ECE11764091C7D8E00 /* ISFTestRunnerTypes.swift */,
+				D0654B4FB207E54389B36753 /* BasalTestRunner.swift */,
 			);
 			path = SettingsTest;
 			sourceTree = "<group>";
@@ -4186,6 +4221,10 @@
 			isa = PBXGroup;
 			children = (
 				C199397780667503D6A80251 /* SettingsTestTests.swift */,
+				C383D69796AE125090F53C99 /* SettingsTestRunnerTests.swift */,
+				6ABF07C02EC0E5F739963AFF /* SettingsTestFakes.swift */,
+				BA30C3E4C98D0A2694863917 /* ISFTestRunnerTests.swift */,
+				5750639D92F239CE8F9BEE55 /* BasalTestRunnerTests.swift */,
 				DD7B1AE713A04968126F65E3 /* ISFTestTests.swift */,
 				C3D4E5F6071829304152637A /* OpenAIStreamingParserTests.swift */,
 				E90100000000000000000002 /* ImageRoutingCoordinatorTests.swift */,
@@ -6411,6 +6450,7 @@
 				C789970E3F8CF9A01A98F36B /* BasalTestDataFlow.swift in Sources */,
 				F55991797422E8041156542A /* ISFTestDataFlow.swift in Sources */,
 				B8F367280DFB7EA1B72271B5 /* ISFTestModels.swift in Sources */,
+				304A27D210F1772A2AAEA659 /* ISFTestRunnerRules.swift in Sources */,
 				6C072C855284499A2DD8D126 /* ISFTestProvider.swift in Sources */,
 				E6C729F78BCF1BC4DFD18E16 /* ISFTestStateModel.swift in Sources */,
 				171CD5B011BFFDD9E465A064 /* ISFTestRootView.swift in Sources */,
@@ -6422,6 +6462,14 @@
 				ACA2F59CB7029BAFE9785206 /* ISFTestResultView.swift in Sources */,
 				EA9692704720214BFDE6665A /* ISFTestWaitingCards.swift in Sources */,
 				90BF9CAB4E8FDFDE72837D98 /* SettingsTestService.swift in Sources */,
+				68EB6700AAA06636A8E462F5 /* SettingsTestScreenOpener.swift in Sources */,
+				5048018EE8F43EC859D2096B /* SettingsTestNotices.swift in Sources */,
+				4C1A5E7B90D24F6A8B3E0D11 /* SettingsTestLaunchNotifications.swift in Sources */,
+				1F9B7BECF18670161353DD17 /* SettingsTestRunner.swift in Sources */,
+				BAEECA912148E96AE3E346E4 /* ISFTestRunner.swift in Sources */,
+				9622E890E953AA92CDF65717 /* ISFTestRunnerFinish.swift in Sources */,
+				537105DB823AB66CCBA75552 /* ISFTestRunnerTypes.swift in Sources */,
+				B97B44D43E65BD0AAA07FAB5 /* BasalTestRunner.swift in Sources */,
 				D99B13574381DBEF6C3767F0 /* SettingsTestComponents.swift in Sources */,
 				DB7704850C606DF3581FE9E4 /* SettingsTestFormula.swift in Sources */,
 				B4AD88A52448D8A1B45ABB5D /* SettingsTestRootView.swift in Sources */,
@@ -7300,6 +7348,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				4CF281AA6BF01154300C30FD /* SettingsTestTests.swift in Sources */,
+				CEA5D6471AF0BFCD670E79D1 /* SettingsTestRunnerTests.swift in Sources */,
+				BED2A7C626471F04058A9C0B /* SettingsTestFakes.swift in Sources */,
+				55F85D02E2A68230870D7439 /* ISFTestRunnerTests.swift in Sources */,
+				DF03A3C5B75BD6AAAFF15713 /* BasalTestRunnerTests.swift in Sources */,
 				E03A3F7B9ECEE868BD689C25 /* ISFTestTests.swift in Sources */,
 				F6EFB29AC67EA83925647CFC /* AIRequestSharedTests.swift in Sources */,
 				6B386C900A0258AFCF7A456D /* AIRequestWatchFlowControllerTests.swift in Sources */,

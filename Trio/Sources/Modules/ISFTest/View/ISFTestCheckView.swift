@@ -82,7 +82,7 @@ extension ISFTest {
         // MARK: - Insulin on board
 
         /// Why insulin on board over the line matters, with the line in blue because it comes from the user's settings,
-        /// and the two ways to handle it, the docs' way first and picked.
+        /// and the two ways to handle it, Wait for It first and picked.
         private func iobChoiceCard(line: Decimal, dose: Decimal) -> some View {
             let lineText = Text(verbatim: state.lineText(line)).foregroundStyle(Color.accentColor)
             // The card shows only for a choice, which needs insulin on board read.
@@ -92,10 +92,10 @@ extension ISFTest {
             let held = current < 0
             let explanation = held
                 ? Text(
-                    "Your insulin on board is \(iob): Trio held back basal recently. The test's dose is about \(doseText), and more than \(lineText) either way (\(state.stepPercent)% of it, the docs' smallest ISF change) can sway the result."
+                    "Your insulin on board is \(iob): Trio held back basal recently. The test's dose is about \(doseText), and more than \(lineText) either way (\(state.stepPercent)% of it, the smallest ISF change in Trio docs) can sway the result."
                 )
                 : Text(
-                    "\(iob) is still working from an earlier dose or SMB. The test's dose is about \(doseText), and more than \(lineText) on board (\(state.stepPercent)% of it, the docs' smallest ISF change) can sway the result."
+                    "\(iob) is still working from an earlier dose or SMB. The test's dose is about \(doseText), and more than \(lineText) on board (\(state.stepPercent)% of it, the smallest ISF change in Trio docs) can sway the result."
                 )
             let waitDetail = held
                 ? Text(
@@ -114,13 +114,11 @@ extension ISFTest {
                     .accessibilityAddTraits(.isHeader)
                 IOBOption(
                     title: Text("Wait for It"),
-                    badge: Text("The docs' way"),
                     detail: waitDetail,
                     isSelected: state.iobChoice == .wait
                 ) { state.iobChoice = .wait }
                 IOBOption(
                     title: Text("Count It"),
-                    badge: nil,
                     detail: Text("Begin now. Your dose takes off what's on board, and the result counts it with your bolus."),
                     isSelected: state.iobChoice == .count
                 ) { state.iobChoice = .count }
@@ -185,16 +183,13 @@ extension ISFTest {
         }
     }
 
-    /// One way to handle insulin on board: a selectable row with its title, an optional badge and what it does, picked
-    /// with a filled circle and an accent outline, as the tablet brands are.
+    /// One way to handle insulin on board: a selectable row with its title and what it does, picked with a filled circle
+    /// and an accent outline, as the tablet brands are.
     private struct IOBOption: View {
         let title: Text
-        let badge: Text?
         let detail: Text
         let isSelected: Bool
         let select: () -> Void
-
-        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
         var body: some View {
             Button(action: select) {
@@ -204,27 +199,9 @@ extension ISFTest {
                         .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        if dynamicTypeSize.isAccessibilitySize {
-                            // A capsule wraps its words inside it here, so the badge is a line of its own under the title.
-                            titleText
-                            if let badge {
-                                badge
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(Self.badgeText)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        } else {
-                            ViewThatFits(in: .horizontal) {
-                                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                    titleText
-                                    badgeView
-                                }
-                                VStack(alignment: .leading, spacing: 4) {
-                                    titleText
-                                    badgeView
-                                }
-                            }
-                        }
+                        title
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.primary)
                         detail
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -243,31 +220,6 @@ extension ISFTest {
             .buttonStyle(.plain)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        }
-
-        private var titleText: some View {
-            title
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.primary)
-        }
-
-        /// The darker blue the secondary buttons' text uses on the same tinted fill, 4.5:1 or more in both modes; the tint
-        /// itself measured under 3:1 in light mode.
-        private static var badgeText: Color {
-            Color(uiColor: SettingsTestSecondaryButtonStyle.textColor)
-        }
-
-        @ViewBuilder private var badgeView: some View {
-            if let badge {
-                badge
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Self.badgeText)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(Color.accentColor.opacity(0.15), in: Capsule())
-            }
         }
     }
 }

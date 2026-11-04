@@ -3,7 +3,7 @@ import Foundation
 import Swinject
 
 extension BasalTest {
-    final class Provider: BaseProvider, BasalTestProvider {
+    final class Provider: BaseProvider, BasalTestProvider, BasalTestReads {
         @Injected() var iobService: IOBService!
         @Injected() var determinationStorage: DeterminationStorage!
         @Injected() var fetchGlucoseManager: FetchGlucoseManager!

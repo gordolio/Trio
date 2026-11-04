@@ -149,7 +149,7 @@ enum SettingsTestRestoreAction: JSON, Equatable {
     /// The dosing mode to put back as this action's session ends, with `current` the mode in force then: the previous
     /// mode while the test's mode is on, however it got there (never left, or left and picked again before the end), and
     /// nil while any other mode is on, because the user chose it. Every end path uses it: the service's watchdog, its
-    /// expiry, ending by kind, and a screen ending a session the service lost.
+    /// expiry, ending by kind, and a runner ending a session the service lost.
     func modeToRestore(current: DosingMode) -> DosingMode? {
         switch self {
         case let .dosingMode(testMode, previous):
@@ -158,12 +158,38 @@ enum SettingsTestRestoreAction: JSON, Equatable {
     }
 }
 
-/// What a test's screens say about the dosing mode once its session has ended.
+/// What a test's screen says, and its runner does, about the dosing mode once its session has ended.
 enum SettingsTestModeRule {
     /// Whether Basal Testing is on with no test running it, so a Result says so ("Basal Testing is still on…") rather
     /// than that the usual dosing came back.
     static func basalTestingLeftOn(mode: DosingMode, activeSessionID: UUID?) -> Bool {
         mode == .basalTesting && activeSessionID == nil
+    }
+
+    /// The dosing mode a test's runner puts back itself as it ends the test, or nil to leave it: only while Basal
+    /// Testing is still on and the test's session is lost, with no session running and no end of it kept by the service
+    /// (`lastEndSessionID`), so nothing else will bring the usual mode back. A session that runs puts its own back (or,
+    /// another test's, owns Basal Testing); one the service ended put it back then, or, once the user had picked a mode
+    /// of their own, left it theirs (`SettingsTestEndCause.modeChanged`). A test with no session never switched modes.
+    static func modeToRestore(
+        mode: DosingMode,
+        testSessionID: UUID?,
+        activeSessionID: UUID?,
+        lastEndSessionID: UUID?,
+        previousMode: DosingMode
+    ) -> DosingMode? {
+        guard let testSessionID, activeSessionID == nil, lastEndSessionID != testSessionID else { return nil }
+        // The rule every end path uses: Basal Testing on, the usual mode comes back; any other mode is the user's.
+        return SettingsTestRestoreAction.dosingMode(testMode: .basalTesting, previous: previousMode).modeToRestore(current: mode)
+    }
+}
+
+/// When a runner ends a test.
+enum SettingsTestEndRule {
+    /// When a finish ends the test: `endedAt` when a check gave one, now otherwise, never after `limit` (the planned end,
+    /// or the no-bolus deadline before the bolus) and never after now, so a test never ends in the future.
+    static func endTime(endedAt: Date?, limit: Date, now: Date) -> Date {
+        min(endedAt ?? now, limit, now)
     }
 }
 
@@ -215,8 +241,8 @@ enum SettingsTestEndCause: String, JSON, Equatable {
     case pumpInterrupted
 }
 
-/// What the service keeps when it ends a test on its own, so the test's screen, opened later, finishes it for the same
-/// reason. By then the usual dosing mode is back, and without this a mode the user changed couldn't be told from a low.
+/// What the service keeps when it ends a test on its own, so the test's runner finishes it for the same reason. By then
+/// the usual dosing mode is back, and without this a mode the user changed couldn't be told from a low.
 struct SettingsTestEnd: JSON, Equatable {
     var sessionID: UUID
     var cause: SettingsTestEndCause

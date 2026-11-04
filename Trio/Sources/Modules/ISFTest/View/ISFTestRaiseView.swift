@@ -182,7 +182,11 @@ extension ISFTest {
         /// After the tablets: the CGM's arrow and the last readings, until glucose has risen from them and the arrow is
         /// flat (or the CGM gives none).
         private var levelingCard: some View {
-            LevelingCard(state: state, status: levelingStatus)
+            LevelingCard(
+                state: state,
+                title: ISFTestEvaluator.levelingTitle(phase: state.test?.phase ?? .raising, tabletsActed: state.tabletsActed),
+                status: levelingStatus
+            )
         }
 
         /// What the readings mean for the dose, once there is a recent reading: carbs on board read as none, then glucose

@@ -1,0 +1,1758 @@
+import Combine
+import Foundation
+import SwiftUI
+import Testing
+import UserNotifications
+
+@testable import Trio
+
+// MARK: - Runners for the runtime tests
+
+/// An idle runner that calls `onRead` with the number of reads of `isRunning` so far once armed, so a test can act in
+/// the middle of the service's idle check.
+private final class ProbingRunner: SettingsTestRunner {
+    let kind: SettingsTestKind
+    private let lock = NSLock()
+    private var reads = 0
+    private var onRead: ((Int) -> Void)?
+
+    init(kind: SettingsTestKind) {
+        self.kind = kind
+    }
+
+    func arm(_ onRead: @escaping (Int) -> Void) {
+        lock.withLock {
+            reads = 0
+            self.onRead = onRead
+        }
+    }
+
+    var isRunning: Bool {
+        let (read, hook) = lock.withLock { () -> (Int, ((Int) -> Void)?) in
+            reads += 1
+            return (reads, onRead)
+        }
+        hook?(read)
+        return false
+    }
+
+    func check() async {}
+}
+
+/// A runner a test sets running, whose check waits at a gate until the test opens it, counting the checks that got in.
+private final class GatedRunner: SettingsTestRunner {
+    let kind: SettingsTestKind
+    private let lock = NSLock()
+    private var _running = false
+    private var _entered = 0
+    private var gateOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(kind: SettingsTestKind) {
+        self.kind = kind
+    }
+
+    var running: Bool {
+        get { lock.withLock { _running } }
+        set { lock.withLock { _running = newValue } }
+    }
+
+    var isRunning: Bool { running }
+    var entered: Int { lock.withLock { _entered } }
+
+    func check() async {
+        lock.withLock { _entered += 1 }
+        await withCheckedContinuation { continuation in
+            let passes = lock.withLock { () -> Bool in
+                if gateOpen { return true }
+                waiters.append(continuation)
+                return false
+            }
+            if passes { continuation.resume() }
+        }
+    }
+
+    /// Lets the checks waiting go, and every later one straight through.
+    func openGate() {
+        let released = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            gateOpen = true
+            defer { waiters = [] }
+            return waiters
+        }
+        released.forEach { $0.resume() }
+    }
+}
+
+// MARK: - Runtime
+
+@Suite("Settings test runtime", .serialized, .settingsTestFiles) struct SettingsTestRuntimeTests {
+    /// A basal test in Basal Testing that began `startedAt`, with an hour left.
+    private func basalSession(startedAt: Date) -> SettingsTestSession {
+        SettingsTestSession(
+            kind: .basal,
+            startedAt: startedAt,
+            expiresAt: Date().addingTimeInterval(3600),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )
+    }
+
+    /// On a whole second, so the kept record reads back exactly.
+    private var anHourAgo: Date {
+        Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 3600).rounded(.down))
+    }
+
+    private func cleanUp(_ storage: FileStorage) {
+        storage.remove("trio/settings_test_session.json")
+        storage.remove("trio/settings_test_history.json")
+        storage.remove("trio/settings_test_last_end.json")
+    }
+
+    @Test("A running runner's check starts after the watchdog's own end, from the same check") func runnerAfterWatchdog() async throws {
+        let data = FakeSettingsTestData()
+        let startedAt = anHourAgo
+        var built: FakeSettingsTestRunner?
+        // Running at init, so the startup check includes it. The low suspend is added after that check has run, so it finds
+        // nothing.
+        let harness = makeTestService(
+            mode: .basalTesting,
+            existing: basalSession(startedAt: startedAt),
+            data: data,
+            runners: { context, _ in
+                let runner = FakeSettingsTestRunner(kind: .basal, service: context.service, running: true)
+                built = runner
+                return [runner]
+            }
+        )
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+
+        #expect(await eventually { runner.checks >= 1 })
+        let before = runner.checks
+        data.trioSuspends(at: startedAt.addingTimeInterval(600))
+        await harness.service.checkSessionAndRunners()
+        #expect(harness.service.activeSession == nil)
+        #expect(runner.checks == before + 1)
+        #expect(runner.lastEndSeen?.cause == .low)
+    }
+
+    @Test("A runner still running is checked with no session; an idle one is not") func runnerWithoutSession() async {
+        var built: [FakeSettingsTestRunner] = []
+        // Nothing on disk and both fakes idle at init, so there is no startup check.
+        let harness = makeTestService(runners: { context, _ in
+            built = [
+                FakeSettingsTestRunner(kind: .basal, service: context.service),
+                FakeSettingsTestRunner(kind: .isf, service: context.service)
+            ]
+            return built
+        })
+        defer { cleanUp(harness.storage) }
+        let running = built[0]
+        let idle = built[1]
+
+        running.running = true
+        await harness.service.checkSessionAndRunners()
+        #expect(running.checks == 1)
+        #expect(idle.checks == 0)
+    }
+
+    @Test("The service gives each kind's runner, and none for a kind without one") func runnerForKind() {
+        var built: FakeSettingsTestRunner?
+        let harness = makeTestService(runners: { context, _ in
+            let runner = FakeSettingsTestRunner(kind: .isf, service: context.service)
+            built = runner
+            return [runner]
+        })
+        defer { cleanUp(harness.storage) }
+
+        #expect(harness.service.runner(for: .isf) === built)
+        #expect(harness.service.runner(for: .basal) == nil)
+        #expect(harness.service.runner(for: .carbRatio) == nil)
+    }
+
+    @Test("Data changes check a running test once, after the debounce") func dataChangeChecksOnce() async throws {
+        let triggers = PassthroughSubject<Void, Never>()
+        var built: FakeSettingsTestRunner?
+        // Nothing on disk and the fake idle at init, so there is no startup check.
+        let harness = makeTestService(
+            triggers: triggers.eraseToAnyPublisher(),
+            triggerDebounce: .milliseconds(50),
+            runners: { context, _ in
+                let runner = FakeSettingsTestRunner(kind: .basal, service: context.service)
+                built = runner
+                return [runner]
+            }
+        )
+        defer {
+            harness.service.end(kind: .basal)
+            cleanUp(harness.storage)
+        }
+        let runner = try #require(built)
+
+        harness.service.begin(kind: .basal, expiresIn: 3600, restoring: [])
+        runner.running = true
+        triggers.send(())
+        triggers.send(())
+        triggers.send(())
+        #expect(await eventually { runner.checks == 1 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(runner.checks == 1)
+    }
+
+    @Test("A pump history, glucose, determination or carbs change is a trigger; another isn't") func triggerEntities() {
+        for name in ["GlucoseStored", "OrefDetermination", "PumpEventStored", "CarbEntryStored"] {
+            #expect(SettingsTestRuntime.triggersCheck(entityNames: [name]))
+        }
+        #expect(SettingsTestRuntime.triggersCheck(entityNames: ["OverrideStored", "PumpEventStored"]))
+        #expect(!SettingsTestRuntime.triggersCheck(entityNames: ["OverrideStored"]))
+        #expect(!SettingsTestRuntime.triggersCheck(entityNames: [nil]))
+        #expect(!SettingsTestRuntime.triggersCheck(entityNames: []))
+    }
+
+    @Test("Data changes with nothing running check nothing") func dataChangeIdle() async throws {
+        let triggers = PassthroughSubject<Void, Never>()
+        var built: FakeSettingsTestRunner?
+        let harness = makeTestService(
+            triggers: triggers.eraseToAnyPublisher(),
+            triggerDebounce: .milliseconds(50),
+            runners: { context, _ in
+                let runner = FakeSettingsTestRunner(kind: .basal, service: context.service)
+                built = runner
+                return [runner]
+            }
+        )
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+
+        // Running only now, after the service started with nothing to watch, so the watchdog is off: a data change must
+        // not check it, which only the service's own `isWatching` guard stops.
+        #expect(!harness.service.isWatching)
+        runner.running = true
+        triggers.send(())
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(runner.checks == 0)
+        #expect(!harness.service.isWatching)
+    }
+
+    @Test("A session recovered at launch checks its runner") func launchChecks() async throws {
+        var built: FakeSettingsTestRunner?
+        let harness = makeTestService(
+            mode: .basalTesting,
+            existing: basalSession(startedAt: anHourAgo),
+            runners: { context, _ in
+                let runner = FakeSettingsTestRunner(kind: .basal, service: context.service, running: true)
+                built = runner
+                return [runner]
+            }
+        )
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+
+        #expect(await eventually { runner.checks >= 1 })
+        #expect(harness.service.isWatching)
+    }
+
+    @Test("A runner running at launch with no session starts the watchdog and checks") func launchChecksRunnerWithoutSession() async throws {
+        var built: FakeSettingsTestRunner?
+        let harness = makeTestService(runners: { context, _ in
+            let runner = FakeSettingsTestRunner(kind: .isf, service: context.service, running: true)
+            built = runner
+            return [runner]
+        })
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+
+        #expect(await eventually { runner.checks >= 1 })
+        // Still running, so the watchdog goes on.
+        #expect(harness.service.isWatching)
+    }
+
+    @Test("The watchdog runs while a runner runs after its session ended, and stops when nothing runs") func watchdogLife() async throws {
+        var built: FakeSettingsTestRunner?
+        let harness = makeTestService(runners: { context, _ in
+            let runner = FakeSettingsTestRunner(kind: .basal, service: context.service)
+            built = runner
+            return [runner]
+        })
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+
+        harness.service.begin(kind: .basal, expiresIn: 3600, restoring: [])
+        runner.running = true
+        #expect(harness.service.isWatching)
+
+        harness.service.end(kind: .basal)
+        await harness.service.checkSessionAndRunners()
+        #expect(harness.service.isWatching)
+
+        runner.running = false
+        await harness.service.checkSession()
+        #expect(!harness.service.isWatching)
+    }
+
+    @Test("The watchdog keeps running for a live session, with no runner or an idle one") func watchdogStaysWithASession() async throws {
+        for withIdleRunner in [false, true] {
+            let harness = makeTestService(runners: { context, _ in
+                withIdleRunner ? [FakeSettingsTestRunner(kind: .basal, service: context.service)] : []
+            })
+            defer { cleanUp(harness.storage) }
+
+            harness.service.begin(kind: .basal, expiresIn: 3600, restoring: [])
+            #expect(harness.service.isWatching)
+            await harness.service.checkSession()
+            #expect(harness.service.activeSession != nil)
+            #expect(harness.service.isWatching, "idle runner: \(withIdleRunner)")
+
+            harness.service.end(kind: .basal)
+            await harness.service.checkSession()
+            #expect(!harness.service.isWatching, "idle runner: \(withIdleRunner)")
+        }
+    }
+
+    @Test("The idle check can't stop the watchdog of a session that begins while it checks") func beginDuringTheIdleCheck() async throws {
+        var built: ProbingRunner?
+        let harness = makeTestService(runners: { _, _ in
+            let runner = ProbingRunner(kind: .basal)
+            built = runner
+            return [runner]
+        })
+        let service = harness.service
+        defer {
+            service.end(kind: .basal)
+            cleanUp(harness.storage)
+        }
+        let runner = try #require(built)
+
+        // With no session `checkSession` reads `isRunning` twice: for the runners to check, then in the idle check, after
+        // it saw no session. A session begun on another thread right then must keep its watchdog.
+        runner.arm { read in
+            guard read == 2 else { return }
+            Thread.detachNewThread { service.begin(kind: .basal, expiresIn: 3600, restoring: []) }
+            let deadline = Date().addingTimeInterval(2)
+            while service.activeSession == nil, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.001)
+            }
+            // Long enough for `begin` to reach its watchdog start, if nothing holds it back.
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        await service.checkSession()
+        #expect(await eventually { service.activeSession != nil })
+        #expect(await eventually { service.isWatching })
+    }
+
+    @Test(
+        "A runner's checks asked for while one runs make one more run of it, however many were asked"
+    ) func backgroundChecksCoalesce() async throws {
+        var built: GatedRunner?
+        let harness = makeTestService(runners: { _, _ in
+            let runner = GatedRunner(kind: .basal)
+            built = runner
+            return [runner]
+        })
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+
+        runner.running = true
+        harness.service.checkSessionInBackground()
+        #expect(await eventually { runner.entered == 1 })
+        // The first is held at the gate: three more come in meanwhile.
+        harness.service.checkSessionInBackground()
+        harness.service.checkSessionInBackground()
+        harness.service.checkSessionInBackground()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(runner.entered == 1)
+
+        runner.openGate()
+        #expect(await eventually { runner.entered == 2 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(runner.entered == 2)
+        runner.running = false
+    }
+
+    /// What ends the session while a runner's check hangs.
+    enum HungRunnerEnding: CaseIterable {
+        case expiry
+        case low
+        case carbs
+    }
+
+    /// What asks the service to check: its watchdog's tick, or a change of the data a test reads.
+    enum CheckCall: CaseIterable {
+        case tick
+        case dataChange
+    }
+
+    @Test(
+        "A runner check that never returns can't stop the service ending a session and bringing the usual mode back",
+        arguments: HungRunnerEnding.allCases, CheckCall.allCases
+    ) func hungRunnerCheck(_ ending: HungRunnerEnding, _ call: CheckCall) async throws {
+        let data = FakeSettingsTestData()
+        let triggers = PassthroughSubject<Void, Never>()
+        let startedAt = anHourAgo
+        var session = basalSession(startedAt: startedAt)
+        if ending == .expiry {
+            // Past its deadline only after the launch check has run.
+            session.expiresAt = Date().addingTimeInterval(1)
+        }
+        var built: GatedRunner?
+        let harness = makeTestService(
+            mode: .basalTesting,
+            existing: session,
+            data: data,
+            triggers: triggers.eraseToAnyPublisher(),
+            runners: { _, _ in
+                // Running at init, so the launch check reaches it, and its check waits at a gate this test never opens: a
+                // stuck Core Data read, say.
+                let runner = GatedRunner(kind: .basal)
+                runner.running = true
+                built = runner
+                return [runner]
+            }
+        )
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+        // Let go only once the test is over, so nothing is left waiting.
+        defer {
+            runner.running = false
+            runner.openGate()
+        }
+
+        #expect(await eventually { runner.entered == 1 })
+        // The launch check's own reads found nothing to end the session.
+        #expect(harness.service.activeSession != nil)
+        switch ending {
+        case .expiry:
+            while Date() < session.expiresAt {
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        case .low:
+            data.trioSuspends(at: startedAt.addingTimeInterval(600))
+        case .carbs:
+            data.carbs = [startedAt.addingTimeInterval(600)]
+        }
+        switch call {
+        case .tick:
+            // What the watchdog's timer calls, on the main thread.
+            await MainActor.run { harness.service.watchdogTick() }
+        case .dataChange:
+            triggers.send(())
+        }
+
+        #expect(await eventually { harness.service.activeSession == nil })
+        #expect(harness.settings.settings.dosingMode == .closed)
+        switch ending {
+        case .expiry: #expect(harness.service.lastEnd() == nil)
+        case .low: #expect(harness.service.lastEnd()?.cause == .low)
+        case .carbs: #expect(harness.service.lastEnd()?.cause == .carbsLogged)
+        }
+        // The stuck check is still the only one: the service asked it for one more run, and piled up nothing.
+        #expect(runner.entered == 1)
+    }
+
+    @Test(
+        "A read of the service's own that never returns can't hold back the expiry restore",
+        arguments: CheckCall.allCases
+    ) func stuckOwnReadExpiry(_ call: CheckCall) async throws {
+        let data = FakeSettingsTestData()
+        let triggers = PassthroughSubject<Void, Never>()
+        // Every read of the temp basals, the service's first, waits at a gate this test never opens: a stuck Core Data read
+        // on the service's own context, say.
+        let gate = TestGate()
+        data.onTempBasals = { await gate.pass() }
+        // Past its deadline already: the launch check, low first, is held at its read before it reaches the expiry check.
+        var session = basalSession(startedAt: anHourAgo)
+        session.expiresAt = Date().addingTimeInterval(-60)
+        let harness = makeTestService(
+            mode: .basalTesting,
+            existing: session,
+            data: data,
+            triggers: triggers.eraseToAnyPublisher()
+        )
+        defer { cleanUp(harness.storage) }
+        // Let go only once the test is over, so nothing is left waiting.
+        defer { gate.open() }
+
+        #expect(await eventually { gate.waiting == 1 })
+        #expect(harness.service.activeSession != nil)
+        switch call {
+        case .tick:
+            // What the watchdog's timer calls, on the main thread.
+            await MainActor.run { harness.service.watchdogTick() }
+        case .dataChange:
+            triggers.send(())
+        }
+
+        #expect(await eventually { harness.service.activeSession == nil })
+        #expect(harness.settings.settings.dosingMode == .closed)
+        // Still the one read: the expiry check needed none.
+        #expect(data.tempBasalReads == 1)
+    }
+
+    @Test("The service's own checks run one at a time; calls during one make one more, however many") func ownChecksCoalesce(
+    ) async throws {
+        let data = FakeSettingsTestData()
+        let gate = TestGate()
+        // Held before the service is made, so its launch check waits at its first read.
+        data.onTempBasals = { await gate.pass() }
+        let harness = makeTestService(mode: .basalTesting, existing: basalSession(startedAt: anHourAgo), data: data)
+        defer { cleanUp(harness.storage) }
+
+        #expect(await eventually { gate.waiting == 1 })
+        harness.service.checkSessionInBackground()
+        harness.service.checkSessionInBackground()
+        harness.service.checkSessionInBackground()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(data.tempBasalReads == 1)
+
+        gate.open()
+        #expect(await eventually { data.tempBasalReads == 2 })
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(data.tempBasalReads == 2)
+        #expect(harness.service.activeSession != nil)
+    }
+
+    @Test("The files trait gives each test of its suite its own scope") func filesTraitScopesEachTest() {
+        // Only the per-test scope removes a test's files after it; the suite's scope alone would leave them to the next.
+        #expect(SettingsTestFilesTrait.inTestScope)
+        #expect(SettingsTestFilesTrait.isHeld)
+    }
+
+    @Test("The expiry notice opens its test") func expiryContent() {
+        let content = BaseSettingsTestService.expiryContent(kind: .isf)
+        #expect(content.title == "Test time is up")
+        #expect(content.categoryIdentifier == SettingsTestNotice.category)
+        #expect(content.userInfo[SettingsTestNotice.kindKey] as? String == "isf")
+    }
+
+    @Test("The files trait removes what a test left on disk, passed or not") func filesTraitCleansUp() async throws {
+        struct Failed: Error {}
+        let storage = BaseFileStorage()
+        let test = try #require(Test.current)
+        let fast = BasalTestState(
+            startedAt: Date(),
+            plannedDuration: 3600,
+            startGlucose: 110,
+            startIOB: 0,
+            previousMode: .closed,
+            timeBlock: "Morning"
+        )
+        try await SettingsTestFilesTrait().provideScope(for: test, testCase: Test.Case.current) {
+            storage.save(fast, as: "trio/basal_test_state.json")
+            #expect(storage.retrieve("trio/basal_test_state.json", as: BasalTestState.self) != nil)
+        }
+        #expect(storage.retrieve("trio/basal_test_state.json", as: BasalTestState.self) == nil)
+
+        await #expect(throws: Failed.self) {
+            try await SettingsTestFilesTrait().provideScope(for: test, testCase: Test.Case.current) {
+                storage.save(fast, as: "trio/basal_test_state.json")
+                throw Failed()
+            }
+        }
+        #expect(storage.retrieve("trio/basal_test_state.json", as: BasalTestState.self) == nil)
+    }
+
+    @Test("A test that can't begin says why") func beginErrorMessages() {
+        #expect(SettingsTestBeginError.otherTestRunning.message == "Another settings test is running. Finish it first.")
+        // The Check screen's mode check's own sentence.
+        #expect(
+            SettingsTestBeginError.basalTestingOn.message
+                == "Switch to your usual dosing mode first, so Trio can return you to it"
+        )
+        #expect(
+            SettingsTestBeginError.settingsUnreadable.message
+                == "Trio couldn't read your ISF and glucose target. Check them, then try again."
+        )
+    }
+}
+
+// MARK: - Notices
+
+@Suite("Settings test notices") struct SettingsTestNoticeTests {
+    @Test("Each kind's notices have their own identifiers") func identifiers() {
+        #expect(SettingsTestNotice.finished(.isf).identifier == "Trio.settingsTest.isf.ended")
+        #expect(SettingsTestNotice.finished(.basal).identifier == "Trio.settingsTest.basal.ended")
+    }
+
+    @Test("A finished notice says the result is ready") func finishedCopy() {
+        #expect(SettingsTestNotice.finished(.isf).title == "ISF Test Finished")
+        #expect(SettingsTestNotice.finished(.isf).body == "Your result is ready. Tap to see what your ISF did.")
+        #expect(SettingsTestNotice.finished(.basal).title == "Basal Test Finished")
+        #expect(SettingsTestNotice.finished(.basal).body == "Your result is ready. Tap to see how your basal held up.")
+    }
+
+    @Test("An ended notice gives the sentence, and says the mode is back only when it is") func endedCopy() {
+        let moving = "The bolus came while your glucose was still moving, so the test can't be judged."
+        #expect(SettingsTestNotice.ended(.isf, sentence: moving, modeBack: true).title == "ISF Test Ended")
+        #expect(
+            SettingsTestNotice.ended(.isf, sentence: moving, modeBack: true).body == moving + " Your usual dosing mode is back."
+        )
+        #expect(SettingsTestNotice.ended(.isf, sentence: moving, modeBack: false).body == moving)
+        let restored = "The dosing mode changed during the test, so it has no result. Your usual dosing mode is back."
+        #expect(SettingsTestNotice.ended(.isf, sentence: restored, modeBack: true).body == restored)
+        #expect(
+            SettingsTestNotice.ended(.basal, sentence: "Carbs were logged during the fast.", modeBack: true).title
+                == "Basal Test Ended"
+        )
+    }
+
+    @Test("A notice's content carries its category and kind") func content() {
+        let content = SettingsTestNotifier.content(for: .finished(.basal))
+        #expect(content.categoryIdentifier == "Trio.settingsTest")
+        #expect(content.userInfo["settingsTestKind"] as? String == "basal")
+    }
+
+    @Test(
+        "Posting a notice withdraws the legacy finished notifications and adds its own, delivered at once"
+    ) func postWithdrawsLegacy() {
+        let center = RecordingNotificationCenter()
+        let notifier = SettingsTestNotifier(center: center)
+        notifier.post(.finished(.isf))
+        #expect(Set(center.removedPending).isSuperset(of: ["Trio.isfTestFinished", "Trio.basalTestFinished"]))
+        #expect(Set(center.removedDelivered).isSuperset(of: ["Trio.isfTestFinished", "Trio.basalTestFinished"]))
+        #expect(center.added.map(\.identifier) == ["Trio.settingsTest.isf.ended"])
+        #expect(center.added.first?.trigger == nil)
+    }
+
+    @Test("A notification the center refuses is logged") func failedAddIsLogged() {
+        struct Refused: Error {}
+        let center = RecordingNotificationCenter()
+        center.addError = Refused()
+        // The logger's capture is shared by the whole process, and the logging suites use it too: try again if theirs
+        // took its place for a moment.
+        var logged: [LogRecord] = []
+        for _ in 0 ..< 5 where logged.isEmpty {
+            let sink = InMemoryLogSink(capacity: 1000)
+            TrioLogger.capturing(into: sink) { SettingsTestNotifier(center: center).post(.finished(.isf)) }
+            logged = sink.snapshot().filter { $0.file == "SettingsTestNotices.swift" && $0.level == .warning }
+        }
+        #expect(logged.contains { $0.message.contains("Trio.settingsTest.isf.ended") })
+    }
+
+    @Test("Withdrawing a notice removes its pending and delivered copies, and no other") func withdrawRemovesBoth() {
+        let center = RecordingNotificationCenter()
+        let notifier = SettingsTestNotifier(center: center)
+        notifier.withdraw(.isf, .step)
+        #expect(center.removedPending == ["Trio.settingsTest.isf.step"])
+        #expect(center.removedDelivered == ["Trio.settingsTest.isf.step"])
+        #expect(center.added.isEmpty)
+    }
+
+    @Test("A tap on a settings test notice names its kind; any other is left alone") func tapKind() {
+        #expect(SettingsTestHooks.kind(category: "Trio.settingsTest", userInfo: ["settingsTestKind": "isf"]) == .isf)
+        #expect(SettingsTestHooks.kind(category: "other", userInfo: ["settingsTestKind": "isf"]) == nil)
+        #expect(SettingsTestHooks.kind(category: "Trio.settingsTest", userInfo: ["settingsTestKind": "nope"]) == nil)
+    }
+}
+
+// MARK: - Screen opener
+
+/// An opener over a fake router, with the key window's sheet and the 1 s re-check under the test's hand.
+@MainActor private final class OpenerRig {
+    let router = SettingsTestFakeRouter()
+    let ticks = PassthroughSubject<Void, Never>()
+    /// What `keyWindowPresents` answers.
+    var presents = false
+    private(set) var opener: SettingsTestScreenOpener!
+
+    init() {
+        opener = SettingsTestScreenOpener(
+            router: { [router] in router },
+            keyWindowPresents: { [unowned self] in presents },
+            recheckTicks: { [ticks] in ticks.eraseToAnyPublisher() }
+        )
+    }
+}
+
+@Suite("Settings test screen opener") @MainActor struct SettingsTestScreenOpenerTests {
+    private let rig = OpenerRig()
+    private var opener: SettingsTestScreenOpener { rig.opener }
+    private var router: SettingsTestFakeRouter { rig.router }
+
+    @Test("A tap opens the test's screen when nothing else is shown") func opensTheTestScreen() {
+        #expect(opener.open(.isf))
+        #expect(router.mainModalScreen.value == .isfTest)
+    }
+
+    @Test("Each test opens its own screen") func screensByKind() {
+        #expect(SettingsTestKind.basal.testScreen == .basalTest)
+        #expect(SettingsTestKind.isf.testScreen == .isfTest)
+        #expect(SettingsTestKind.carbRatio.testScreen == nil)
+    }
+
+    @Test("A tap over another sheet waits for it to close, then opens") func waitsForAnotherSheet() async {
+        router.mainModalScreen.send(.treatmentView)
+        #expect(!opener.open(.isf))
+        #expect(router.mainModalScreen.value == .treatmentView)
+        #expect(opener.isRechecking)
+        router.mainModalScreen.send(nil)
+        #expect(await eventuallyOnMain { router.mainModalScreen.value == .isfTest })
+        // Pending until the screen has appeared, not until it was sent.
+        #expect(opener.pending == .isf)
+        #expect(opener.isRechecking)
+        opener.screenAppeared(.isf)
+        #expect(opener.pending == nil)
+        #expect(!opener.isRechecking)
+    }
+
+    @Test("A tap at launch opens the screen even though Main wipes the router as it appears") func coldLaunchTap() async throws {
+        // Sent before Main exists, and wiped when Main's `$modal` sends its first `nil`.
+        #expect(opener.open(.isf))
+        #expect(router.mainModalScreen.value == .isfTest)
+        router.mainModalScreen.send(nil)
+        // Not at once, but on the next tick of the 1 s timer, when what Main echoes has settled.
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(router.mainModalScreen.value == nil)
+        rig.ticks.send(())
+        #expect(router.mainModalScreen.value == .isfTest)
+        opener.screenAppeared(.isf)
+        #expect(opener.pending == nil)
+        #expect(!opener.isRechecking)
+        #expect(opener.wasOpenedFromNotice(.isf))
+    }
+
+    @Test("The screen shows through Main's own pipelines when the tap came before Main subscribed") func coldLaunchThroughMain(
+    ) async throws {
+        #expect(opener.open(.isf))
+
+        // `Main.StateModel.subscribe()`: the router's screen goes to `modal` on the main queue, and `modal` sending `nil`
+        // (its first value included) sends `nil` to the router. SwiftUI shows what `modal` holds once the turns of the
+        // main queue that set it are done, so a screen appears when `modal` has held it for a moment.
+        let modal = CurrentValueSubject<Screen?, Never>(nil)
+        var subscriptions: Set<AnyCancellable> = []
+        router.mainModalScreen
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { modal.send($0) }
+            .store(in: &subscriptions)
+        modal
+            .removeDuplicates()
+            .filter { $0 == nil }
+            .sink { [router] _ in router.mainModalScreen.send(nil) }
+            .store(in: &subscriptions)
+        modal
+            .debounce(for: .milliseconds(30), scheduler: DispatchQueue.main)
+            .compactMap { $0 }
+            .sink { [opener] screen in
+                if screen == .isfTest { opener.screenAppeared(.isf) }
+            }
+            .store(in: &subscriptions)
+
+        // The wipe has gone round and nothing shows. The timer sends the screen again, and it stays.
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(modal.value == nil)
+        #expect(opener.pending == .isf)
+        rig.ticks.send(())
+        #expect(await eventuallyOnMain { modal.value == .isfTest })
+        #expect(await eventuallyOnMain { opener.pending == nil })
+        #expect(opener.wasOpenedFromNotice(.isf))
+        withExtendedLifetime(subscriptions) {}
+    }
+
+    @Test("A screen that keeps vanishing is sent five more times, then given up on") func givesUpAfterFiveRepresents() {
+        #expect(opener.open(.isf))
+        for _ in 1 ... SettingsTestScreenOpener.maxRepresents {
+            router.mainModalScreen.send(nil)
+            rig.ticks.send(())
+            #expect(router.mainModalScreen.value == .isfTest)
+        }
+        #expect(opener.pending == .isf)
+        // The sixth wipe: no more.
+        router.mainModalScreen.send(nil)
+        rig.ticks.send(())
+        #expect(router.mainModalScreen.value == nil)
+        #expect(opener.pending == nil)
+        #expect(!opener.isRechecking)
+    }
+
+    @Test("A screen that appears on a later try is opened from a notice") func appearsOnALaterTry() {
+        #expect(opener.open(.isf))
+        for _ in 1 ... 3 {
+            router.mainModalScreen.send(nil)
+            rig.ticks.send(())
+            #expect(router.mainModalScreen.value == .isfTest)
+        }
+        opener.screenAppeared(.isf)
+        #expect(opener.pending == nil)
+        #expect(opener.wasOpenedFromNotice(.isf))
+    }
+
+    @Test("A screen that was sent and didn't appear is not sent again by a change of the router") func notOnRouterChange() async throws {
+        #expect(opener.open(.isf))
+        router.mainModalScreen.send(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(router.mainModalScreen.value == nil)
+        #expect(opener.pending == .isf)
+    }
+
+    @Test("The latest tap wins while one waits") func latestTapWins() async {
+        router.mainModalScreen.send(.treatmentView)
+        #expect(!opener.open(.isf))
+        #expect(!opener.open(.basal))
+        #expect(opener.pending == .basal)
+        router.mainModalScreen.send(nil)
+        #expect(await eventuallyOnMain { router.mainModalScreen.value == .basalTest })
+    }
+
+    @Test("A newer tap replaces one whose screen was sent but hasn't appeared") func newerTapReplacesASentOne() async {
+        #expect(opener.open(.isf))
+        #expect(!opener.open(.basal))
+        #expect(opener.pending == .basal)
+        // The first screen arrives after all: it is shown, and the newer tap goes on waiting for it to close.
+        opener.screenAppeared(.isf)
+        #expect(opener.pending == .basal)
+        #expect(!opener.wasOpenedFromNotice(.isf))
+        opener.screenDisappeared(.isf)
+        router.mainModalScreen.send(nil)
+        #expect(await eventuallyOnMain { router.mainModalScreen.value == .basalTest })
+    }
+
+    @Test("A sheet shown outside the router keeps a tap waiting too") func waitsForASecondaryModal() async {
+        router.mainSecondaryModalView.send(AnyView(EmptyView()))
+        #expect(!opener.open(.isf))
+        router.mainSecondaryModalView.send(nil)
+        #expect(await eventuallyOnMain { router.mainModalScreen.value == .isfTest })
+    }
+
+    @Test("A sheet still animating out doesn't strand a pending tap: the 1 s re-check opens it") func recheckOpens() {
+        rig.presents = true
+        #expect(!opener.open(.isf))
+        rig.ticks.send(())
+        #expect(router.mainModalScreen.value == nil)
+        rig.presents = false
+        rig.ticks.send(())
+        #expect(router.mainModalScreen.value == .isfTest)
+        opener.screenAppeared(.isf)
+        #expect(!opener.isRechecking)
+    }
+
+    @Test("A waiting tap isn't opened over a screen the user opened meanwhile") func notOverAScreenOpenedMeanwhile() async throws {
+        router.mainModalScreen.send(.treatmentView)
+        #expect(!opener.open(.isf))
+        opener.screenAppeared(.isf)
+        router.mainModalScreen.send(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(router.mainModalScreen.value == nil)
+        #expect(opener.pending == nil)
+        #expect(!opener.isRechecking)
+        #expect(!opener.wasOpenedFromNotice(.isf))
+    }
+
+    @Test("Open Treatments from a notice-opened test brings the test back when Treatments closes") func backAfterTreatments() async {
+        #expect(opener.open(.isf))
+        opener.screenAppeared(.isf)
+        #expect(opener.wasOpenedFromNotice(.isf))
+        opener.treatmentsOpened(from: .isf)
+        router.mainModalScreen.send(.treatmentView)
+        opener.screenDisappeared(.isf)
+        router.mainModalScreen.send(nil)
+        #expect(await eventuallyOnMain { router.mainModalScreen.value == .isfTest })
+        opener.screenAppeared(.isf)
+        #expect(opener.wasOpenedFromNotice(.isf))
+        #expect(opener.pending == nil)
+    }
+
+    @Test("A screen opened from Settings isn't one the opener presented") func notFromNotice() {
+        opener.screenAppeared(.isf)
+        #expect(!opener.wasOpenedFromNotice(.isf))
+    }
+
+    @Test("A screen is from a notice once it has appeared, not when it was sent") func fromNoticeOnAppearance() {
+        #expect(opener.open(.isf))
+        #expect(!opener.wasOpenedFromNotice(.isf))
+        opener.screenAppeared(.isf)
+        #expect(opener.wasOpenedFromNotice(.isf))
+    }
+
+    @Test("A screen the opener presented is cleared when it disappears") func fromNoticeClears() {
+        #expect(opener.open(.isf))
+        opener.screenAppeared(.isf)
+        #expect(opener.wasOpenedFromNotice(.isf))
+        opener.screenDisappeared(.isf)
+        opener.screenAppeared(.isf)
+        #expect(!opener.wasOpenedFromNotice(.isf))
+    }
+
+    @Test("A tap opens no second copy of a screen that is showing") func notWhenShowing() {
+        opener.screenAppeared(.isf)
+        #expect(!opener.open(.isf))
+        opener.screenDisappeared(.isf)
+        #expect(opener.open(.isf))
+    }
+
+    @Test("A duplicate appear of one view doesn't leave its screen showing after it has gone") func duplicateAppear() {
+        let view = UUID()
+        opener.screenAppeared(.isf, viewID: view)
+        opener.screenAppeared(.isf, viewID: view)
+        opener.screenDisappeared(.isf, viewID: view)
+        #expect(!opener.isShowing(.isf))
+        #expect(opener.open(.isf))
+
+        // The same without a view of its own.
+        opener.screenAppeared(.basal)
+        opener.screenAppeared(.basal)
+        opener.screenDisappeared(.basal)
+        #expect(!opener.isShowing(.basal))
+    }
+
+    @Test("Two views of one kind count apart") func twoViews() {
+        let first = UUID()
+        let second = UUID()
+        opener.screenAppeared(.isf, viewID: first)
+        opener.screenAppeared(.isf, viewID: second)
+        opener.screenDisappeared(.isf, viewID: first)
+        #expect(opener.isShowing(.isf))
+        opener.screenDisappeared(.isf, viewID: second)
+        #expect(!opener.isShowing(.isf))
+    }
+
+    @Test("The carb ratio test has no screen to open yet") func carbRatioNoScreen() {
+        #expect(!opener.open(.carbRatio))
+        #expect(opener.pending == nil)
+    }
+
+    // MARK: A tap before the router exists (a launch from closed)
+
+    /// An opener whose router isn't there until `available` is set, and a 1 s timer the test drives.
+    private final class LateRouter {
+        let ticks = PassthroughSubject<Void, Never>()
+        let router = SettingsTestFakeRouter()
+        var available: SettingsTestFakeRouter?
+    }
+
+    private func lateOpener(_ late: LateRouter) -> SettingsTestScreenOpener {
+        SettingsTestScreenOpener(
+            router: { late.available },
+            keyWindowPresents: { false },
+            recheckTicks: { late.ticks.eraseToAnyPublisher() }
+        )
+    }
+
+    @Test("A tap before the router exists stays pending, and opens once a free router appears") func waitsForTheRouter() {
+        let late = LateRouter()
+        let opener = lateOpener(late)
+        #expect(!opener.open(.isf))
+        #expect(opener.pending == .isf)
+        #expect(opener.isRechecking)
+        // The timer finds no router for a long while: nothing is sent, nothing is given up, no try is counted.
+        for _ in 1 ... 12 {
+            late.ticks.send(())
+        }
+        #expect(late.router.mainModalScreen.value == nil)
+        #expect(opener.pending == .isf)
+        #expect(opener.isRechecking)
+        // The router appears, free: the next look sends the screen, which stays pending until it appears.
+        late.available = late.router
+        late.ticks.send(())
+        #expect(late.router.mainModalScreen.value == .isfTest)
+        #expect(opener.pending == .isf)
+        opener.screenAppeared(.isf)
+        #expect(opener.pending == nil)
+        #expect(!opener.isRechecking)
+        #expect(opener.wasOpenedFromNotice(.isf))
+    }
+
+    @Test("A router that appears busy is waited on too, and its changes are watched from then on") func lateRouterBusy() async {
+        let late = LateRouter()
+        let opener = lateOpener(late)
+        #expect(!opener.open(.isf))
+        late.router.mainModalScreen.send(.treatmentView)
+        late.available = late.router
+        late.ticks.send(())
+        // Not over another sheet.
+        #expect(late.router.mainModalScreen.value == .treatmentView)
+        #expect(opener.pending == .isf)
+        // Its closing is seen on the router's change, without waiting for the timer.
+        late.router.mainModalScreen.send(nil)
+        #expect(await eventuallyOnMain { late.router.mainModalScreen.value == .isfTest })
+        opener.screenAppeared(.isf)
+        #expect(opener.pending == nil)
+    }
+
+    @Test("A tap before the router exists shows through Main's own pipelines once the router is there") func lateRouterThroughMain(
+    ) async throws {
+        let late = LateRouter()
+        let opener = lateOpener(late)
+        #expect(!opener.open(.isf))
+        late.available = late.router
+
+        // `Main.StateModel.subscribe()` as in `coldLaunchThroughMain`, once the router exists.
+        let modal = CurrentValueSubject<Screen?, Never>(nil)
+        var subscriptions: Set<AnyCancellable> = []
+        late.router.mainModalScreen
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { modal.send($0) }
+            .store(in: &subscriptions)
+        modal
+            .removeDuplicates()
+            .filter { $0 == nil }
+            .sink { [router = late.router] _ in router.mainModalScreen.send(nil) }
+            .store(in: &subscriptions)
+        modal
+            .debounce(for: .milliseconds(30), scheduler: DispatchQueue.main)
+            .compactMap { $0 }
+            .sink { screen in
+                if screen == .isfTest { opener.screenAppeared(.isf) }
+            }
+            .store(in: &subscriptions)
+
+        // Main's first `nil` has gone round, nothing shows, the tap is still waiting; the timer sends the screen and it stays.
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(modal.value == nil)
+        #expect(opener.pending == .isf)
+        late.ticks.send(())
+        #expect(await eventuallyOnMain { modal.value == .isfTest })
+        #expect(await eventuallyOnMain { opener.pending == nil })
+        #expect(opener.wasOpenedFromNotice(.isf))
+        withExtendedLifetime(subscriptions) {}
+    }
+}
+
+// MARK: - The delegate set at launch
+
+/// A stand-in for the notification center that holds its delegate strongly, as a test needs.
+private final class FakeDelegateHolder: SettingsTestDelegateHolder {
+    var delegate: UNUserNotificationCenterDelegate?
+}
+
+private final class OtherDelegate: NSObject, UNUserNotificationCenterDelegate {}
+
+/// Counts calls, from any thread.
+private final class LaunchCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func hit() { lock.withLock { count += 1 } }
+    var value: Int { lock.withLock { count } }
+}
+
+@Suite("Settings test launch notifications") @MainActor struct SettingsTestLaunchNotificationsTests {
+    private let noticeInfo: [AnyHashable: Any] = ["settingsTestKind": "isf"]
+
+    @Test("A tap on a test's notice reaches the opener, and its completion is called once") func routesATestNotice() async {
+        let completed = LaunchCallCounter()
+        var opened: [SettingsTestKind] = []
+        let handled = SettingsTestLaunchNotifications.handle(
+            category: "Trio.settingsTest",
+            userInfo: noticeInfo,
+            completion: { completed.hit() },
+            open: { opened.append($0) }
+        )
+        #expect(handled)
+        #expect(completed.value == 1)
+        #expect(await eventuallyOnMain { opened == [.isf] })
+        // And not again.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(opened == [.isf])
+        #expect(completed.value == 1)
+    }
+
+    @Test("Each kind's notice opens its own kind") func eachKind() async {
+        var opened: [SettingsTestKind] = []
+        for raw in ["basal", "isf"] {
+            SettingsTestLaunchNotifications.handle(
+                category: "Trio.settingsTest",
+                userInfo: ["settingsTestKind": raw],
+                completion: {},
+                open: { opened.append($0) }
+            )
+        }
+        #expect(await eventuallyOnMain { opened == [.basal, .isf] })
+    }
+
+    @Test("Any other response only gets its completion handler, once, and opens nothing") func otherResponses() async {
+        let completed = LaunchCallCounter()
+        var opened: [SettingsTestKind] = []
+        for (category, info) in [
+            ("Trio.glucoseAlert", noticeInfo),
+            ("Trio.settingsTest", [:]),
+            ("Trio.settingsTest", ["settingsTestKind": "nope"]),
+            ("", [:])
+        ] as [(String, [AnyHashable: Any])] {
+            let handled = SettingsTestLaunchNotifications.handle(
+                category: category,
+                userInfo: info,
+                completion: { completed.hit() },
+                open: { opened.append($0) }
+            )
+            #expect(!handled, "\(category) \(info)")
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(completed.value == 4)
+        #expect(opened.isEmpty)
+    }
+
+    @Test("The delegate is set when there is none, and a delegate already set is left alone") func installOnlyWhenNone() {
+        let none = FakeDelegateHolder()
+        #expect(SettingsTestLaunchNotifications.install(on: none))
+        #expect(none.delegate === SettingsTestLaunchNotifications.shared)
+
+        let taken = FakeDelegateHolder()
+        let theirs = OtherDelegate()
+        taken.delegate = theirs
+        #expect(!SettingsTestLaunchNotifications.install(on: taken))
+        #expect(taken.delegate === theirs)
+
+        // Installing twice leaves the same delegate, and says it did nothing the second time.
+        #expect(!SettingsTestLaunchNotifications.install(on: none))
+        #expect(none.delegate === SettingsTestLaunchNotifications.shared)
+    }
+
+    @Test("Setting another delegate replaces it, as the notifications manager does") func replacedLater() {
+        let holder = FakeDelegateHolder()
+        SettingsTestLaunchNotifications.install(on: holder)
+        let manager = OtherDelegate()
+        holder.delegate = manager
+        #expect(holder.delegate === manager)
+    }
+
+    @Test("The launch delegate answers no notification being shown") func hasNoWillPresent() {
+        // Nothing was presented in that window before, and nothing is now.
+        #expect(!SettingsTestLaunchNotifications.shared.responds(
+            to: #selector(UNUserNotificationCenterDelegate.userNotificationCenter(_:willPresent:withCompletionHandler:))
+        ))
+        #expect(SettingsTestLaunchNotifications.shared.responds(
+            to: #selector(UNUserNotificationCenterDelegate.userNotificationCenter(_:didReceive:withCompletionHandler:))
+        ))
+    }
+}
+
+// MARK: - Coalescing
+
+/// Counts the runs of a coalesced body, and the most that ran at once.
+private final class RunCounter {
+    private let lock = NSLock()
+    private var _runs = 0
+    private var _running = 0
+    private var _mostAtOnce = 0
+
+    var runs: Int { lock.withLock { _runs } }
+    var mostAtOnce: Int { lock.withLock { _mostAtOnce } }
+
+    func start() {
+        lock.withLock {
+            _runs += 1
+            _running += 1
+            _mostAtOnce = max(_mostAtOnce, _running)
+        }
+    }
+
+    func stop() {
+        lock.withLock { _running -= 1 }
+    }
+}
+
+@Suite("Settings test check coalescer") struct SettingsTestCheckCoalescerTests {
+    @Test("One run at a time, and the calls made during one share exactly one more") func callsDuringARunShareOneRerun() async {
+        let coalescer = SettingsTestCheckCoalescer()
+        let counter = RunCounter()
+        let gate = TestGate()
+        func body() async {
+            counter.start()
+            await gate.pass()
+            counter.stop()
+        }
+
+        let first = Task { await coalescer.run { await body() } }
+        #expect(await eventually { gate.waiting == 1 })
+        let others = (0 ..< 3).map { _ in Task { await coalescer.run { await body() } } }
+        #expect(await eventually { coalescer.waiting == 3 })
+        // They wait, none of them starting a run of its own.
+        #expect(counter.runs == 1)
+        gate.open()
+        await first.value
+        for other in others {
+            await other.value
+        }
+        #expect(counter.runs == 2)
+        #expect(counter.mostAtOnce == 1)
+        #expect(coalescer.waiting == 0)
+
+        // Once it is idle, a call runs at once, on its own.
+        await coalescer.run { await body() }
+        #expect(counter.runs == 3)
+    }
+}
+
+// MARK: - Screens
+
+/// An ISF runner that keeps what its screen asked of it, and publishes what a test sends.
+private final class RecordingISFTestRunner: ISFTestRunning {
+    let subject = CurrentValueSubject<ISFTestRunnerState, Never>(ISFTestRunnerState())
+    /// What Begin answers.
+    var beginError: SettingsTestBeginError?
+    private(set) var begins: [ISFTestBegin] = []
+    private(set) var tablets: [ISFTestTabletsTaken] = []
+    /// The other actions, by name, in the order asked.
+    private(set) var actions: [String] = []
+
+    var state: ISFTestRunnerState { subject.value }
+    var statePublisher: AnyPublisher<ISFTestRunnerState, Never> { subject.eraseToAnyPublisher() }
+
+    @MainActor func begin(_ begin: ISFTestBegin) -> SettingsTestBeginError? {
+        begins.append(begin)
+        return beginError
+    }
+
+    @MainActor func countAndGoOn() { actions.append("countAndGoOn") }
+    @MainActor func tabletsTaken(_ tablets: ISFTestTabletsTaken) { self.tablets.append(tablets) }
+    @MainActor func moveToDose() { actions.append("moveToDose") }
+    @MainActor func raiseFirst() { actions.append("raiseFirst") }
+    @MainActor func endEarly() async { actions.append("endEarly") }
+    @MainActor func discard() { actions.append("discard") }
+    @MainActor func acknowledgeResult() { actions.append("acknowledgeResult") }
+    /// How many checks were asked for.
+    @MainActor private(set) var checks = 0
+    @MainActor func check() async { checks += 1 }
+}
+
+/// A basal runner that keeps the Begins its screen asked for, and publishes what a test sends.
+private final class RecordingBasalTestRunner: BasalTestRunning {
+    let subject = CurrentValueSubject<BasalTestState?, Never>(nil)
+    private(set) var begins: [BasalTestBegin] = []
+
+    var state: BasalTestState? { subject.value }
+    var statePublisher: AnyPublisher<BasalTestState?, Never> { subject.eraseToAnyPublisher() }
+
+    @MainActor func begin(_ begin: BasalTestBegin) -> SettingsTestBeginError? {
+        begins.append(begin)
+        return nil
+    }
+
+    /// The other actions, by name, in the order asked.
+    @MainActor private(set) var actions: [String] = []
+    @MainActor private(set) var checks = 0
+    @MainActor func endEarly() async { actions.append("endEarly") }
+    @MainActor func discard() { actions.append("discard") }
+    @MainActor func acknowledgeResult() { actions.append("acknowledgeResult") }
+    @MainActor func check() async { checks += 1 }
+}
+
+/// What the ISF screen reads, as a test sets it: `data`, and no settings or basal schedule.
+private final class FakeISFScreenReads: ISFTestProvider {
+    var data: ISFTest.StateModel.ScreenData
+
+    init(_ data: ISFTest.StateModel.ScreenData) {
+        self.data = data
+    }
+
+    func isfEntries() -> [SettingsTestScheduleEntry] { [] }
+    func basalEntries() -> [SettingsTestScheduleEntry] { [] }
+    func isf(at _: Date) -> Decimal? { nil }
+    func target(at _: Date) -> Decimal? { nil }
+    func fetchRecentGlucose(minutes _: Int) async throws -> [BasalTestReading] { data.readings }
+    func currentIOB() -> Decimal? { data.iob }
+    func currentCOB() async throws -> Decimal? { data.cob }
+    func hasActiveAdjustment() async throws -> Bool { data.hasActiveAdjustment }
+    func hasPumpSetTempBasal() -> Bool { data.hasPumpSetTempBasal }
+    func pumpDelivery() -> ISFTestPumpDelivery? { data.pumpDelivery }
+    func hasCgmAndPump() -> Bool { data.hasDevices }
+    func fetchNewestDirection() async throws -> BloodGlucose.Direction? { data.trendDirection }
+}
+
+/// What the basal screen reads, as a test sets it, keeping when each week of SMBs was read from.
+private final class FakeBasalScreenReads: BasalTestProvider {
+    var data: BasalTest.StateModel.ScreenData
+    private let lock = NSLock()
+    private var _smbReadsSince: [Date] = []
+
+    init(_ data: BasalTest.StateModel.ScreenData) {
+        self.data = data
+    }
+
+    /// Where each read of SMBs started, in the order read.
+    var smbReadsSince: [Date] { lock.withLock { _smbReadsSince } }
+
+    func basalEntries() -> [SettingsTestScheduleEntry] { [] }
+    func fetchRecentGlucose(minutes _: Int) async throws -> [BasalTestReading] { data.readings }
+    func getCurrentIOB() -> Decimal { data.iob }
+    func getCurrentCOB() async throws -> Decimal { data.cob }
+    func lastCarbEntry(withinHours _: Int) async throws -> Date? { data.lastCarb }
+    func hasActiveAdjustment() async throws -> Bool { data.hasActiveAdjustment }
+    func hasPumpSetTempBasal() -> Bool { data.hasPumpSetTempBasal }
+    func hasCgmAndPump() -> Bool { data.hasDevices }
+    func fetchNewestDirection() async throws -> BloodGlucose.Direction? { data.trendDirection }
+
+    func fetchSMBs(since start: Date, until _: Date) async throws -> [BasalTestSMB] {
+        lock.withLock { _smbReadsSince.append(start) }
+        return []
+    }
+
+    func fetchCOBSamples(since _: Date) async throws -> [BasalTestCOBSample] { [] }
+}
+
+/// `.settingsTestFiles`: the tests that refresh a screen give it a settings test service (`makeTestService`), whose
+/// history the ISF screen's basal row reads.
+@Suite(
+    "Settings test screens follow the runners",
+    .serialized,
+    .settingsTestFiles
+) @MainActor struct SettingsTestScreenStateTests {
+    private let minute: TimeInterval = 60
+
+    /// Begun 30 minutes ago from Closed Loop on ISF 50, target 100 and CR 10, with its session, in `phase`.
+    private func isfTest(_ phase: ISFTestPhase) -> ISFTestState {
+        var test = ISFTestState(
+            phase: phase,
+            startedAt: Date().addingTimeInterval(-30 * minute),
+            previousMode: .closed,
+            isf: 50,
+            target: 100,
+            carbRatio: 10
+        )
+        test.sessionID = UUID()
+        return test
+    }
+
+    /// Begun an hour ago from Closed Loop at 110 mg/dL, planned for 4 hours.
+    private func runningFast() -> BasalTestState {
+        var test = BasalTestState(
+            startedAt: Date().addingTimeInterval(-60 * minute),
+            plannedDuration: 4 * 3600,
+            startGlucose: 110,
+            startIOB: 0,
+            previousMode: .closed,
+            timeBlock: "Overnight"
+        )
+        test.sessionID = UUID()
+        return test
+    }
+
+    /// Three readings at `glucose`, the newest a minute old, so a dose can be worked out from them.
+    private func readings(_ glucose: Int) -> [BasalTestReading] {
+        [1, 6, 11].map { BasalTestReading(date: Date().addingTimeInterval(-Double($0) * minute), glucose: glucose) }
+    }
+
+    /// What the ISF screen reads with nothing in the way of Begin: CGM and pump connected, the pump delivering, nothing
+    /// on board.
+    private func isfData(_ readings: [BasalTestReading]) -> ISFTest.StateModel.ScreenData {
+        ISFTest.StateModel.ScreenData(
+            readings: readings,
+            iob: 0,
+            cob: 0,
+            hasActiveAdjustment: false,
+            hasPumpSetTempBasal: false,
+            pumpDelivery: .delivering,
+            hasDevices: true,
+            trendDirection: .flat
+        )
+    }
+
+    private func basalData(_ readings: [BasalTestReading]) -> BasalTest.StateModel.ScreenData {
+        BasalTest.StateModel.ScreenData(
+            readings: readings,
+            iob: Decimal(string: "0.5")!,
+            cob: 0,
+            lastCarb: nil,
+            hasActiveAdjustment: false,
+            hasPumpSetTempBasal: false,
+            hasDevices: true,
+            trendDirection: .flat
+        )
+    }
+
+    // MARK: Following
+
+    @Test("The ISF screen shows the runner's step, settling and insulin on board for the dose") func isfFollowsRunner() {
+        let state = ISFTest.StateModel()
+        let settling = isfTest(.settling)
+        let bolus = ISFTestSettlingBolus(date: Date().addingTimeInterval(-10 * minute), units: 1, isSMB: true)
+        state.apply(ISFTestRunnerState(test: settling, settling: ISFTestSettlingProgress(
+            decision: .waiting(loopedAt: nil, waitsForIOB: false),
+            boluses: [bolus],
+            readingsAfterLoop: 2,
+            tempBasalRunning: true
+        )))
+        #expect(state.step == .settle)
+        #expect(state.test == settling)
+        #expect(state.settling == .waiting(loopedAt: nil, waitsForIOB: false))
+        #expect(state.settlingBoluses == [bolus])
+        #expect(state.settleReadings == 2)
+        #expect(state.settleTempBasalRunning)
+
+        // Settled: nothing of settling is left, and the dose's insulin on board is the runner's.
+        state.apply(ISFTestRunnerState(test: isfTest(.dosing), settling: nil, doseIOB: Decimal(string: "0.4")))
+        #expect(state.step == .dose)
+        #expect(state.settling == nil)
+        #expect(state.settlingBoluses.isEmpty)
+        #expect(state.settleReadings == nil)
+        #expect(!state.settleTempBasalRunning)
+        #expect(state.doseIOB == Decimal(string: "0.4"))
+
+        state.apply(ISFTestRunnerState(test: isfTest(.finished), settling: nil))
+        #expect(state.step == .result)
+        #expect(state.doseIOB == nil)
+        state.apply(ISFTestRunnerState())
+        #expect(state.step == .check)
+        #expect(state.test == nil)
+    }
+
+    @Test("The ISF screen follows what its runner publishes") func isfFollowsPublisher() async {
+        let runner = RecordingISFTestRunner()
+        runner.subject.send(ISFTestRunnerState(test: isfTest(.raising)))
+        let state = ISFTest.StateModel()
+        state.follow(runner)
+        // What the runner holds now, at once.
+        #expect(state.step == .raise)
+        runner.subject.send(ISFTestRunnerState(test: isfTest(.waiting)))
+        #expect(await eventuallyOnMain { state.step == .wait })
+    }
+
+    @Test("The basal screen shows the runner's fast, and follows what it publishes") func basalFollowsRunner() async {
+        let state = BasalTest.StateModel()
+        let running = runningFast()
+        state.apply(running)
+        #expect(state.step == .fast)
+        #expect(state.test == running)
+        state.apply(nil)
+        #expect(state.step == .check)
+
+        let runner = RecordingBasalTestRunner()
+        runner.subject.send(running)
+        state.follow(runner)
+        #expect(state.step == .fast)
+        runner.subject.send(nil)
+        #expect(await eventuallyOnMain { state.step == .check })
+    }
+
+    // MARK: Open Treatments
+
+    /// The opener a test drives, with no sheet of its own and its 1 s re-check on `ticks`.
+    private func makeOpener(
+        router: SettingsTestFakeRouter,
+        ticks: PassthroughSubject<Void, Never>
+    ) -> SettingsTestScreenOpener {
+        SettingsTestScreenOpener(
+            router: { router },
+            keyWindowPresents: { false },
+            recheckTicks: { ticks.eraseToAnyPublisher() }
+        )
+    }
+
+    @Test(
+        "Open Treatments from a notice-opened ISF screen brings it back after Treatments; from Settings it doesn't"
+    ) func openTreatmentsBringsTestBack() async throws {
+        let router = SettingsTestFakeRouter()
+        let ticks = PassthroughSubject<Void, Never>()
+        let opener = makeOpener(router: router, ticks: ticks)
+        let state = ISFTest.StateModel()
+        state.router = router
+        state.opener = opener
+
+        #expect(opener.open(.isf))
+        opener.screenAppeared(.isf)
+        state.sendToTreatments()
+        #expect(router.mainModalScreen.value == .treatmentView)
+        #expect(opener.pending == .isf)
+        // Treatments takes the test screen's place, then closes.
+        opener.screenDisappeared(.isf)
+        router.mainModalScreen.send(nil)
+        #expect(await eventuallyOnMain { router.mainModalScreen.value == .isfTest })
+        opener.screenAppeared(.isf)
+        #expect(opener.pending == nil)
+        opener.screenDisappeared(.isf)
+        router.mainModalScreen.send(nil)
+
+        // Opened from Settings: Treatments opens, and nothing waits for it to close.
+        let settingsRouter = SettingsTestFakeRouter()
+        let settingsOpener = makeOpener(router: settingsRouter, ticks: ticks)
+        state.router = settingsRouter
+        state.opener = settingsOpener
+        settingsOpener.screenAppeared(.isf)
+        state.sendToTreatments()
+        #expect(settingsRouter.mainModalScreen.value == .treatmentView)
+        #expect(settingsOpener.pending == nil)
+        settingsRouter.mainModalScreen.send(nil)
+        try await Task.sleep(for: .milliseconds(100))
+        ticks.send(())
+        #expect(settingsRouter.mainModalScreen.value == nil)
+    }
+
+    @Test("A notice-opened ISF screen closed without Treatments opening isn't brought back") func closedWithoutTreatments(
+    ) async throws {
+        let router = SettingsTestFakeRouter()
+        let ticks = PassthroughSubject<Void, Never>()
+        let opener = makeOpener(router: router, ticks: ticks)
+        let state = ISFTest.StateModel()
+        state.router = router
+        state.opener = opener
+
+        #expect(opener.open(.isf))
+        opener.screenAppeared(.isf)
+        state.sendToTreatments()
+        #expect(opener.pending == .isf)
+        // Treatments didn't open: the sheet was closed, by the user or by Main, with the test screen in it.
+        router.mainModalScreen.send(nil)
+        opener.screenDisappeared(.isf)
+        #expect(opener.pending == nil)
+        #expect(!opener.isRechecking)
+        try await Task.sleep(for: .milliseconds(100))
+        ticks.send(())
+        #expect(router.mainModalScreen.value == nil)
+    }
+
+    // MARK: Begin
+
+    @Test("The ISF screen begins only when its checks pass and it has a recent glucose") func isfBeginGuards() {
+        let runner = RecordingISFTestRunner()
+        let settings = FakeSettingsManager()
+        settings.settings.dosingMode = .basalTesting
+        let state = ISFTest.StateModel()
+        state.settingsManager = settings
+        state.runner = runner
+        state.show(isfData(readings(180)))
+
+        // Already on Basal Testing, which Begin would record as the usual mode: the runner isn't asked.
+        #expect(!state.readyToStart)
+        state.confirmStart()
+        #expect(runner.begins.isEmpty)
+        #expect(state.errorMessage == nil)
+
+        // From the usual mode it is, with the glucose the dose is worked out from and the choice made.
+        settings.settings.dosingMode = .closed
+        state.iobChoice = .count
+        #expect(state.readyToStart)
+        state.confirmStart()
+        #expect(runner.begins == [ISFTestBegin(glucose: 180, iob: 0, iobChoice: .count)])
+        #expect(state.errorMessage == nil)
+
+        // The runner's refusal is said.
+        runner.beginError = .otherTestRunning
+        state.confirmStart()
+        #expect(state.errorMessage == SettingsTestBeginError.otherTestRunning.message)
+
+        // With no recent reading, no glucose is made up: today's message, and the runner isn't asked.
+        state.errorMessage = nil
+        state.show(isfData([BasalTestReading(date: Date().addingTimeInterval(-30 * minute), glucose: 180)]))
+        #expect(state.readyToStart)
+        state.confirmStart()
+        #expect(runner.begins.count == 2)
+        #expect(state.errorMessage == String(
+            localized: "Trio has no recent glucose reading. Wait for your CGM's next reading, then try again."
+        ))
+    }
+
+    @Test("The basal screen begins only when its checks pass and it has a glucose") func basalBeginGuards() {
+        let runner = RecordingBasalTestRunner()
+        let settings = FakeSettingsManager()
+        settings.settings.dosingMode = .basalTesting
+        let state = BasalTest.StateModel()
+        state.settingsManager = settings
+        state.runner = runner
+        state.show(basalData(readings(110)))
+
+        #expect(!state.readyToStart)
+        state.confirmStart()
+        #expect(runner.begins.isEmpty)
+
+        settings.settings.dosingMode = .closed
+        state.selectedHours = 6
+        #expect(state.readyToStart)
+        state.confirmStart()
+        #expect(runner.begins == [BasalTestBegin(glucose: 110, iob: Decimal(string: "0.5")!, hours: 6)])
+
+        state.show(basalData([]))
+        state.confirmStart()
+        #expect(runner.begins.count == 1)
+    }
+
+    // MARK: The other actions
+
+    @Test("The ISF screen's own guards hold an action back, and the runner gets the rest") func isfActionGuards() {
+        let runner = RecordingISFTestRunner()
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.runner = runner
+
+        // Count It and Go On only once settling's time is up.
+        state.apply(ISFTestRunnerState(test: isfTest(.settling), settling: ISFTestSettlingProgress(
+            decision: .waiting(loopedAt: nil, waitsForIOB: true),
+            boluses: [],
+            readingsAfterLoop: nil,
+            tempBasalRunning: false
+        )))
+        state.countAndGoOn()
+        #expect(runner.actions.isEmpty)
+        state.apply(ISFTestRunnerState(test: isfTest(.settling), settling: ISFTestSettlingProgress(
+            decision: .timeUp(loopedAt: Date().addingTimeInterval(-50 * minute)),
+            boluses: [],
+            readingsAfterLoop: nil,
+            tempBasalRunning: false
+        )))
+        state.countAndGoOn()
+        #expect(runner.actions == ["countAndGoOn"])
+
+        // Tablets: none to count says why; the count goes to the runner with the glucose it was counted from.
+        state.apply(ISFTestRunnerState(test: isfTest(.raising)))
+        state.show(isfData([]))
+        state.tabletsTaken()
+        #expect(runner.tablets.isEmpty)
+        #expect(state.errorMessage != nil)
+        state.errorMessage = nil
+        state.show(isfData(readings(110)))
+        state.selectedBrand = .dex4
+        state.tabletsTaken()
+        // (150 − 110) × 10 ÷ 50 = 8 g, two 4 g tablets.
+        #expect(runner.tablets == [ISFTestTabletsTaken(brand: .dex4, count: 2, glucose: 110)])
+
+        // Work Out My Dose only once the dose can be worked out; Skip, Dose Now at any time.
+        #expect(!state.canDose)
+        state.workOutDose()
+        #expect(runner.actions == ["countAndGoOn"])
+        state.skipTablets()
+        #expect(runner.actions == ["countAndGoOn", "moveToDose"])
+
+        // Back to the tablets only at or below the target.
+        state.apply(ISFTestRunnerState(test: isfTest(.dosing)))
+        state.show(isfData(readings(180)))
+        state.raiseFirst()
+        #expect(runner.actions == ["countAndGoOn", "moveToDose"])
+        state.show(isfData(readings(90)))
+        state.raiseFirst()
+        #expect(runner.actions == ["countAndGoOn", "moveToDose", "raiseFirst"])
+    }
+
+    @Test("Open Treatments only once the dose can be worked out") func openTreatmentsNeedsADose() {
+        let router = SettingsTestFakeRouter()
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.router = router
+        state.opener = makeOpener(router: router, ticks: PassthroughSubject())
+        state.apply(ISFTestRunnerState(test: isfTest(.dosing)))
+        // No recent reading, so no dose.
+        state.show(isfData([]))
+        state.openTreatments()
+        #expect(router.mainModalScreen.value == nil)
+        // 180 on target 100 and ISF 50: 1.6 U, with a flat arrow, nothing on board.
+        state.show(isfData(readings(180)))
+        #expect(state.canDose)
+        state.openTreatments()
+        #expect(router.mainModalScreen.value == .treatmentView)
+    }
+
+    // MARK: Settle
+
+    @Test("The Settle step shows the insulin on board settling's last check read") func settleIOBFollowsRunner() {
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        var test = isfTest(.settling)
+        test.iobLine = Decimal(string: "0.11")
+        test.iobHandling = .wait
+        func progress(waitsForIOB: Bool, iob: Decimal?) -> ISFTestSettlingProgress {
+            ISFTestSettlingProgress(
+                decision: .waiting(loopedAt: nil, waitsForIOB: waitsForIOB),
+                boluses: [],
+                readingsAfterLoop: nil,
+                tempBasalRunning: false,
+                iob: iob
+            )
+        }
+        // The screen's own read says none on board.
+        state.show(isfData(readings(180)))
+
+        state.apply(ISFTestRunnerState(test: test, settling: progress(waitsForIOB: true, iob: Decimal(string: "0.3"))))
+        #expect(state.currentIOB == Decimal(string: "0.3"))
+        #expect(state.settleWaitsForIOB)
+        // A refresh in between doesn't move the Settle step off the number its step rests on.
+        state.show(isfData(readings(180)))
+        #expect(state.currentIOB == Decimal(string: "0.3"))
+        #expect(state.settleWaitsForIOB)
+
+        state.apply(ISFTestRunnerState(test: test, settling: progress(waitsForIOB: false, iob: Decimal(string: "0.05"))))
+        #expect(state.currentIOB == Decimal(string: "0.05"))
+        #expect(!state.settleWaitsForIOB)
+
+        // Settled: the screen's own read again.
+        state.apply(ISFTestRunnerState(test: isfTest(.dosing)))
+        #expect(state.currentIOB == 0)
+    }
+
+    // MARK: Forwarding
+
+    /// An ISF screen on `runner`, reading `isfData(readings(180))`, with a settings test service that runs no test.
+    private func isfScreen(_ runner: RecordingISFTestRunner) -> ISFTest.StateModel {
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.testService = makeTestService().service
+        state.screenReads = FakeISFScreenReads(isfData(readings(180)))
+        state.runner = runner
+        return state
+    }
+
+    @Test("The ISF screen's refresh shows what it read, then has the runner check once") func isfRefreshChecks() async {
+        let runner = RecordingISFTestRunner()
+        let state = isfScreen(runner)
+        await state.refresh()
+        #expect(state.currentGlucose == 180)
+        #expect(runner.checks == 1)
+        await state.checkRunningTest()
+        #expect(runner.checks == 2)
+    }
+
+    @Test("ISF Cancel Test, Done and End Test go to the runner; the first two start again on the docs' way") func isfEndings(
+    ) async {
+        let runner = RecordingISFTestRunner()
+        let state = isfScreen(runner)
+
+        state.iobChoice = .count
+        state.discard()
+        #expect(runner.actions == ["discard"])
+        #expect(state.iobChoice == .wait)
+        // The refresh it starts ends with a check.
+        #expect(await eventuallyOnMain { runner.checks == 1 })
+
+        state.iobChoice = .count
+        state.acknowledgeResult()
+        #expect(runner.actions == ["discard", "acknowledgeResult"])
+        #expect(state.iobChoice == .wait)
+        #expect(await eventuallyOnMain { runner.checks == 2 })
+
+        await state.endEarly()
+        #expect(runner.actions == ["discard", "acknowledgeResult", "endEarly"])
+    }
+
+    @Test("The basal screen's refresh, Discard, Done and End Now go to the runner") func basalForwards() async {
+        let runner = RecordingBasalTestRunner()
+        let state = BasalTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.screenReads = FakeBasalScreenReads(basalData(readings(110)))
+        state.runner = runner
+
+        await state.refresh()
+        #expect(state.currentGlucose == 110)
+        #expect(runner.checks == 1)
+        await state.checkRunningTest()
+        #expect(runner.checks == 2)
+
+        state.discard()
+        #expect(runner.actions == ["discard"])
+        #expect(await eventuallyOnMain { runner.checks == 3 })
+        state.acknowledgeResult()
+        #expect(runner.actions == ["discard", "acknowledgeResult"])
+        #expect(await eventuallyOnMain { runner.checks == 4 })
+        await state.endEarly()
+        #expect(runner.actions == ["discard", "acknowledgeResult", "endEarly"])
+    }
+
+    @Test("A fast that finishes on the basal screen has the week before it read for its Result") func basalFinishReadsTheWeek(
+    ) async throws {
+        let reads = FakeBasalScreenReads(basalData(readings(110)))
+        let state = BasalTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.screenReads = reads
+        let running = runningFast()
+        state.apply(running)
+        var finished = running
+        finished.phase = .finished
+        finished.endedAt = Date()
+        state.apply(finished)
+        #expect(await eventually { reads.smbReadsSince.count == 1 })
+        #expect(reads.smbReadsSince.first == running.startedAt.addingTimeInterval(-BasalTest.Config.smbLookback))
+
+        // The same finished fast published again, or one the screen opened on, reads nothing more here (`refresh` reads
+        // the week for a screen opened on a finished fast).
+        state.apply(finished)
+        state.apply(nil)
+        state.apply(finished)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(reads.smbReadsSince.count == 1)
+    }
+}

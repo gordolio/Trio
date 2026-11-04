@@ -232,6 +232,7 @@ extension BaseUserNotificationsManager: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         if AIRequestHooks.didReceive(response, completionHandler) { return }
+        if SettingsTestHooks.didReceive(response, completionHandler) { return }
         defer { completionHandler() }
 
         let userInfo = response.notification.request.content.userInfo

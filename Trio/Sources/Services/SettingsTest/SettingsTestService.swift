@@ -47,6 +47,9 @@ protocol SettingsTestService: AnyObject {
 
     func archive(_ record: SettingsTestRecord)
     func history(for kind: SettingsTestKind?) -> [SettingsTestRecord]
+
+    /// The runner that runs tests of this kind, or nil while it has none.
+    func runner(for kind: SettingsTestKind) -> SettingsTestRunner?
 }
 
 extension SettingsTestService {
@@ -60,8 +63,8 @@ extension SettingsTestService {
     }
 }
 
-/// What is read to watch a running test, by the service and by the basal test's own screen. A protocol so tests can
-/// stand in for Core Data.
+/// What is read to watch a running test, by the service and, through their providers, by the runners. A protocol so
+/// tests can stand in for Core Data.
 protocol SettingsTestEvents {
     /// Temp basals the pump started in the window, oldest first. Scheduled basal, which pumps also report as a temp,
     /// is left out: it is the basal being tested, not a change to it, and a 0 U/h entry is no suspend.
@@ -294,7 +297,16 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
 
     private let sessionSubject = CurrentValueSubject<SettingsTestSession?, Never>(nil)
     private var watchdog: AnyCancellable?
+    private let watchdogLock = NSLock()
     private let lock = NSLock()
+    /// One per test kind that runs in the service, built by the runtime at init.
+    private(set) var runners: [SettingsTestRunner] = []
+    private var triggerSubscription: AnyCancellable?
+    /// The service's own checks, one at a time (`checkSessionInBackground`).
+    private let ownChecks = SettingsTestBackgroundCheck()
+    /// Each runner's checks the service starts, one at a time per runner, by the runner's identity (`checkSession`).
+    /// Built at init with the runners, and not changed after.
+    private var runnerChecks: [ObjectIdentifier: SettingsTestBackgroundCheck] = [:]
     /// While the service puts a session's changes back, so its own change of mode isn't taken for the user's.
     private var restoring = false
 
@@ -304,19 +316,45 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// What the watchdog reads to end a basal or ISF test on a low, basal stopped, carbs, or a second bolus or none.
     private let events: SettingsTestEvents
 
-    /// `events` is for tests; the app reads Core Data.
-    init(resolver: Resolver, events: SettingsTestEvents? = nil) {
+    /// `events` and `runtime` are for tests; the app reads Core Data and builds the runtime itself.
+    init(resolver: Resolver, events: SettingsTestEvents? = nil, runtime: SettingsTestRuntime? = nil) {
         self.events = events ?? CoreDataSettingsTestEvents(context: CoreDataStack.shared.newTaskContext())
+        let runtime = runtime ?? .app(resolver: resolver)
         injectServices(resolver)
         broadcaster.register(SettingsObserver.self, observer: self)
+        runners = runtime.makeRunners(
+            SettingsTestRunnerContext(service: self, storage: storage, settingsManager: settingsManager)
+        )
+        runnerChecks = Dictionary(uniqueKeysWithValues: runners.map { (ObjectIdentifier($0), SettingsTestBackgroundCheck()) })
 
         // A session left over from a previous launch is either still running or past its deadline. Either way it is
-        // checked for a low first, so one that ran past its deadline while the app was closed keeps the low it had.
-        if let existing = storage.retrieve(SettingsTestStorage.sessionPath, as: SettingsTestSession.self) {
+        // checked for a low first, so one that ran past its deadline while the app was closed keeps the low it had. A
+        // runner that loaded a test it is still running is checked too.
+        let existing = storage.retrieve(SettingsTestStorage.sessionPath, as: SettingsTestSession.self)
+        if let existing {
             sessionSubject.send(existing)
+        }
+        if existing != nil || runners.contains(where: \.isRunning) {
             startWatchdog()
             checkSessionInBackground()
         }
+
+        // A change to what a running test reads is checked soon, not at the next tick of the watchdog.
+        triggerSubscription = runtime.checkTriggers
+            .debounce(for: runtime.triggerDebounce, scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self, isWatching else { return }
+                watchdogTick()
+            }
+    }
+
+    func runner(for kind: SettingsTestKind) -> SettingsTestRunner? {
+        runners.first { $0.kind == kind }
+    }
+
+    /// Whether the watchdog's timer runs, which it does while a session or a runner is running.
+    var isWatching: Bool {
+        watchdogLock.withLock { watchdog != nil }
     }
 
     @discardableResult func begin(
@@ -355,7 +393,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     }
 
     /// The record of a session ended because another mode was picked at `leftAt`, saying whether its end puts the usual
-    /// mode back with the mode in force now (`SettingsTestRestoreAction.modeToRestore`), so the screen can say so.
+    /// mode back with the mode in force now (`SettingsTestRestoreAction.modeToRestore`), so the runner can say so.
     private func modeChangedEnd(of session: SettingsTestSession, at leftAt: Date) -> SettingsTestEnd {
         let mode = settingsManager.settings.dosingMode
         return SettingsTestEnd(
@@ -387,25 +425,25 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// Ends a running test in Basal Testing when something spoiled it, since it began: Trio suspended insulin for a low
     /// (any test), carbs were logged (a basal or an ISF test), or, for an ISF test only, a second bolus was
     /// given after its own, or none came in the time allowed for one. Those are the things the test screens say end the
-    /// test. The watchdog calls this, so any one of them brings the usual dosing back whether or not that screen is
-    /// open. Basal stopped without Trio asking, by a zero temp set on the pump, ends it too: the test is spoiled, and it
-    /// isn't kept as a low. So do carbs that can't be read, in a basal or an ISF test: Basal Testing gives no insulin
-    /// for food, so it mustn't stay on unchecked. Why and when is kept (`lastEnd()`), so the screen, when opened again,
-    /// finishes the result for the same reason with the usual mode already back. A second bolus is dated at that bolus,
-    /// and no bolus at the end of the time allowed, so the screen can tell whether they came before the planned end. A
-    /// suspend is looked for first, then carbs, then boluses; a suspend that can't be read doesn't stop the others being
+    /// test. The watchdog calls this, so any one of them brings the usual dosing back at once, before the test's runner
+    /// finishes it. Basal stopped without Trio asking, by a zero temp set on the pump, ends it too: the test is spoiled,
+    /// and it isn't kept as a low. So do carbs that can't be read, in a basal or an ISF test: Basal Testing gives no
+    /// insulin for food, so it mustn't stay on unchecked. Why and when is kept (`lastEnd()`), so the runner finishes the
+    /// result for the same reason, with the usual mode already back. A second bolus is dated at that bolus, and no bolus
+    /// at the end of the time allowed, so the runner can tell whether they came before the planned end. A suspend is
+    /// looked for first, then carbs, then boluses; a suspend that can't be read doesn't stop the others being
     /// read, and boluses that can't be read leave the test running. Only a session that switched to Basal Testing: a
     /// mode the user picked since is theirs, unless Basal Testing suspended for a low before the change
     /// (`noteTestModeLeft`). That low is still this test's. Without one, the session ends as a mode change
-    /// (`modeChanged`, dated at the change), so the screen reads it as an interrupted test. Either way the end puts the
+    /// (`modeChanged`, dated at the change), so the runner reads it as an interrupted test. Either way the end puts the
     /// usual mode back only if Basal Testing is on again by then (`SettingsTestRestoreAction.modeToRestore`). For an ISF
     /// test, the pump suspended, alarmed or changed since Begin ends it too (`pumpInterrupted`), after a low and before
     /// carbs.
     ///
     /// An ISF test whose 4 hours from its bolus, and the grace after them, are over is ended too, with no reason kept,
-    /// as on expiry: nothing spoiled it, so the screen finishes it as completed when opened. Its session lasts until the
-    /// latest the 4 hours could end, so without this Basal Testing could stay on for up to the time allowed for the
-    /// bolus after a test that had run its course.
+    /// as on expiry: nothing spoiled it, so the runner finishes it as completed. Its session lasts until the latest the 4
+    /// hours could end, so without this Basal Testing could stay on for up to the time allowed for the bolus after a test
+    /// that had run its course.
     func endIfLowOrInterrupted() async {
         guard let session = activeSession, session.restore.contains(where: \.switchesToBasalTesting) else { return }
         let watching = session.leftTestModeAt == nil
@@ -458,7 +496,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
             // The reads above took time: the session may have ended, or its bolus window started, since it was copied,
             // and what they found was decided on the copy. The next check decides on the session as it is.
             guard Self.isUnchanged(session, live: activeSession) else { return }
-            // Kept before the usual mode comes back, so the screen never finds the mode changed without the reason.
+            // Kept before the usual mode comes back, so the runner never finds the mode changed without the reason.
             if let ending {
                 let kept = ending.cause == .modeChanged ? modeChangedEnd(of: session, at: ending.date) : ending
                 storage.save(kept, as: SettingsTestStorage.lastEndPath)
@@ -475,7 +513,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     }
 
     /// When the pump was first suspended, alarmed or changed since `session` began (`pumpInterruptions`). Nil when it
-    /// wasn't, and when the pump history can't be read: the test screen's own check then can't rule it out and gives no
+    /// wasn't, and when the pump history can't be read: the runner's own check then can't rule it out and gives no
     /// verdict, and the session's expiry still brings the usual dosing back.
     private func pumpInterruption(of session: SettingsTestSession, until end: Date) async -> Date? {
         do {
@@ -503,7 +541,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
 
     /// What the boluses say ends a running ISF test.
     private enum ISFBolusCheck {
-        /// Something spoiled it, kept for the screen.
+        /// Something spoiled it, kept for the runner.
         case spoiled(SettingsTestEnd)
         /// The 4 hours from its bolus and the grace after them are over, and nothing spoiled it.
         case waitOver
@@ -566,18 +604,55 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         return true
     }
 
-    /// What the watchdog does on each tick, and what a session recovered at launch gets once: the low, carbs and bolus
-    /// check first, then the expiry check. In that order because a session past its deadline is ended whatever it
-    /// finds, and ending it first would lose the low, which the basal screen would then report as an interrupted fast.
-    /// The expiry check runs even when the history can't be read, so the usual mode always comes back.
-    func checkSession() async {
+    /// The service's own check, which each tick of the watchdog and each change of the data a test reads start after their
+    /// own expiry check (`watchdogTick`), and which a session or a runner recovered at launch gets once: the low, carbs
+    /// and bolus check first, then the expiry check, then a check of each runner that is running, started on its own,
+    /// then the watchdog stops if nothing is running. In that order because a session past its deadline is ended whatever
+    /// it finds, and ending it first would lose the low, which the runner would then report as an interrupted test; and a
+    /// runner's check, started after them, reads the ending the service just kept (`lastEnd()`). The expiry check runs
+    /// even when the history can't be read, so the usual mode always comes back.
+    ///
+    /// Nothing here waits for a runner. A runner's check that never returned (a stuck Core Data read, say) would
+    /// otherwise stop every later check of the service, its expiry restore among them, for as long as Trio ran. Each
+    /// runner's checks are coalesced on their own (`SettingsTestBackgroundCheck`), so one that hangs holds up only that
+    /// runner's later checks. Returns those checks, started here or asked here for one more run, so a test can wait for
+    /// them; the service never does.
+    @discardableResult func checkSession() async -> [Task<Void, Never>] {
         await endIfLowOrInterrupted()
         // Where the watchdog's timer ran it before, so the mode and the session are changed on the main actor.
         await MainActor.run { endIfExpired() }
+        let started = runners.filter(\.isRunning).compactMap { checkInBackground($0) }
+        await MainActor.run { stopWatchdogIfIdle() }
+        return started
     }
 
-    private func checkSessionInBackground() {
-        Task { [weak self] in await self?.checkSession() }
+    /// Starts `runner`'s check without waiting for it, or asks the one going for one more run. After each run the watchdog
+    /// stops if nothing is running, as at the end of `checkSession`, since a runner's check is what finishes its test.
+    /// Nil for a runner the service doesn't hold.
+    private func checkInBackground(_ runner: SettingsTestRunner) -> Task<Void, Never>? {
+        runnerChecks[ObjectIdentifier(runner)]?.request { [weak self, weak runner] in
+            await runner?.check()
+            await MainActor.run { self?.stopWatchdogIfIdle() }
+        }
+    }
+
+    /// What each tick of the watchdog and each change of the data a test reads does, on the main thread: the expiry
+    /// check first, then the checks without waiting for them (`checkSessionInBackground`). The expiry check needs only
+    /// the session and the clock, so a read that never returns, the service's own among them, can't hold back the
+    /// last-resort restore. A session the coalesced checks end meanwhile is gone by the time either looks again, so
+    /// running it twice ends nothing twice. Only at launch does the low come first (`init`). Internal, for tests.
+    func watchdogTick() {
+        endIfExpired()
+        checkSessionInBackground()
+    }
+
+    /// Checks without waiting for it: one service check at a time, and a call made during one asks for one more run once
+    /// it is done (`SettingsTestBackgroundCheck`), so a change that came in after the reads started is never missed. The
+    /// check never waits for a runner, so every tick and trigger gets one. Internal, for tests.
+    func checkSessionInBackground() {
+        ownChecks.request { [weak self] in
+            _ = await self?.checkSession()
+        }
     }
 
     func lastEnd() -> SettingsTestEnd? {
@@ -594,7 +669,8 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         restoring = false
         storage.remove(SettingsTestStorage.sessionPath)
         sessionSubject.send(nil)
-        watchdog = nil
+        // The watchdog goes on until its next check finds nothing running (`stopWatchdogIfIdle`): a runner may still be
+        // finishing what the session's end started.
         cancelExpiryNotification()
     }
 
@@ -610,9 +686,20 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     }
 
     private func startWatchdog() {
-        watchdog = Timer.publish(every: 60, on: .main, in: .common)
+        let timer = Timer.publish(every: 60, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.checkSessionInBackground() }
+            .sink { [weak self] _ in self?.watchdogTick() }
+        watchdogLock.withLock { watchdog = timer }
+    }
+
+    /// Stops the watchdog when no session and no runner is running, so it costs nothing between tests. Checked and
+    /// cleared under the one lock: a session begun in between sends itself before `begin` starts its watchdog, which
+    /// waits for this lock, so the new watchdog is never the one cleared.
+    private func stopWatchdogIfIdle() {
+        watchdogLock.withLock {
+            guard activeSession == nil, !runners.contains(where: \.isRunning) else { return }
+            watchdog = nil
+        }
     }
 
     // MARK: - History
@@ -641,19 +728,27 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// Fires if the app isn't opened before the deadline. The restore itself happens the next time
     /// Trio runs, so the text asks the user to open it.
     private func scheduleExpiryNotification(at date: Date, kind: SettingsTestKind) {
+        let interval = max(1, date.timeIntervalSinceNow)
+        let request = UNNotificationRequest(
+            identifier: SettingsTestStorage.expiryNotificationID,
+            content: Self.expiryContent(kind: kind),
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    /// The notification for a session that ran out of time with Trio not running. A tap opens the test's screen
+    /// (`SettingsTestHooks`).
+    static func expiryContent(kind: SettingsTestKind) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         content.title = String(localized: "Test time is up")
         content.body = String(
             localized: "Your \(kind.title) test has run its course. Open Trio to return to your normal dosing."
         )
         content.sound = .default
-        let interval = max(1, date.timeIntervalSinceNow)
-        let request = UNNotificationRequest(
-            identifier: SettingsTestStorage.expiryNotificationID,
-            content: content,
-            trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-        )
-        UNUserNotificationCenter.current().add(request)
+        content.categoryIdentifier = SettingsTestNotice.category
+        content.userInfo = [SettingsTestNotice.kindKey: kind.rawValue]
+        return content
     }
 
     private func cancelExpiryNotification() {
@@ -665,7 +760,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
 
 extension BaseSettingsTestService: SettingsObserver {
     /// A mode picked during a test that switched to Basal Testing: a low from before the change is checked for at once,
-    /// before the basal screen's next check reads the change as an interrupted fast.
+    /// before the runner's next check reads the change as an interrupted test.
     func settingsDidChange(_: TrioSettings) {
         guard noteTestModeLeft() else { return }
         checkSessionInBackground()

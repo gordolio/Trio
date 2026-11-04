@@ -4,7 +4,7 @@ import LoopKit
 import Swinject
 
 extension ISFTest {
-    final class Provider: BaseProvider, ISFTestProvider {
+    final class Provider: BaseProvider, ISFTestProvider, ISFTestReads {
         /// The basal test's reads (glucose, trend, IOB, COB, temp basals and whether Trio asked for a zero one, a temp
         /// basal set on the pump, carbs, SMBs, adjustments, devices), shared rather than copied.
         let shared: BasalTest.Provider
@@ -178,6 +178,54 @@ extension ISFTest {
         /// waits for Trio's first loop in Basal Testing, and for the insulin on board just before the bolus.
         func fetchDeterminations(from start: Date, to end: Date) async throws -> [ISFTestDetermination] {
             try await events.determinations(from: start, to: end)
+        }
+
+        /// Insulin on board for a counted dose, from Trio's newest determination of the 12 minutes up to `now`
+        /// (`ISFTestEvaluator.recentIOB`). Nil when there is none.
+        func fetchDoseIOB(at now: Date) async throws -> Decimal? {
+            let determinations = try await fetchDeterminations(
+                from: now.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - ISFTest.Config.savedDateTolerance),
+                to: now.addingTimeInterval(ISFTest.Config.savedDateTolerance)
+            )
+            return ISFTestEvaluator.recentIOB(determinations, now: now)
+        }
+
+        // MARK: - Shared reads, for the runner (`ISFTestReads`)
+
+        func fetchGlucose(from start: Date, to end: Date) async throws -> [BasalTestReading] {
+            try await shared.fetchGlucose(from: start, to: end)
+        }
+
+        func fetchRecentGlucose(minutes: Int) async throws -> [BasalTestReading] {
+            try await shared.fetchRecentGlucose(minutes: minutes)
+        }
+
+        func fetchNewestDirection() async throws -> BloodGlucose.Direction? {
+            try await shared.fetchNewestDirection()
+        }
+
+        func hasActiveAdjustment() async throws -> Bool {
+            try await shared.hasActiveAdjustment()
+        }
+
+        func hasPumpSetTempBasal() -> Bool {
+            shared.hasPumpSetTempBasal()
+        }
+
+        func hasCgmAndPump() -> Bool {
+            shared.hasCgmAndPump()
+        }
+
+        func fetchSMBs(since start: Date, until end: Date) async throws -> [BasalTestSMB] {
+            try await shared.fetchSMBs(since: start, until: end)
+        }
+
+        func fetchTempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal] {
+            try await shared.fetchTempBasals(from: start, to: end)
+        }
+
+        func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
+            try await shared.hasCarbEntries(from: start, to: end)
         }
     }
 }

@@ -136,4 +136,20 @@ enum ISFTest {
     }
 }
 
-protocol ISFTestProvider {}
+/// What the ISF screen reads for its steps, beside the runner's state (`StateModel.refresh`). `ISFTest.Provider` conforms;
+/// a test gives the state model its own (`StateModel.screenReads`).
+protocol ISFTestProvider: AnyObject {
+    func isfEntries() -> [SettingsTestScheduleEntry]
+    func basalEntries() -> [SettingsTestScheduleEntry]
+    func isf(at date: Date) -> Decimal?
+    func target(at date: Date) -> Decimal?
+    /// Newest first.
+    func fetchRecentGlucose(minutes: Int) async throws -> [BasalTestReading]
+    func currentIOB() -> Decimal?
+    func currentCOB() async throws -> Decimal?
+    func hasActiveAdjustment() async throws -> Bool
+    func hasPumpSetTempBasal() -> Bool
+    func pumpDelivery() -> ISFTestPumpDelivery?
+    func hasCgmAndPump() -> Bool
+    func fetchNewestDirection() async throws -> BloodGlucose.Direction?
+}

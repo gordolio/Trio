@@ -90,6 +90,9 @@ struct ISFTestArrowReading: Equatable {
 /// the pump or the Watch as well as from Open Treatments (`ISFTestEvaluator.failedBolusCondition`). The test then ends
 /// with no verdict: a spoiled test gives no result.
 enum ISFTestBolusCondition: Equatable {
+    /// Glucose at the bolus was at or below the target, so the docs' formula gives no dose to judge it by
+    /// (`ISFTestEvaluator.dose`).
+    case atOrBelowTarget
     /// Tablets were taken, and glucose hadn't risen from them yet (`ISFTestEvaluator.tabletsActed`).
     case tabletsNotActed
     /// The CGM's arrow at the bolus wasn't flat (`ISFTestEvaluator.isLevel`).
@@ -98,12 +101,15 @@ enum ISFTestBolusCondition: Equatable {
     case carbsOnBoard
     /// In a test that waits for it, insulin on board at the bolus was over the line for the docs' dose then.
     case iobOverLine
-    /// A reading or a determination needed to check the conditions at the bolus couldn't be read.
+    /// The start glucose at the bolus (the mean of the newest 3 readings at or before it, checked first), or a reading or
+    /// a determination needed to check the other conditions then, couldn't be read.
     case unread
 
     /// What the Result says about it.
     var note: String {
         switch self {
+        case .atOrBelowTarget:
+            return String(localized: "The bolus came with your glucose at or below your target, so the test can't be judged.")
         case .tabletsNotActed:
             return String(localized: "The bolus came before the tablets raised your glucose, so the test can't be judged.")
         case .glucoseMoving:
@@ -170,7 +176,7 @@ enum ISFTestSettling: Equatable {
     case settled
 }
 
-/// Where a running ISF test is. The screen saves it, so a test opened again carries on from the same step.
+/// Where a running ISF test is. The runner saves it, so a test opened again carries on from the same step.
 enum ISFTestPhase: String, JSON {
     /// Begin switched to Basal Testing, so SMBs stopped. The test waits for Trio's first loop in Basal Testing, and for
     /// insulin on board to come under the test's line when it waits for it, before the real test starts.
@@ -402,6 +408,13 @@ struct ISFTestState: JSON, Equatable {
     /// Whether a record read to check for what spoils the test couldn't be read when it finished, so something may have
     /// been missed. Nil in a state saved before it was kept.
     var interferenceUnread: Bool? = nil
+    /// The ending a check decided, saved before the usual mode comes back, so the next check finishes it for that ending
+    /// (`ISFTestRunner`). Nil while none is, once the test has finished, and in a state saved before it was kept.
+    var pendingEnd: ISFTestPendingEnd? = nil
+    /// The Dose step's notice, "ISF Dose Ready", while it is owed: the step came next, after settling or the tablets,
+    /// and didn't show a dose then. Posted once it shows one (`ISFTestEvaluator.doseNotice`); dropped by the bolus, a move
+    /// to another step and a finish. Nil otherwise, and in a state saved before it was kept.
+    var doseNoticeDue: ISFTestDoseNoticeDue? = nil
 
     /// When the real test started, which the bolus window runs from: the end of settling. A test begun before settling
     /// was kept carries on from Start, as it did then. Nil while settling.
@@ -527,7 +540,7 @@ enum ISFTestEvaluator {
         /// low: none of Trio's determinations asked for it, or Basal Testing was off by the time of the check and the
         /// service didn't end the test for it.
         case unexplainedSuspend(at: Date)
-        /// The service ended the test for no bolus before it saw the one the screen found, and brought the usual mode
+        /// The service ended the test for no bolus before it saw the one the runner found, and brought the usual mode
         /// back.
         case bolusNotSeen
         /// The test bolus was cancelled before any insulin was delivered (`bolusAmount`).
@@ -552,7 +565,7 @@ enum ISFTestEvaluator {
     ///
     /// Waiting, it is the basal fast's rules, which `BasalTestEvaluator.runningCheck` holds, to the planned end. A low
     /// dated before `bolusAt` (the service's record, or a zero temp) is still a low before the dose: the bolus went in
-    /// after it, perhaps from Home with this screen closed, and there was nothing to judge. A test found waiting with
+    /// after it, perhaps from Home with the test's screen closed, and there was nothing to judge. A test found waiting with
     /// no planned end can't be timed or judged, so it closes with no verdict at the dose deadline.
     static func runningCheck(
         phase: ISFTestPhase,
@@ -667,23 +680,6 @@ enum ISFTestEvaluator {
             if asked.isEmpty { return .unexplained(at: temp.date) }
         }
         return .none
-    }
-
-    /// The dosing mode the screen puts back itself as it ends a test, or nil to leave it: only while Basal Testing is
-    /// still on and the test's session is lost, with no session running and no end of it kept by the service
-    /// (`lastEndSessionID`), so nothing else will bring the usual mode back. A session that runs puts its own back (or,
-    /// another test's, owns Basal Testing); one the service ended put it back then, or, once the user had picked a mode
-    /// of their own, left it theirs (`SettingsTestEndCause.modeChanged`). A test with no session never switched modes.
-    static func modeToRestore(
-        mode: DosingMode,
-        testSessionID: UUID?,
-        activeSessionID: UUID?,
-        lastEndSessionID: UUID?,
-        previousMode: DosingMode
-    ) -> DosingMode? {
-        guard let testSessionID, activeSessionID == nil, lastEndSessionID != testSessionID else { return nil }
-        // The rule every end path uses: Basal Testing on, the usual mode comes back; any other mode is the user's.
-        return SettingsTestRestoreAction.dosingMode(testMode: .basalTesting, previous: previousMode).modeToRestore(current: mode)
     }
 
     /// The docs' dose: (current glucose − target glucose) ÷ ISF, to 2 decimals. Nil when glucose isn't above target,
@@ -1116,12 +1112,6 @@ enum ISFTestEvaluator {
         return mode == .basalTesting && now < noBolusDeadline
     }
 
-    /// When a finish ends the test: `endedAt` when a check gave one, now otherwise, never after `limit` (the planned end,
-    /// or the no-bolus deadline before the bolus) and never after now, so a test never ends in the future.
-    static func endTime(endedAt: Date?, limit: Date, now: Date) -> Date {
-        min(endedAt ?? now, limit, now)
-    }
-
     /// The ISF schedule entries a test begun at `startedAt` can run on, saved at Begin: every hour its 4 hours can reach,
     /// so an ISF edited before the bolus is found doesn't become what the test ran on. The latest end is settling's
     /// bound (`noBolusDeadline`, the time for settling and the dose), then a whole bolus window from there and the docs'
@@ -1410,26 +1400,33 @@ enum ISFTestEvaluator {
 
     /// The first condition the Dose step holds the dose for that didn't hold at the test bolus, at `bolusAt`, in the
     /// Dose step's order, or nil when they all held. A bolus can come from Home, the pump or the Watch (R2), so a spoiled
-    /// one is caught here and not judged:
+    /// one is caught here and not judged. Everything is judged from the bolus moment: the start glucose then
+    /// (`startGlucose`, the mean of the last 3 readings at or before the bolus), and the target and ISF in force then.
+    /// - the start glucose is read (`startGlucose`), and above the `target`: the docs' formula, (glucose − target) ÷ ISF,
+    ///   gives a dose only above it;
     /// - the tablets, when taken (`tabletsTakenAt`), had acted on the readings at or before the bolus (`tabletsActed`);
     /// - the CGM's arrow on the newest reading at or before the bolus, no more than `maxAge` before it, is flat or absent
     ///   (`isLevel`, R6);
     /// - carbs on board from the newest determination at most `maxAge` before the bolus are none (`cobAtBolus`);
-    /// - unless the test counts it, insulin on board just before the bolus (`iobAtBolus`) is at or under `line`, the
-    ///   docs' smallest ISF change of the docs' dose at the bolus (`doseIOBLine`).
+    /// - unless the test counts it, insulin on board just before the bolus (`iobAtBolus`) is at or under the line, the
+    ///   docs' smallest ISF change of the docs' dose at the bolus (`doseIOBLine`, from `startGlucose`, `target`, `isf`).
     /// A reading or determination that couldn't be read, or isn't recent enough, is `unread`: nothing can be judged
     /// that can't be checked.
     static func failedBolusCondition(
         bolusAt: Date,
+        startGlucose: Int?,
+        target: Decimal,
+        isf: Decimal,
         readings: [BasalTestReading]?,
         tabletsTakenAt: Date?,
         tabletsGlucose: Int?,
         arrow: ISFTestArrowReading?,
         determinations: [ISFTestDetermination]?,
         handling: ISFTestIOBHandling?,
-        line: Decimal?,
         maxAge: TimeInterval = BasalTest.Config.endReadingMaxAge
     ) -> ISFTestBolusCondition? {
+        guard let startGlucose else { return .unread }
+        guard Decimal(startGlucose) > target else { return .atOrBelowTarget }
         if let tabletsTakenAt {
             guard let readings else { return .unread }
             let atBolus = Self.readings(readings, atOrBefore: bolusAt)
@@ -1445,7 +1442,9 @@ enum ISFTestEvaluator {
             return .unread
         }
         guard cob <= 0 else { return .carbsOnBoard }
-        if handling != .count, let line {
+        // No line in a test that counts insulin on board, which takes it off the dose instead (`doseIOBLine`).
+        let docsDose = dose(glucose: startGlucose, target: target, isf: isf)
+        if let line = doseIOBLine(dose: docsDose, handling: handling) {
             guard let iob = iobAtBolus(determinations, bolusAt: bolusAt, maxAge: maxAge) else { return .unread }
             if waitsForIOB(iob: iob, line: line, handling: handling) { return .iobOverLine }
         }
@@ -1537,27 +1536,26 @@ enum ISFTestEvaluator {
         return newest.map(\.glucose).reduce(0, +) / newest.count > base
     }
 
-    /// Whether the dose can be worked out. Dosing, when the docs' formula gives one, glucose has leveled off (`isLevel`)
-    /// and insulin on board doesn't hold it up (`iobAllowsDose`). Raising, once tablets were taken, glucose has risen
-    /// from them and leveled off (`tabletsActed`), so a flat reading from before the tablets acted can't unlock the dose.
-    /// Either way only with carbs on board read and none (`carbsAllowDose`). Never once the bolus is in.
+    /// Whether the dose can be worked out. Dosing, when the docs' formula gives one, glucose has leveled off (`isLevel`,
+    /// as `isLevel(direction:hasRecentReading:)` says) and insulin on board doesn't hold it up (`iobAllowsDose`).
+    /// Raising, once tablets were taken, glucose has risen from them and leveled off (`tabletsActed`), so a flat reading
+    /// from before the tablets acted can't unlock the dose. Either way only with carbs on board read and none
+    /// (`carbsAllowDose`). Never once the bolus is in.
     static func canDose(
         phase: ISFTestPhase,
         tabletsTaken: Bool,
         tabletsActed: Bool,
-        direction: BloodGlucose.Direction?,
-        hasRecentReading: Bool,
+        isLevel: Bool,
         dose: Decimal?,
         iobAllowsDose: Bool,
         carbsOnBoard: Decimal?
     ) -> Bool {
-        let level = isLevel(direction: direction, hasRecentReading: hasRecentReading)
         guard carbsAllowDose(carbsOnBoard) else { return false }
         switch phase {
         case .dosing:
-            return dose != nil && level && iobAllowsDose
+            return dose != nil && isLevel && iobAllowsDose
         case .raising:
-            return tabletsTaken && tabletsActed && level
+            return tabletsTaken && tabletsActed && isLevel
         case .finished,
              .settling,
              .waiting:

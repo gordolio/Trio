@@ -1,6 +1,8 @@
+import CoreText
 import Foundation
 import LoopKit
 import Testing
+import UIKit
 
 @testable import Trio
 
@@ -831,8 +833,7 @@ import Testing
                 phase: phase,
                 tabletsTaken: tablets,
                 tabletsActed: acted,
-                direction: direction,
-                hasRecentReading: recent,
+                isLevel: ISFTestEvaluator.isLevel(direction: direction, hasRecentReading: recent),
                 dose: dose,
                 iobAllowsDose: iobAllows,
                 carbsOnBoard: cob
@@ -923,8 +924,7 @@ import Testing
             phase: .raising,
             tabletsTaken: true,
             tabletsActed: acted(before),
-            direction: .flat,
-            hasRecentReading: true,
+            isLevel: ISFTestEvaluator.isLevel(direction: .flat, hasRecentReading: true),
             dose: nil,
             iobAllowsDose: true,
             carbsOnBoard: 0
@@ -934,8 +934,7 @@ import Testing
             phase: .raising,
             tabletsTaken: true,
             tabletsActed: acted(before + rise),
-            direction: .flat,
-            hasRecentReading: true,
+            isLevel: ISFTestEvaluator.isLevel(direction: .flat, hasRecentReading: true),
             dose: nil,
             iobAllowsDose: true,
             carbsOnBoard: 0
@@ -2353,8 +2352,7 @@ import Testing
             phase: .settling,
             tabletsTaken: true,
             tabletsActed: true,
-            direction: .flat,
-            hasRecentReading: true,
+            isLevel: ISFTestEvaluator.isLevel(direction: .flat, hasRecentReading: true),
             dose: 2,
             iobAllowsDose: true,
             carbsOnBoard: 0
@@ -2640,17 +2638,17 @@ import Testing
         let ending = ISFTestEvaluator.ending(for: .settlingTimedOut, doseDeadline: state.noBolusDeadline)
         #expect(ending.reason == .interrupted)
         #expect(ending.note == "Settling didn't finish in time, so Trio brought your usual dosing back. Nothing was saved.")
-        let endedAt = ISFTestEvaluator.endTime(endedAt: ending.at, limit: state.noBolusDeadline, now: now)
+        let endedAt = SettingsTestEndRule.endTime(endedAt: ending.at, limit: state.noBolusDeadline, now: now)
         #expect(endedAt == at(limit))
     }
 
     @Test("A finish never ends a test after its limit or in the future") func endTime() {
-        #expect(ISFTestEvaluator.endTime(endedAt: at(600), limit: at(5400), now: at(1200)) == at(600))
-        #expect(ISFTestEvaluator.endTime(endedAt: nil, limit: at(5400), now: at(1200)) == at(1200))
-        #expect(ISFTestEvaluator.endTime(endedAt: nil, limit: at(5400), now: at(6000)) == at(5400))
+        #expect(SettingsTestEndRule.endTime(endedAt: at(600), limit: at(5400), now: at(1200)) == at(600))
+        #expect(SettingsTestEndRule.endTime(endedAt: nil, limit: at(5400), now: at(1200)) == at(1200))
+        #expect(SettingsTestEndRule.endTime(endedAt: nil, limit: at(5400), now: at(6000)) == at(5400))
         // An end a check dated in the future, or past the limit, is now, or the limit.
-        #expect(ISFTestEvaluator.endTime(endedAt: at(9000), limit: at(12000), now: at(6000)) == at(6000))
-        #expect(ISFTestEvaluator.endTime(endedAt: at(9000), limit: at(5400), now: at(10000)) == at(5400))
+        #expect(SettingsTestEndRule.endTime(endedAt: at(9000), limit: at(12000), now: at(6000)) == at(6000))
+        #expect(SettingsTestEndRule.endTime(endedAt: at(9000), limit: at(5400), now: at(10000)) == at(5400))
     }
 
     @Test(
@@ -3160,7 +3158,7 @@ import Testing
     }
 
     @Test(
-        "A lost session with Basal Testing still on: the screen puts the mode back itself, and only then"
+        "A lost session with Basal Testing still on: the runner puts the mode back itself, and only then"
     ) func lostSessionRestore() {
         let other = UUID()
         func restore(
@@ -3169,7 +3167,7 @@ import Testing
             lastEnd: UUID? = nil,
             previous: DosingMode = .closed
         ) -> DosingMode? {
-            ISFTestEvaluator.modeToRestore(
+            SettingsTestModeRule.modeToRestore(
                 mode: mode,
                 testSessionID: testSession,
                 activeSessionID: active,
@@ -3189,7 +3187,7 @@ import Testing
         // Basal Testing is already off.
         #expect(restore(mode: .closed) == nil)
         // A test with no session never switched modes.
-        #expect(ISFTestEvaluator.modeToRestore(
+        #expect(SettingsTestModeRule.modeToRestore(
             mode: .basalTesting,
             testSessionID: nil,
             activeSessionID: nil,
@@ -3206,9 +3204,13 @@ import Testing
 
     // MARK: Fix round 1
 
-    /// The conditions at a bolus 20 minutes after Start: by default a level arrow 2 minutes before it, and a
+    /// The conditions at a bolus 20 minutes after Start: by default a start glucose of 210 against a target of 100 and an
+    /// ISF of 50 (a docs dose of 2.20 U, a line for insulin on board of 0.11 U), a level arrow 2 minutes before it, and a
     /// determination 3 minutes before it with no carbs and no insulin on board.
     private func condition(
+        startGlucose: Int? = 210,
+        target: Decimal = 100,
+        isf: Decimal = 50,
         readings: [BasalTestReading]? = [],
         tabletsTakenAt: TimeInterval? = nil,
         tabletsGlucose: Int? = 110,
@@ -3217,18 +3219,19 @@ import Testing
         determinations: [ISFTestDetermination]? = [
             ISFTestDetermination(date: Date(timeIntervalSince1970: 1_800_000_000 + 1020), iob: 0, cob: 0)
         ],
-        handling: ISFTestIOBHandling? = nil,
-        line: Decimal? = Decimal(string: "0.11")
+        handling: ISFTestIOBHandling? = nil
     ) -> ISFTestBolusCondition? {
         ISFTestEvaluator.failedBolusCondition(
             bolusAt: at(1200),
+            startGlucose: startGlucose,
+            target: target,
+            isf: isf,
             readings: readings,
             tabletsTakenAt: tabletsTakenAt.map(at),
             tabletsGlucose: tabletsGlucose,
             arrow: arrow ?? nil,
             determinations: determinations,
-            handling: handling,
-            line: line
+            handling: handling
         )
     }
 
@@ -3272,8 +3275,6 @@ import Testing
         #expect(condition(determinations: over, handling: .count) == nil)
         #expect(condition(determinations: [determination(1020, iob: "0.11", cob: 0)], handling: .wait) == nil)
         #expect(condition(determinations: [determination(1020, iob: "-0.2", cob: 0)], handling: .wait) == .iobOverLine)
-        // Without a docs' dose at the bolus there is no line to hold it against.
-        #expect(condition(determinations: over, handling: .wait, line: nil) == nil)
 
         // Each sentence the Result shows.
         #expect(
@@ -3317,6 +3318,259 @@ import Testing
         let ended = finished(elapsedHours: 0.1, reason: .interrupted, interference: ISFTestBolusCondition.unread.note)
         #expect(ended.outcome == .invalid)
         #expect(ISFTestEvaluator.noVerdict(for: ended) == .interrupted)
+    }
+
+    // MARK: Rules at the bolus moment, and shared dose readiness
+
+    @Test("A bolus at or below the target is a failed condition, checked first") func bolusAtOrBelowTarget() {
+        #expect(condition(startGlucose: 100) == .atOrBelowTarget)
+        #expect(
+            condition(startGlucose: 95, arrow: .some(ISFTestArrowReading(date: at(1080), direction: .singleUp))) ==
+                .atOrBelowTarget
+        )
+        #expect(condition(startGlucose: 101) == nil)
+        // The target at the bolus is the one it is held against, not a fixed 100.
+        #expect(condition(startGlucose: 150, target: 150) == .atOrBelowTarget)
+        #expect(condition(startGlucose: 151, target: 150) == nil)
+        #expect(
+            ISFTestBolusCondition.atOrBelowTarget.note
+                == "The bolus came with your glucose at or below your target, so the test can't be judged."
+        )
+    }
+
+    @Test("A start glucose at the bolus that can't be read is unread, counted or not") func unreadStartGlucose() {
+        #expect(condition(startGlucose: nil) == .unread)
+        #expect(condition(startGlucose: nil, handling: .count) == .unread)
+        // Checked before the other conditions, so what else held at the bolus doesn't make an unread start glucose read.
+        #expect(condition(startGlucose: nil, arrow: .some(ISFTestArrowReading(date: at(1080), direction: .singleUp))) == .unread)
+    }
+
+    @Test("The line for insulin on board comes from the dose at the bolus moment") func lineFromTheBolusMoment() {
+        func held(_ iob: String, start: Int, target: Decimal = 100, isf: Decimal = 50) -> ISFTestBolusCondition? {
+            condition(
+                startGlucose: start,
+                target: target,
+                isf: isf,
+                determinations: [ISFTestDetermination(date: at(1020), iob: dec(iob), cob: 0)],
+                handling: .wait
+            )
+        }
+        // 210 against 100 at an ISF of 50 is a 2.20 U dose, and 5% of it a line of 0.11 U.
+        #expect(held("0.11", start: 210) == nil)
+        #expect(held("0.12", start: 210) == .iobOverLine)
+        // A smaller dose, 1.20 U, a smaller line, 0.06 U.
+        #expect(held("0.06", start: 160) == nil)
+        #expect(held("0.07", start: 160) == .iobOverLine)
+        // The target and ISF at the bolus: 60 ÷ 25 is 2.40 U, a line of 0.12 U.
+        #expect(held("0.12", start: 210, target: 150, isf: 25) == nil)
+        #expect(held("0.13", start: 210, target: 150, isf: 25) == .iobOverLine)
+        // A test that counts insulin on board takes it off the dose instead, so there is no line.
+        #expect(condition(
+            startGlucose: 160,
+            determinations: [ISFTestDetermination(date: at(1020), iob: dec("0.3"), cob: 0)],
+            handling: .count
+        ) == nil)
+    }
+
+    /// When the Dose step's readiness is judged. The raising test took tablets 20 minutes before it.
+    private var doseNow: Date { at(2 * hour) }
+
+    private func doseReading(_ minutesAgo: Double, _ glucose: Int) -> BasalTestReading {
+        BasalTestReading(date: doseNow.addingTimeInterval(-minutesAgo * 60), glucose: glucose)
+    }
+
+    private func testState(_ phase: ISFTestPhase) -> ISFTestState {
+        ISFTestState(phase: phase, startedAt: testStart, previousMode: .closed, isf: 50, target: 100)
+    }
+
+    /// Tablets taken 20 minutes before now, from 110 mg/dL.
+    private var raising: ISFTestState {
+        var state = testState(.raising)
+        state.tabletsTakenAt = doseNow.addingTimeInterval(-20 * 60)
+        state.tabletsGlucose = 110
+        return state
+    }
+
+    /// Dosing, with no tablets, at an ISF of 50 and a target of 100, and no choice on insulin on board.
+    private var dosing: ISFTestState { testState(.dosing) }
+
+    /// After the tablets: 128 (2 minutes ago), 126, 118 and 110 from before they acted (25 minutes ago); a flat arrow,
+    /// no insulin or carbs on board.
+    private var inputs: ISFTestDoseInputs {
+        ISFTestDoseInputs(
+            readings: [doseReading(2, 128), doseReading(7, 126), doseReading(14, 118), doseReading(25, 110)],
+            direction: .flat,
+            iob: 0,
+            doseIOB: nil,
+            cob: 0,
+            increment: dec("0.05"),
+            now: doseNow
+        )
+    }
+
+    /// Glucose at 210 mg/dL, level.
+    private var inputs210: ISFTestDoseInputs {
+        ISFTestDoseInputs(
+            readings: [doseReading(2, 210), doseReading(7, 210), doseReading(12, 210)],
+            direction: .flat,
+            iob: 0,
+            doseIOB: nil,
+            cob: 0,
+            increment: dec("0.05"),
+            now: doseNow
+        )
+    }
+
+    @Test("The Dose step's gate reads the same from the screen's inputs and the runner's") func doseReadinessFromInputs() {
+        // Raising, tablets taken 20 minutes ago from 110: glucose has risen from them and is level.
+        #expect(ISFTestEvaluator.canDose(of: raising, inputs))
+        #expect(!ISFTestEvaluator.canDose(of: raising, inputs.with(direction: .singleUp)))
+        #expect(!ISFTestEvaluator.canDose(of: raising, inputs.with(cob: nil)))
+        #expect(ISFTestEvaluator.doseGlucose(inputs.with(newestAgo: 13 * 60)) == nil)
+        #expect(ISFTestEvaluator.shownDirection(inputs.with(newestAgo: 16 * 60)) == nil)
+        // Dosing at 210, target 100, ISF 50, handling nil.
+        #expect(ISFTestEvaluator.docsDose(of: dosing, inputs210) == Decimal(string: "2.2"))
+    }
+
+    @Test("Raise moves on only with a reading recent enough to work the dose out from") func raiseNeedsARecentReading() {
+        // Tablets taken 30 minutes ago from 110, and the 3 readings since have risen from them. With the newest 13 minutes
+        // old the arrow still shows flat, but there is no glucose to work the dose out from, so the Dose step would show
+        // none.
+        var earlier = raising
+        earlier.tabletsTakenAt = doseNow.addingTimeInterval(-30 * 60)
+        let stale = inputs.with(newestAgo: 13 * 60)
+        #expect(ISFTestEvaluator.tabletsActed(of: earlier, stale))
+        #expect(ISFTestEvaluator.shownDirection(stale) == .flat)
+        #expect(ISFTestEvaluator.doseGlucose(stale) == nil)
+        #expect(!ISFTestEvaluator.canDose(of: earlier, stale))
+        #expect(ISFTestEvaluator.canDose(of: earlier, inputs.with(newestAgo: 11 * 60)))
+    }
+
+    @Test("Each part of the Dose step's inputs counts, and a stale reading or arrow doesn't") func doseInputsEachCount() {
+        // The mean of the newest 3 readings: 128, 126 and 118.
+        #expect(ISFTestEvaluator.doseGlucose(inputs) == 124)
+        #expect(ISFTestEvaluator.doseGlucose(inputs.with(newestAgo: 11 * 60)) == 124)
+        #expect(ISFTestEvaluator.doseGlucose(inputs.with(readings: [])) == nil)
+        // The arrow is the CGM's while the newest reading is within 15 minutes, and none after.
+        #expect(ISFTestEvaluator.arrowMaxAge == 15 * 60)
+        #expect(ISFTestEvaluator.shownDirection(inputs) == .flat)
+        #expect(ISFTestEvaluator.shownDirection(inputs.with(newestAgo: 14 * 60)) == .flat)
+        #expect(ISFTestEvaluator.shownDirection(inputs.with(readings: [])) == nil)
+        #expect(ISFTestEvaluator.shownDirection(inputs.with(direction: .singleUp)) == .singleUp)
+
+        // Tablets have acted only once taken, with the newest 3 readings after them above the glucose they were taken at.
+        #expect(ISFTestEvaluator.tabletsActed(of: raising, inputs))
+        #expect(!ISFTestEvaluator.tabletsActed(of: dosing, inputs))
+        var risenTo130 = raising
+        risenTo130.tabletsGlucose = 130
+        #expect(!ISFTestEvaluator.tabletsActed(of: risenTo130, inputs))
+        #expect(!ISFTestEvaluator.canDose(of: risenTo130, inputs))
+
+        // Dosing: the docs' dose, level glucose, and insulin on board under the line (5% of 2.20 U is 0.11 U).
+        #expect(ISFTestEvaluator.canDose(of: dosing, inputs210))
+        #expect(!ISFTestEvaluator.canDose(of: dosing, inputs210.with(direction: .doubleUp)))
+        #expect(!ISFTestEvaluator.canDose(of: dosing, inputs210.with(cob: 8)))
+        #expect(ISFTestEvaluator.canDose(of: dosing, inputs210.with(iob: dec("0.11"))))
+        #expect(!ISFTestEvaluator.canDose(of: dosing, inputs210.with(iob: dec("0.12"))))
+        #expect(!ISFTestEvaluator.canDose(of: dosing, inputs210.with(iob: nil)))
+        // A reading too old to count leaves nothing to dose from, though the arrow is still level.
+        #expect(ISFTestEvaluator.docsDose(of: dosing, inputs210.with(newestAgo: 13 * 60)) == nil)
+        #expect(!ISFTestEvaluator.canDose(of: dosing, inputs210.with(newestAgo: 13 * 60)))
+        // At or below the target there is no dose, so nothing to give.
+        #expect(ISFTestEvaluator.docsDose(of: dosing, inputs210.with(readings: [doseReading(2, 100)])) == nil)
+        #expect(!ISFTestEvaluator.canDose(of: dosing, inputs210.with(readings: [doseReading(2, 100)])))
+        // Carbs not read: no dose, whatever glucose is.
+        #expect(ISFTestEvaluator.docsDose(of: dosing, inputs210.with(cob: nil)) == nil)
+
+        // Counting insulin on board takes the insulin on board from Trio's determination off the correction.
+        var counting = dosing
+        counting.iobHandling = .count
+        #expect(ISFTestEvaluator.docsDose(of: counting, inputs210.with(doseIOB: dec("0.5"))) == dec("1.7"))
+        #expect(ISFTestEvaluator.docsDose(of: counting, inputs210) == nil)
+        // The pump's increment: a dose under it is none.
+        #expect(ISFTestEvaluator.docsDose(of: counting, inputs210.with(doseIOB: dec("2.17"))) == nil)
+        // Any phase after the bolus never doses.
+        #expect(!ISFTestEvaluator.canDose(of: testState(.waiting), inputs210))
+        #expect(!ISFTestEvaluator.canDose(of: testState(.finished), inputs210))
+    }
+
+    /// A test that finished one way or another, for the sentences the Result gives.
+    private var noBolusTest: ISFTestState {
+        finished(start: nil, end: nil, elapsedHours: 1.5, reason: .noBolus, bolus: false)
+    }
+
+    private var interrupted: ISFTestState {
+        finished(elapsedHours: 0.1, reason: .interrupted, interference: "Carbs were logged during the test.")
+    }
+
+    private var endedAfterOneHour: ISFTestState { finished(end: 130, elapsedHours: 1, reason: .endedEarly) }
+
+    @Test("A result's no-verdict sentence is the one its notice gives") func noVerdictText() {
+        #expect(
+            ISFTestEvaluator.noVerdictText(.noBolus, test: noBolusTest)
+                == "The test needs your bolus within 90 minutes of starting. Trio didn't see one, so there was nothing to judge."
+        )
+        #expect(ISFTestEvaluator.noVerdictText(.interrupted, test: interrupted) == interrupted.interference)
+        #expect(
+            ISFTestEvaluator.noVerdictText(.tooSoon, test: endedAfterOneHour)
+                == "This test ended after 1 h, so it's too soon to tell what your ISF did."
+        )
+    }
+
+    @Test("Every other no-verdict sentence is the one the Result gave") func noVerdictTextOthers() {
+        let test = finished()
+        #expect(
+            ISFTestEvaluator.noVerdictText(.interrupted, test: finished(reason: .interrupted))
+                == "Something changed during the test, so the result can't be trusted. Try again."
+        )
+        #expect(ISFTestEvaluator.noVerdictText(.historyUnread, test: test) == ISFTestEvaluator.historyUnreadNote)
+        #expect(
+            ISFTestEvaluator.noVerdictText(.lowUnchecked, test: test)
+                == "Trio couldn't read the pump history to check for a low, so it can't judge this test."
+        )
+        #expect(
+            ISFTestEvaluator.noVerdictText(.noReadings, test: test)
+                == "No CGM readings were recorded at the bolus or at the end of the test, so there is nothing to compare."
+        )
+        #expect(
+            ISFTestEvaluator.noVerdictText(.noAmount, test: test)
+                == "The pump didn't record how much insulin the bolus gave, so there is no drop per unit to work out."
+        )
+        #expect(
+            ISFTestEvaluator.noVerdictText(.doseTooSmall, test: test)
+                == "The dose was too small for this test to tell your ISF apart from CGM noise."
+        )
+        #expect(
+            ISFTestEvaluator.noVerdictText(.forecastSuspend, test: test)
+                ==
+                "Trio suspended insulin on its forecast while your glucose was still above your target, so the test can't tell."
+        )
+        #expect(
+            ISFTestEvaluator.noVerdictText(.doseOverDocs, test: test)
+                == "The bolus was more than the formula's dose, so the low can't be put down to your ISF."
+        )
+        #expect(ISFTestEvaluator.noVerdictText(nil, test: test) == "Trio couldn't tell what your ISF did from this test.")
+    }
+
+    @Test("The time a test ran is from the bolus, or Start if none came, to its end") func elapsedText() {
+        // Whole hours, then hours and minutes, then minutes.
+        #expect(ISFTestEvaluator.elapsedText(for: finished()) == "4 h")
+        #expect(ISFTestEvaluator.elapsedText(for: endedAfterOneHour) == "1 h")
+        #expect(ISFTestEvaluator.elapsedText(for: finished(elapsedHours: 2.5)) == "2 h 30 m")
+        #expect(ISFTestEvaluator.elapsedText(for: finished(elapsedHours: 0.75)) == "45 m")
+        // No bolus: from Start.
+        #expect(ISFTestEvaluator.elapsedText(for: noBolusTest) == "1 h 30 m")
+        // Not ended: to the planned end with a bolus, to the dose deadline without.
+        var running = finished()
+        running.endedAt = nil
+        #expect(ISFTestEvaluator.elapsedText(for: running) == "4 h")
+        var waiting = noBolusTest
+        waiting.endedAt = nil
+        #expect(ISFTestEvaluator.elapsedText(for: waiting) == "1 h 30 m")
+        // Never negative.
+        var early = finished()
+        early.endedAt = testStart
+        #expect(ISFTestEvaluator.elapsedText(for: early) == "0 m")
     }
 
     @Test("The docs' dose is rounded up to the pump's increment before a low's bolus is held against it") func lowWithPumpRounding() {
@@ -3394,5 +3648,317 @@ import Testing
             SettingsTestRestoreAction.dosingMode(testMode: .basalTesting, previous: .basalTesting)
                 .modeToRestore(current: .basalTesting) == nil
         )
+    }
+
+    // MARK: Visual fixes after the render of the screens
+
+    /// Tablets, then a suspend: glucose at the suspend is `end`, against a target of 100, from 212 on 2.24 U.
+    private func suspended(at end: Int) -> ISFTestState {
+        finished(end: end, elapsedHours: 1, reason: .low)
+    }
+
+    @Test("A forecast suspend shows no low card and says it ended on the forecast") func forecastSuspendCaption() {
+        let forecast = suspended(at: 140)
+        let realLow = suspended(at: 68)
+        #expect(ISFTestEvaluator.noVerdict(for: forecast) == .forecastSuspend)
+        #expect(!ISFTestEvaluator.showsLowCard(for: forecast))
+        #expect(
+            ISFTestEvaluator.endedEarlyCaption(for: forecast) == ". Ended early: Trio suspended insulin on its forecast."
+        )
+        #expect(ISFTestEvaluator.noVerdict(for: realLow) == nil)
+        #expect(ISFTestEvaluator.showsLowCard(for: realLow))
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: realLow) == ". Ended early: Trio suspended insulin for a low.")
+        // Glucose at the target is a low that is one; just above it, the forecast's.
+        #expect(ISFTestEvaluator.showsLowCard(for: suspended(at: 100)))
+        #expect(!ISFTestEvaluator.showsLowCard(for: suspended(at: 101)))
+        // A low after more than the docs' dose is still a low to treat, with no verdict on the ISF.
+        let overDocs = finished(end: 60, units: 5, elapsedHours: 1, reason: .low)
+        #expect(ISFTestEvaluator.noVerdict(for: overDocs) == .doseOverDocs)
+        #expect(ISFTestEvaluator.showsLowCard(for: overDocs))
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: overDocs) == ". Ended early: Trio suspended insulin for a low.")
+    }
+
+    @Test("Only a low gets the low card, and the other end reasons keep their captions") func captionsPerEndReason() {
+        #expect(!ISFTestEvaluator.showsLowCard(for: finished()))
+        #expect(!ISFTestEvaluator.showsLowCard(for: endedAfterOneHour))
+        #expect(!ISFTestEvaluator.showsLowCard(for: interrupted))
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: finished()) == "")
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: endedAfterOneHour) == ". You ended it early.")
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: interrupted) == ". Ended early: it was interrupted.")
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: finished(reason: .unchecked)) == "")
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: noBolusTest) == "")
+        // A test with no end reason yet has no caption to give.
+        var running = finished()
+        running.endReason = nil
+        running.endedAt = nil
+        #expect(!ISFTestEvaluator.showsLowCard(for: running))
+        #expect(ISFTestEvaluator.endedEarlyCaption(for: running) == "")
+    }
+
+    @Test("A forecast suspend is a suspend on the forecast above the target, and nothing else") func forecastSuspendPredicate() {
+        #expect(ISFTestEvaluator.isForecastSuspend(for: suspended(at: 140)))
+        #expect(ISFTestEvaluator.isForecastSuspend(for: suspended(at: 101)))
+        #expect(!ISFTestEvaluator.isForecastSuspend(for: suspended(at: 100)))
+        #expect(!ISFTestEvaluator.isForecastSuspend(for: suspended(at: 68)))
+        // Other end reasons with glucose above the target aren't a suspend at all.
+        #expect(!ISFTestEvaluator.isForecastSuspend(for: finished(end: 140, elapsedHours: 1, reason: .endedEarly)))
+        #expect(!ISFTestEvaluator.isForecastSuspend(for: finished(end: 140)))
+        #expect(!ISFTestEvaluator.isForecastSuspend(for: interrupted))
+        // An interrupted low, and a low after too big a dose, are lows to treat, not forecasts.
+        let interruptedLow = finished(end: 140, elapsedHours: 1, reason: .low, interference: "Carbs were logged during the test.")
+        #expect(!ISFTestEvaluator.isForecastSuspend(for: interruptedLow))
+        #expect(!ISFTestEvaluator.isForecastSuspend(for: finished(end: 60, units: 5, elapsedHours: 1, reason: .low)))
+        // The low card and the caption follow it.
+        for test in [suspended(at: 140), suspended(at: 100), suspended(at: 68), interruptedLow, endedAfterOneHour] {
+            #expect(
+                ISFTestEvaluator
+                    .showsLowCard(for: test) == (test.endReason == .low && !ISFTestEvaluator.isForecastSuspend(for: test))
+            )
+        }
+    }
+
+    @Test(
+        "The header says a low only for a low: a forecast suspend gets the lines of a test with no verdict"
+    ) func suspendHeaderLine() {
+        let realLow = suspended(at: 68)
+        let time = realLow.endedAt!.formatted(date: .omitted, time: .shortened)
+        #expect(ISFTestEvaluator.lowSuspendObservation(for: realLow) == "Trio suspended insulin for a low at \(time)")
+        // A low after too big a dose and an interrupted low are still lows.
+        #expect(
+            ISFTestEvaluator.lowSuspendObservation(for: finished(end: 60, units: 5, elapsedHours: 1, reason: .low))
+                == "Trio suspended insulin for a low at \(time)"
+        )
+        let forecast = suspended(at: 140)
+        #expect(ISFTestEvaluator.lowSuspendObservation(for: forecast) == nil)
+        // The header's next lines: a test with no verdict isn't conclusive, so it reads "Ended after ...".
+        #expect(forecast.outcome == .inconclusive)
+        #expect(forecast.outcome?.isConclusive == false)
+        #expect(ISFTestEvaluator.elapsedText(for: forecast) == "1 h")
+        // Other end reasons, and a low with no end time, have no suspend line.
+        #expect(ISFTestEvaluator.lowSuspendObservation(for: finished()) == nil)
+        #expect(ISFTestEvaluator.lowSuspendObservation(for: endedAfterOneHour) == nil)
+        #expect(ISFTestEvaluator.lowSuspendObservation(for: interrupted) == nil)
+        var noEnd = realLow
+        noEnd.endedAt = nil
+        #expect(ISFTestEvaluator.lowSuspendObservation(for: noEnd) == nil)
+    }
+
+    @Test("Only a Dose step with a way on shows the bolus deadline") func doseDeadlineShown() {
+        // A dose, or a reading still to come.
+        #expect(ISFTestEvaluator.showsDoseDeadline(noDose: nil, canRaise: false))
+        #expect(ISFTestEvaluator.showsDoseDeadline(noDose: nil, canRaise: true))
+        #expect(ISFTestEvaluator.showsDoseDeadline(noDose: .carbsUnread, canRaise: false))
+        #expect(ISFTestEvaluator.showsDoseDeadline(noDose: .noRecentReading, canRaise: false))
+        #expect(ISFTestEvaluator.showsDoseDeadline(noDose: .iobUnread, canRaise: false))
+        // At or below the target, only with Take Glucose Tablets to offer.
+        #expect(ISFTestEvaluator.showsDoseDeadline(noDose: .atOrBelowTarget, canRaise: true))
+        #expect(!ISFTestEvaluator.showsDoseDeadline(noDose: .atOrBelowTarget, canRaise: false))
+        // Cancel-only dead ends.
+        #expect(!ISFTestEvaluator.showsDoseDeadline(noDose: .carbsOnBoard, canRaise: true))
+        #expect(!ISFTestEvaluator.showsDoseDeadline(noDose: .carbsOnBoard, canRaise: false))
+        #expect(!ISFTestEvaluator.showsDoseDeadline(noDose: .iobCoversDose, canRaise: true))
+        #expect(!ISFTestEvaluator.showsDoseDeadline(noDose: .iobCoversDose, canRaise: false))
+        #expect(!ISFTestEvaluator.showsDoseDeadline(noDose: .noSettings, canRaise: true))
+        #expect(!ISFTestEvaluator.showsDoseDeadline(noDose: .noSettings, canRaise: false))
+    }
+
+    @Test("The deadline shows exactly when the Dose footer offers a way on, for every reason") func doseDeadlineMatchesFooter() {
+        let every: [ISFTestNoDose] = [
+            .carbsOnBoard, .carbsUnread, .noRecentReading, .atOrBelowTarget, .noSettings, .iobCoversDose, .iobUnread
+        ]
+        for noDose in every {
+            for canRaise in [true, false] {
+                // The footer: Open Treatments turned off while waiting for a reading, Take Glucose Tablets at or below the
+                // target when tablets can be offered, and otherwise only Cancel Test.
+                let footerOffersWayOn = noDose.isWaiting || (noDose == .atOrBelowTarget && canRaise)
+                #expect(ISFTestEvaluator.showsDoseDeadline(noDose: noDose, canRaise: canRaise) == footerOffersWayOn)
+            }
+        }
+    }
+
+    @Test("The parts of the test's hours start and end on the entries' edges, as the hours do") func coveredSpansEdges() {
+        let schedule = [entry(0, 486, 50), entry(486, 1440, 40)]
+        // Starting exactly where an entry starts, the entry before isn't listed.
+        #expect(
+            ISFTestEvaluator.coveredSpans(schedule, from: time(8, 6), for: 4 * hour, calendar: utc) == [entry(486, 726, 40)]
+        )
+        // Ending exactly where the next starts, it isn't listed.
+        #expect(
+            ISFTestEvaluator.coveredSpans(schedule, from: time(4, 6), for: 4 * hour, calendar: utc) == [entry(246, 486, 50)]
+        )
+        // Ending at midnight: the last part runs to the end of the day and nothing of the next.
+        #expect(
+            ISFTestEvaluator.coveredSpans(schedule, from: time(20), for: 4 * hour, calendar: utc) == [entry(1200, 1440, 40)]
+        )
+        // One entry that doesn't wrap: the hours from the start, not the whole day.
+        #expect(
+            ISFTestEvaluator.coveredSpans([entry(0, 1440, 50)], from: time(6, 30), for: 4 * hour, calendar: utc)
+                == [entry(390, 630, 50)]
+        )
+        // A part that is the whole entry.
+        #expect(
+            ISFTestEvaluator.coveredSpans(schedule, from: time(8, 6), for: 2 * hour, calendar: utc) == [entry(486, 606, 40)]
+        )
+    }
+
+    @Test("The ISF-change sheet lists the test's 4 hours split by ISF, in the user's units") func isfChangeReading() {
+        let britain = SettingsTestSchedule.makeTimeFormatter(locale: Locale(identifier: "en_GB"))
+        // 0:00-8:06 at 50, 8:06-24:00 at 40, from 6:30: the 4 hours end at 10:30, not at the end of the second entry.
+        let schedule = [entry(0, 486, 50), entry(486, 1440, 40)]
+        let spans = ISFTestEvaluator.coveredSpans(schedule, from: time(6, 30), for: 4 * hour, calendar: utc)
+        #expect(spans.map(\.startMinutes) == [390, 486])
+        #expect(spans.map(\.endMinutes) == [486, 630])
+        #expect(spans.map(\.value) == [50, 40])
+        // What a reader sees (the no-break spaces and word joiners that keep a part on one line aside).
+        #expect(
+            visible(ISFTestEvaluator.isfChangeReading(spans, units: .mgdL, formatter: britain))
+                == visible(
+                    "06:30–08:06: \(SettingsTestKind.isfText(50, units: .mgdL)), 08:06–10:30: \(SettingsTestKind.isfText(40, units: .mgdL))"
+                )
+        )
+        // In mmol/L the numbers are the user's, with their unit.
+        let mmol = ISFTestEvaluator.isfChangeReading(spans, units: .mmolL, formatter: britain)
+        #expect(
+            visible(mmol)
+                == visible(
+                    "06:30–08:06: \(SettingsTestKind.isfText(50, units: .mmolL)), 08:06–10:30: \(SettingsTestKind.isfText(40, units: .mmolL))"
+                )
+        )
+        #expect(mmol != ISFTestEvaluator.isfChangeReading(spans, units: .mgdL, formatter: britain))
+        // Across midnight: from 22:00, the end of the day, then the start of the next.
+        let nightSchedule = [entry(0, 60, 40), entry(60, 1320, 45), entry(1320, 1440, 50)]
+        let night = ISFTestEvaluator.coveredSpans(nightSchedule, from: time(22), for: 4 * hour, calendar: utc)
+        #expect(night.map(\.value) == [50, 40, 45])
+        #expect(night == [entry(1320, 1440, 50), entry(0, 60, 40), entry(60, 120, 45)])
+        // Adjacent entries with the same ISF are one part.
+        let split = [entry(0, 300, 50), entry(300, 420, 50), entry(420, 1440, 40)]
+        #expect(
+            ISFTestEvaluator.coveredSpans(split, from: time(4), for: 4 * hour, calendar: utc)
+                == [entry(240, 420, 50), entry(420, 480, 40)]
+        )
+        // One ISF all day, from 22:00, is one part across midnight.
+        let allDay = ISFTestEvaluator.coveredSpans([entry(0, 1440, 50)], from: time(22), for: 4 * hour, calendar: utc)
+        #expect(allDay == [entry(1320, 120, 50)])
+        #expect(
+            visible(ISFTestEvaluator.isfChangeReading(allDay, units: .mgdL, formatter: britain))
+                == visible("22:00–02:00: \(SettingsTestKind.isfText(50, units: .mgdL))")
+        )
+        // Nothing to list without a schedule or hours.
+        #expect(ISFTestEvaluator.coveredSpans([], from: time(6, 30), for: 4 * hour, calendar: utc).isEmpty)
+        #expect(ISFTestEvaluator.coveredSpans(schedule, from: time(6, 30), for: 0, calendar: utc).isEmpty)
+        #expect(ISFTestEvaluator.isfChangeReading([], units: .mgdL, formatter: britain) == "")
+    }
+
+    /// The characters a reader sees: no-break spaces as spaces, word joiners gone.
+    private func visible(_ text: String) -> String {
+        text.replacingOccurrences(of: "\u{00A0}", with: " ")
+            .replacingOccurrences(of: "\u{202F}", with: " ")
+            .replacingOccurrences(of: "\u{2060}", with: "")
+    }
+
+    private var subheadline: [NSAttributedString.Key: Any] { [.font: UIFont.preferredFont(forTextStyle: .subheadline)] }
+
+    /// The width of the wider of two parts, the first with its comma, with a point to spare.
+    private func partWidth(_ parts: [String]) -> Double {
+        [parts[0] + ",", parts[1]].map { part -> Double in
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: part, attributes: subheadline))
+            return CTLineGetTypographicBounds(line, nil, nil, nil)
+        }.max()! + 1
+    }
+
+    /// The lines CoreText breaks `text` into at `width`, without the spaces a break leaves at a line's end.
+    private func typeset(_ text: String, width: Double) -> [String] {
+        let attributed = NSAttributedString(string: text, attributes: subheadline)
+        let typesetter = CTTypesetterCreateWithAttributedString(attributed)
+        let whole = text as NSString
+        var lines: [String] = []
+        var start = 0
+        while start < whole.length {
+            let count = CTTypesetterSuggestLineBreak(typesetter, start, width)
+            lines.append(whole.substring(with: NSRange(location: start, length: count)).trimmingCharacters(in: .whitespaces))
+            start += count
+        }
+        return lines
+    }
+
+    @Test("The ISF-change sheet can only break between its parts, in 24-hour and 12-hour locales") func isfChangeReadingBreaks() {
+        let schedule = [entry(0, 486, 50), entry(486, 1440, 40)]
+        let spans = ISFTestEvaluator.coveredSpans(schedule, from: time(6, 30), for: 4 * hour, calendar: utc)
+        for locale in ["en_GB", "en_US", "de_DE", "es_ES"] {
+            let formatter = SettingsTestSchedule.makeTimeFormatter(locale: Locale(identifier: locale))
+            for units in [GlucoseUnits.mgdL, .mmolL] {
+                let reading = ISFTestEvaluator.isfChangeReading(spans, units: units, formatter: formatter)
+                // The parts are joined by a comma and a plain space, and nothing else in the text is a plain space.
+                let parts = reading.components(separatedBy: ", ")
+                #expect(parts.count == 2, "\(locale) \(units)")
+                for part in parts {
+                    #expect(!part.contains(" "), "a plain space in \(part.debugDescription) (\(locale) \(units))")
+                    // The hours, a colon and the ISF with its unit: the no-break space after the colon, and the dash
+                    // followed by a word joiner.
+                    #expect(part.contains(":\u{00A0}"), "\(part.debugDescription)")
+                    #expect(part.contains("–\u{2060}"), "\(part.debugDescription)")
+                }
+                // The ISF of each part is the one in the user's units, as it is shown elsewhere.
+                #expect(parts[0].hasSuffix(SettingsTestKind.isfText(50, units: units)))
+                #expect(parts[1].hasSuffix(SettingsTestKind.isfText(40, units: units)))
+                // And in the sheet's sentence, typeset in a width that holds either part but not the lead-in with the first
+                // one, the first part moves to the next line whole, rather than breaking inside it.
+                let lead = "These hours cover"
+                #expect(
+                    typeset("\(lead) \(reading)", width: partWidth(parts)) == [lead, parts[0] + ",", parts[1]],
+                    "\(reading.debugDescription) (\(locale) \(units))"
+                )
+            }
+        }
+    }
+
+    @Test("Raise before the tablets acted says so in the card title") func levelingTitle() {
+        #expect(ISFTestEvaluator.levelingTitle(phase: .raising, tabletsActed: false) == "Waiting for the tablets to act")
+        #expect(ISFTestEvaluator.levelingTitle(phase: .raising, tabletsActed: true) == "Waiting for your glucose to level off")
+        #expect(ISFTestEvaluator.levelingTitle(phase: .dosing, tabletsActed: false) == "Waiting for your glucose to level off")
+        #expect(ISFTestEvaluator.levelingTitle(phase: .dosing, tabletsActed: true) == "Waiting for your glucose to level off")
+    }
+}
+
+/// A copy of the Dose step's inputs with one part changed, for the tests that vary one at a time. Each takes the plain
+/// optional, so `nil` sets the part to nothing.
+extension ISFTestDoseInputs {
+    func with(direction: BloodGlucose.Direction?) -> ISFTestDoseInputs {
+        var copy = self
+        copy.direction = direction
+        return copy
+    }
+
+    func with(iob: Decimal?) -> ISFTestDoseInputs {
+        var copy = self
+        copy.iob = iob
+        return copy
+    }
+
+    func with(doseIOB: Decimal?) -> ISFTestDoseInputs {
+        var copy = self
+        copy.doseIOB = doseIOB
+        return copy
+    }
+
+    func with(cob: Decimal?) -> ISFTestDoseInputs {
+        var copy = self
+        copy.cob = cob
+        return copy
+    }
+
+    func with(readings: [BasalTestReading]) -> ISFTestDoseInputs {
+        var copy = self
+        copy.readings = readings
+        return copy
+    }
+
+    /// The readings moved together so the newest is `age` seconds before `now`, spacing kept.
+    func with(newestAgo age: TimeInterval) -> ISFTestDoseInputs {
+        guard let newest = readings.first?.date else { return self }
+        let shift = now.addingTimeInterval(-age).timeIntervalSince(newest)
+        var copy = self
+        copy.readings = readings.map { BasalTestReading(date: $0.date.addingTimeInterval(shift), glucose: $0.glucose) }
+        return copy
     }
 }

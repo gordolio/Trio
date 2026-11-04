@@ -140,8 +140,8 @@ struct SettingsTestFormulaStackedLine {
 
 /// Formulas laid out like the Bolus Calculator Details sheet: labels above, values in the middle, units below.
 /// `result[i]` is the answer to `rows[i]`, shown after the "=" (or "≈" when it is rounded). Only the rows that have a
-/// result are shown. At accessibility text sizes a row doesn't fit across the screen, so each term goes on a line of
-/// its own, with its operator leading, and the "=" and the result on the last line.
+/// result are shown. At accessibility text sizes, and for a row that doesn't fit across the card with its labels at full
+/// size, each term goes on a line of its own, with its operator leading, and the "=" and the result on the last line.
 /// `conclusion` is a line under the formulas that says what the answer means.
 struct SettingsTestFormulaCard: View {
     let title: String
@@ -278,11 +278,16 @@ struct SettingsTestFormulaCard: View {
         }
     }
 
+    /// Across the card when the row fits at the size its text is drawn at, which a label never shrinks from: when it
+    /// doesn't (`ViewThatFits` asks the row for its full width), or at accessibility sizes, one term to a line.
     @ViewBuilder private func formula(_ parts: [SettingsTestFormulaPart], result: SettingsTestFormulaTerm) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             stacked(parts, result: result)
         } else {
-            line(parts, result: result)
+            ViewThatFits(in: .horizontal) {
+                line(parts, result: result)
+                stacked(parts, result: result)
+            }
         }
     }
 
@@ -409,16 +414,17 @@ struct SettingsTestFormulaCard: View {
     }
 }
 
-// The styles of the Bolus Calculator Details formulas, which are private to `PopupView.swift`. Labels and units stay
-// on one line and shrink rather than break mid-word at large text sizes.
+// The styles of the Bolus Calculator Details formulas, which are private to `PopupView.swift`. Values and units stay
+// on one line and shrink rather than break mid-word at large text sizes; a label stays at its size (a row that has no
+// room for it goes to the stacked layout).
 private extension View {
-    /// A label above a value; the accent colour marks a value that comes from the user's settings.
+    /// A label above a value; the accent colour marks a value that comes from the user's settings. Never shrunk, so every
+    /// label in a formula reads at the same size.
     func formulaLabelStyle(highlighted: Bool) -> some View {
         font(.footnote)
             .foregroundStyle(highlighted ? Color.accentColor : Color.secondary)
-            .allowsTightening(true)
-            .minimumScaleFactor(0.5)
             .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .layoutPriority(1)
     }
 

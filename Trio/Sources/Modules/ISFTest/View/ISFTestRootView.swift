@@ -17,6 +17,7 @@ extension ISFTest {
                     Text(state.errorMessage ?? "")
                 }
                 .onAppear(perform: configureView)
+                .settingsTestScreen(.isf)
         }
     }
 

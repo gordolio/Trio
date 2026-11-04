@@ -123,11 +123,7 @@ extension SettingsTest {
         /// with a test of its own under way, so its bolus and ratio change can't be reached.
         func screen(for kind: SettingsTestKind) -> Screen? {
             guard kind.availability == .available, !isLocked(kind) else { return nil }
-            switch kind {
-            case .basal: return .basalTest
-            case .isf: return .isfTest
-            case .carbRatio: return nil
-            }
+            return kind.testScreen
         }
     }
 }

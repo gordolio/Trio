@@ -447,28 +447,76 @@ struct SettingsTestMetric: Identifiable {
     let value: String
 }
 
+/// Values side by side with their titles under them, e.g. Start, Now and Change. At accessibility sizes a third of the
+/// card is too narrow for a title, which broke inside its word ("Chang" "e"), so the items stack, one to a line, a title
+/// and its value on the same line when they fit side by side and otherwise the value over the title.
 struct SettingsTestMetricRow: View {
     let metrics: [SettingsTestMetric]
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            // One layout for every item, so they stay aligned.
+            ViewThatFits(in: .horizontal) {
+                stacked(titleBesideValue: true)
+                stacked(titleBesideValue: false)
+            }
+        } else {
+            columns
+        }
+    }
+
+    private var columns: some View {
         HStack(alignment: .top, spacing: 0) {
             ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
                 if index > 0 {
                     Divider().frame(height: 36)
                 }
                 VStack(spacing: 4) {
-                    Text(metric.value)
-                        .font(.title3.weight(.semibold))
-                        .monospacedDigit()
-                        .minimumScaleFactor(0.7)
-                        .lineLimit(1)
-                    Text(metric.title)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    value(of: metric)
+                    title(of: metric)
                 }
                 .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    private func stacked(titleBesideValue: Bool) -> some View {
+        VStack(spacing: 8) {
+            ForEach(Array(metrics.enumerated()), id: \.element.id) { index, metric in
+                if index > 0 {
+                    Divider()
+                }
+                if titleBesideValue {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        title(of: metric)
+                        Spacer(minLength: 0)
+                        value(of: metric)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        value(of: metric)
+                        title(of: metric)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func value(of metric: SettingsTestMetric) -> some View {
+        Text(metric.value)
+            .font(.title3.weight(.semibold))
+            .monospacedDigit()
+            .minimumScaleFactor(0.7)
+            .lineLimit(1)
+    }
+
+    private func title(of metric: SettingsTestMetric) -> some View {
+        Text(metric.title)
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -667,6 +715,7 @@ struct SettingsTestGlucoseChart: View {
                 AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .narrow)), anchor: .top)
             }
         }
+        .fewerYAxisMarks(dynamicTypeSize.isAccessibilitySize)
         .frame(height: 160)
         .accessibilityLabel(Text("Glucose over the test"))
     }
@@ -691,6 +740,24 @@ struct SettingsTestGlucoseChart: View {
             high = max(high, target + max(10, (target - low) / 5))
         }
         return low ... max(low + 10, min(400, high))
+    }
+}
+
+private extension View {
+    /// At accessibility sizes the value labels of the y axis are tall, and the chart's 160 pt holds only a few of them
+    /// before they touch, so it asks for 3 marks (grid line and value each) instead of the automatic ones. At other sizes
+    /// the chart's own automatic marks stay as they are.
+    @ViewBuilder func fewerYAxisMarks(_ fewer: Bool) -> some View {
+        if fewer {
+            chartYAxis {
+                AxisMarks(values: .automatic(desiredCount: 3)) { _ in
+                    AxisGridLine()
+                    AxisValueLabel()
+                }
+            }
+        } else {
+            self
+        }
     }
 }
 

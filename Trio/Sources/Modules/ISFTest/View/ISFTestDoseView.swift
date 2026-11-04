@@ -12,7 +12,11 @@ extension ISFTest {
             SettingsTestScreen(paintsBackground: false) {
                 if state.docsDose != nil, !state.glucoseIsLevel {
                     // The dose waits for a flat CGM arrow on this path too (round 13), so none is shown while glucose moves.
-                    LevelingCard(state: state, status: String(localized: "Open Treatments turns on once the arrow is flat."))
+                    LevelingCard(
+                        state: state,
+                        title: ISFTestEvaluator.levelingTitle(phase: .dosing, tabletsActed: false),
+                        status: String(localized: "Open Treatments turns on once the arrow is flat.")
+                    )
                     deadlineText
                 } else if let dose = state.docsDose, !state.doseIOBAllows {
                     iobWaitCard(dose: dose)
@@ -32,11 +36,11 @@ extension ISFTest {
                                 Text("The test has no carbs and leaves trend out.")
                                 if (state.doseIOB ?? 0) < 0 {
                                     Text(
-                                        "The basal Trio held back is added, so the insulin working during the test is still the docs' correction."
+                                        "The basal Trio held back is added, so the insulin working during the test is still the formula's correction."
                                     )
                                 } else {
                                     Text(
-                                        "Your insulin on board is taken off, so the insulin working during the test is still the docs' correction."
+                                        "Your insulin on board is taken off, so the insulin working during the test is still the formula's correction."
                                     )
                                 }
                             }
@@ -54,7 +58,10 @@ extension ISFTest {
                     deadlineText
                 } else {
                     noDoseCard
-                    deadlineText
+                    // Not on a dead end that only offers Cancel Test: there is no bolus to give.
+                    if ISFTestEvaluator.showsDoseDeadline(noDose: state.noDoseReason, canRaise: state.canRaise) {
+                        deadlineText
+                    }
                 }
             } footer: {
                 if state.docsDose != nil {
@@ -131,7 +138,7 @@ extension ISFTest {
             ]
             guard state.dosesCountIOB, let correction = state.docsCorrection, let iob = state.doseIOB else {
                 return SettingsTestFormulaCard(
-                    title: String(localized: "The docs' dose"),
+                    title: String(localized: "Correction dose"),
                     rows: [correctionRow],
                     result: [doseTerm]
                 )
@@ -152,7 +159,7 @@ extension ISFTest {
                 fromSettings: false
             )
             return SettingsTestFormulaCard(
-                title: String(localized: "The docs' dose"),
+                title: String(localized: "Correction dose"),
                 rows: [correctionRow, [.term(correctionTerm), .op(shownIOB < 0 ? "+" : "−"), .term(onBoard)]],
                 result: [correctionTerm, doseTerm]
             )
@@ -180,10 +187,10 @@ extension ISFTest {
                 let iobText = SettingsTestFormat.keepTogether(state.formatSignedUnits(iob), unit: "U")
                 reading = iob < 0
                     ? String(
-                        localized: "Your insulin on board is \(iobText), more than \(state.lineText(line)) from zero: \(state.stepPercent)% of this dose of \(doseText), the docs' smallest ISF change."
+                        localized: "Your insulin on board is \(iobText), more than \(state.lineText(line)) from zero: \(state.stepPercent)% of this dose of \(doseText), the smallest ISF change in Trio docs."
                     )
                     : String(
-                        localized: "Your insulin on board is \(iobText), over \(state.lineText(line)): \(state.stepPercent)% of this dose of \(doseText), the docs' smallest ISF change."
+                        localized: "Your insulin on board is \(iobText), over \(state.lineText(line)): \(state.stepPercent)% of this dose of \(doseText), the smallest ISF change in Trio docs."
                     )
             } else {
                 reading = String(localized: "Waiting for Trio's insulin on board.")
@@ -218,7 +225,7 @@ extension ISFTest {
                 case .noRecentReading:
                     WaitingRow.recentReading
                 case .atOrBelowTarget:
-                    Text("Your glucose is at or below your target, so the docs' formula gives no dose.")
+                    Text("Your glucose is at or below your target, so the formula gives no dose.")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                     readingsLine
@@ -229,7 +236,7 @@ extension ISFTest {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 case .iobCoversDose:
-                    Text("Your insulin on board already covers the docs' correction, so there's no dose to give.")
+                    Text("Your insulin on board already covers the formula's correction, so there's no dose to give.")
                         .font(.subheadline)
                         .fixedSize(horizontal: false, vertical: true)
                 case .iobUnread:
@@ -280,13 +287,13 @@ extension ISFTest {
             switch comparison {
             case .less:
                 return String(
-                    localized: "Trio will suggest about \(suggested). That's \(percent)% of the docs' \(docs). Either is fine: the result is worked out from what you give."
+                    localized: "Trio will suggest about \(suggested). That's \(percent)% of the formula's \(docs). Either is fine: the result is worked out from what you give."
                 )
             case .same:
-                return String(localized: "Trio will suggest about the docs' \(docs).")
+                return String(localized: "Trio will suggest about the formula's \(docs).")
             case .more:
                 return String(
-                    localized: "Trio will suggest about \(suggested). That's \(percent)% of the docs' \(docs). Enter the docs' \(docs) instead of tapping Trio's suggestion."
+                    localized: "Trio will suggest about \(suggested). That's \(percent)% of the formula's \(docs). Enter the formula's \(docs) instead of tapping Trio's suggestion."
                 )
             }
         }
@@ -294,23 +301,23 @@ extension ISFTest {
         private var infoBody: String {
             let percent = state.bolusPercent
             let perUnit = String(
-                localized: "Tap Trio's suggestion or enter the docs' dose: the test judges your ISF per unit you actually give."
+                localized: "Tap Trio's suggestion or enter the formula's dose: the test judges your ISF per unit you actually give."
             )
             switch comparison {
             case .less:
                 return String(
-                    localized: "Trio's bolus calculator suggests the docs' dose times your Recommended Bolus Percentage (\(percent)%). SMBs normally give the rest, but they're off during the test."
+                    localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%). SMBs normally give the rest, but they're off during the test."
                 ) + " " + perUnit
             case .same:
                 return String(
-                    localized: "Trio's bolus calculator suggests the docs' dose times your Recommended Bolus Percentage (\(percent)%), so the two match."
+                    localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%), so the two match."
                 ) + " " + perUnit
             case .more:
                 // More than the docs' dose can bring on a low the ISF doesn't explain, so the docs' dose is the one to give.
                 let docs = SettingsTestFormat.keepTogether(state.formatUnits(dose), unit: "U")
                 return String(
-                    localized: "Trio's bolus calculator suggests the docs' dose times your Recommended Bolus Percentage (\(percent)%), so its suggestion is more than the docs' dose."
-                ) + " " + String(localized: "Enter the docs' \(docs) instead of tapping Trio's suggestion.")
+                    localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%), so its suggestion is more than the formula's dose."
+                ) + " " + String(localized: "Enter the formula's \(docs) instead of tapping Trio's suggestion.")
             }
         }
 

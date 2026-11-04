@@ -3,32 +3,43 @@ import CoreData
 import Foundation
 import Observation
 import SwiftUI
-import UserNotifications
 
 extension ISFTest {
     @Observable final class StateModel: BaseStateModel<Provider> {
         @ObservationIgnored @Injected() var testService: SettingsTestService!
         @ObservationIgnored @Injected() var glucoseStorage: GlucoseStorage!
+        /// What runs the test, in the service: the screen shows its state (`apply`) and passes the user's actions on. The
+        /// service's (`subscribe`), or one a test sets.
+        @ObservationIgnored var runner: ISFTestRunning?
+        /// Told when a notice-opened screen sends the user to Treatments (`sendToTreatments`). Settable for tests; lazy, so
+        /// the shared one is read on the main actor, where it lives.
+        @ObservationIgnored @MainActor lazy var opener = SettingsTestScreenOpener.shared
+        /// What `refresh` reads: the provider, or what a test sets.
+        @ObservationIgnored var screenReads: ISFTestProvider?
+        private var reads: ISFTestProvider { screenReads ?? provider }
 
-        /// How far before the bolus to read glucose for the start glucose: the newest 3 readings at or before it are
-        /// all it uses.
-        private static let startReadingsLookback: TimeInterval = 3600
         /// How far back the screen reads glucose: the longest a test runs, 90 minutes for the bolus and 4 hours after
         /// it, with time to spare.
         private static let recentReadingsMinutes = 6 * 60
-        private static let finishedNotificationID = "Trio.isfTestFinished"
 
         // MARK: - State
 
-        /// The test in progress or just finished. `nil` while the user is still getting ready.
-        var test: ISFTestState?
+        /// The test in progress or just finished, as the runner saved it. `nil` while the user is still getting ready.
+        private(set) var test: ISFTestState?
 
         /// Newest first.
         private(set) var recentReadings: [BasalTestReading] = []
-        /// Nil while Trio hasn't worked insulin on board out.
-        private(set) var currentIOB: Decimal?
+        /// Nil while Trio hasn't worked insulin on board out. While the runner reports settling, the one its last check
+        /// read (`ISFTestSettlingProgress.iob`), so the Settle step's row and question agree with the step it shows;
+        /// otherwise the one `refresh` read.
+        var currentIOB: Decimal? { settling == nil ? readIOB : settleIOB }
+        /// Insulin on board as `refresh` last read it.
+        private var readIOB: Decimal?
+        /// Insulin on board as settling's last check read it. Set only by `apply`.
+        private var settleIOB: Decimal?
         /// Insulin on board for a counted dose, from Trio's newest determination of the last 12 minutes
-        /// (`ISFTestEvaluator.recentIOB`). Nil when there is none, or in a test that doesn't count it.
+        /// (`ISFTestEvaluator.recentIOB`), as the runner last read it. Nil when there is none, or in a test that doesn't
+        /// count it.
         private(set) var doseIOB: Decimal?
         /// Carbs on board from Trio's newest determination of the last 12 minutes (`ISFTestEvaluator.recentCOB`). Nil
         /// while there is none that recent: unread is not none.
@@ -70,7 +81,6 @@ extension ISFTest {
         var showStopOptions = false
 
         @ObservationIgnored private var dataSubscriptions = Set<AnyCancellable>()
-        @ObservationIgnored private var isFinishing = false
 
         // MARK: - Units
 
@@ -160,18 +170,32 @@ extension ISFTest {
 
         var readingIsStale: Bool {
             guard let latest = recentReadings.first?.date else { return true }
-            return Date().timeIntervalSince(latest) > 15 * 60
+            return Date().timeIntervalSince(latest) > ISFTestEvaluator.arrowMaxAge
+        }
+
+        /// What the Dose step reads to work out whether the dose can be given, as one value, at this moment: the rules
+        /// that judge it take it whole (`ISFTestDoseInputs`), so a runner with the screen closed judges the same.
+        var doseInputs: ISFTestDoseInputs {
+            ISFTestDoseInputs(
+                readings: recentReadings,
+                direction: trendDirection,
+                iob: currentIOB,
+                doseIOB: doseIOB,
+                cob: currentCOB,
+                increment: bolusIncrement,
+                now: Date()
+            )
         }
 
         /// The glucose the dose and the tablets are worked out from: the mean of the last 3 readings, nil when the
-        /// newest is older than `BasalTest.Config.endReadingMaxAge`.
+        /// newest is older than `BasalTest.Config.endReadingMaxAge` (`ISFTestEvaluator.doseGlucose`).
         var doseGlucose: Int? {
-            BasalTestEvaluator.endGlucose(from: Array(recentReadings.prefix(3)), endingAt: Date())
+            ISFTestEvaluator.doseGlucose(doseInputs)
         }
 
-        /// The CGM's own arrow for a recent reading. Nil when it gave none.
+        /// The CGM's own arrow for a recent reading. Nil when it gave none (`ISFTestEvaluator.shownDirection`).
         private var shownDirection: BloodGlucose.Direction? {
-            readingIsStale ? nil : trendDirection
+            ISFTestEvaluator.shownDirection(doseInputs)
         }
 
         /// The arrow as the screen shows it, if the CGM gave one for a recent reading.
@@ -468,7 +492,7 @@ extension ISFTest {
                 info: SettingsTestInfo(
                     title: String(localized: "Glucose above your target"),
                     body: String(
-                        localized: "The docs' dose is your glucose minus your target, divided by your ISF, so the test needs glucose above your target, and tablets can't raise it there. \(tabletAimText)"
+                        localized: "The correction dose is your glucose minus your target, divided by your ISF, so the test needs glucose above your target, and tablets can't raise it there. \(tabletAimText)"
                     ),
                     reading: String(localized: "Your target is \(targetText)"),
                     quote: Docs.chooseTestingTime,
@@ -482,7 +506,7 @@ extension ISFTest {
         var tabletAimText: String {
             let aim = formatWithUnits(Config.docsStartAim)
             return String(
-                localized: "The test's tablets aim for around \(aim), from the docs' \"around 150 mg/dL or 8.3 mmol/L\". At a target of \(aim) or more, the test has no higher number to aim for."
+                localized: "The test's tablets aim for around \(aim), from \"around 150 mg/dL or 8.3 mmol/L\" in Trio docs. At a target of \(aim) or more, the test has no higher number to aim for."
             )
         }
 
@@ -538,7 +562,7 @@ extension ISFTest {
             return SettingsTestInfo(
                 title: String(localized: "Insulin on board"),
                 body: String(
-                    localized: "Insulin still working from an earlier dose or SMB adds to the drop the test measures, and negative insulin on board, basal Trio held back, takes from it. More than \(stepPercent)% of the test's dose, the docs' smallest ISF change, can sway the result, so you choose whether the test waits for it or counts it. More than the whole dose holds up the start."
+                    localized: "Insulin still working from an earlier dose or SMB adds to the drop the test measures, and negative insulin on board, basal Trio held back, takes from it. More than \(stepPercent)% of the test's dose, the smallest ISF change in Trio docs, can sway the result, so you choose whether the test waits for it or counts it. More than the whole dose holds up the start."
                 ),
                 reading: reading,
                 quote: Docs.smallChanges,
@@ -643,8 +667,11 @@ extension ISFTest {
         private var isfChangeCheck: Check? {
             guard crossesISFChange else { return nil }
             let entries = plannedEntries
-            let spans = entries.map { "\(SettingsTestSchedule.spanText(of: $0, inSentence: true)) \(formatISF($0.value))" }
-                .joined(separator: ", ")
+            // The test's 4 hours, split where the ISF changes, each part with its ISF, not the whole entries they touch.
+            let spans = ISFTestEvaluator.isfChangeReading(
+                ISFTestEvaluator.coveredSpans(isfSchedule, from: Date(), for: Config.docsWait),
+                units: glucoseUnits
+            )
             return Check(
                 id: "isfChange",
                 title: String(localized: "ISF changes during the test"),
@@ -744,16 +771,7 @@ extension ISFTest {
         /// reading, at or below the target, and with Count It when insulin on board covers the correction or hasn't been
         /// read recently (`noDoseReason` says which).
         var docsDose: Decimal? {
-            guard let test, let settings = doseSettings, let glucose = doseGlucose else { return nil }
-            return ISFTestEvaluator.testDose(
-                glucose: glucose,
-                target: settings.target,
-                isf: settings.isf,
-                handling: test.iobHandling,
-                iob: doseIOB,
-                increment: bolusIncrement,
-                carbsOnBoard: currentCOB
-            )
+            test.flatMap { ISFTestEvaluator.docsDose(of: $0, doseInputs) }
         }
 
         /// The ISF and target the Dose step works the dose out with: those in force now, from the schedules Begin saved
@@ -789,17 +807,11 @@ extension ISFTest {
         }
 
         /// Why there is no `docsDose`, for the Dose step to say. Nil when there is one. Carbs on board give none: the docs
-        /// test ISF "when fasting (no COB)".
+        /// test ISF "when fasting (no COB)". The runner reads the same rule to know whether the step shows a dose
+        /// (`ISFTestEvaluator.doseStepOffer`). Without a test there are no settings to work it out with.
         var noDoseReason: ISFTestNoDose? {
-            ISFTestEvaluator.noDoseReason(
-                glucose: doseGlucose,
-                target: doseSettings?.target,
-                isf: doseSettings?.isf,
-                handling: test?.iobHandling,
-                iob: doseIOB,
-                increment: bolusIncrement,
-                carbsOnBoard: currentCOB
-            )
+            guard let test else { return .noSettings }
+            return ISFTestEvaluator.noDoseReason(of: test, doseInputs)
         }
 
         /// Whether the docs' dose follows "≈": rounded to 2 decimals, or worked out from values shown in mmol/L.
@@ -847,29 +859,18 @@ extension ISFTest {
         /// the CGM's arrow is flat (or there is none for a recent reading, R6) and insulin on board is under the line for
         /// the dose shown; raising, once the tablets were taken, glucose has risen from them and then leveled off.
         var canDose: Bool {
-            guard let test else { return false }
-            return ISFTestEvaluator.canDose(
-                phase: test.phase,
-                tabletsTaken: test.tabletsTakenAt != nil,
-                tabletsActed: tabletsActed,
-                direction: shownDirection,
-                hasRecentReading: doseGlucose != nil,
-                dose: docsDose,
-                iobAllowsDose: doseIOBAllows,
-                carbsOnBoard: currentCOB
-            )
+            test.map { ISFTestEvaluator.canDose(of: $0, doseInputs) } ?? false
         }
 
         /// Whether the CGM shows glucose leveled off: a flat arrow, or none for a recent reading (R6).
         var glucoseIsLevel: Bool {
-            ISFTestEvaluator.isLevel(direction: shownDirection, hasRecentReading: doseGlucose != nil)
+            ISFTestEvaluator.glucoseIsLevel(doseInputs)
         }
 
         /// Whether the tablets taken have acted: a reading after them above the glucose they were counted from, and a
         /// reading after that one (`ISFTestEvaluator.tabletsActed`). False before they are taken.
         var tabletsActed: Bool {
-            guard let test, let takenAt = test.tabletsTakenAt else { return false }
-            return ISFTestEvaluator.tabletsActed(recentReadings, tabletsTakenAt: takenAt, glucoseAtTablets: test.tabletsGlucose)
+            test.map { ISFTestEvaluator.tabletsActed(of: $0, doseInputs) } ?? false
         }
 
         /// The line insulin on board must be under before the dose shown, in a test that doesn't count it: the docs'
@@ -879,9 +880,9 @@ extension ISFTest {
             ISFTestEvaluator.doseIOBLine(dose: docsDose, handling: test?.iobHandling)
         }
 
-        /// Whether insulin on board lets the dose shown go ahead (`ISFTestEvaluator.iobAllowsDose`).
+        /// Whether insulin on board lets the dose shown go ahead (`ISFTestEvaluator.doseIOBAllows`).
         var doseIOBAllows: Bool {
-            ISFTestEvaluator.iobAllowsDose(iob: currentIOB, dose: docsDose, handling: test?.iobHandling)
+            ISFTestEvaluator.doseIOBAllows(of: test, doseInputs)
         }
 
         // MARK: - Waiting
@@ -946,7 +947,11 @@ extension ISFTest {
         // MARK: - Subscription
 
         override func subscribe() {
-            test = provider.storage.retrieve(Config.statePath, as: ISFTestState.self)
+            if let runner = runner ?? testService.isfRunner {
+                follow(runner)
+            } else {
+                warning(.settings, "ISFTest: the settings test service has no ISF runner, so the screen can't run a test")
+            }
             if let raw = test?.tabletBrand, let brand = GlucoseTabletBrand(rawValue: raw) {
                 selectedBrand = brand
             }
@@ -980,12 +985,62 @@ extension ISFTest {
             Task { await refresh() }
         }
 
-        /// Pulls fresh data, then checks whether a running test has its bolus or should stop.
+        /// Shows the runner's state now, so the first frame is the test's step, and each change it publishes, on the main
+        /// queue.
+        func follow(_ runner: ISFTestRunning) {
+            self.runner = runner
+            apply(runner.state)
+            runner.statePublisher
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] state in self?.apply(state) }
+                .store(in: &dataSubscriptions)
+        }
+
+        /// Shows what the runner publishes: the test, settling's last check, and insulin on board for a counted dose. The
+        /// only place these change.
+        func apply(_ runnerState: ISFTestRunnerState) {
+            test = runnerState.test
+            settling = runnerState.settling?.decision
+            settlingBoluses = runnerState.settling?.boluses ?? []
+            settleReadings = runnerState.settling?.readingsAfterLoop
+            settleTempBasalRunning = runnerState.settling?.tempBasalRunning ?? false
+            settleIOB = runnerState.settling?.iob
+            doseIOB = runnerState.doseIOB
+        }
+
+        /// What `refresh` reads for the Check, Raise and Dose steps, shown in one step on the main actor (`show`).
+        struct ScreenData {
+            /// Newest first.
+            var readings: [BasalTestReading]
+            var iob: Decimal?
+            var cob: Decimal?
+            var hasActiveAdjustment: Bool
+            var hasPumpSetTempBasal: Bool
+            var pumpDelivery: ISFTestPumpDelivery?
+            var hasDevices: Bool
+            var trendDirection: BloodGlucose.Direction?
+        }
+
+        /// Shows what `refresh` read.
+        func show(_ data: ScreenData) {
+            recentReadings = data.readings
+            readIOB = data.iob
+            currentCOB = data.cob
+            hasActiveAdjustment = data.hasActiveAdjustment
+            hasPumpSetTempBasal = data.hasPumpSetTempBasal
+            pumpDelivery = data.pumpDelivery
+            hasDevices = data.hasDevices
+            trendDirection = data.trendDirection
+        }
+
+        /// Pulls fresh data for the screen, then has the runner check a running test: for its bolus, whether it should
+        /// stop, and insulin on board for a counted dose.
         func refresh() async {
+            let reads = self.reads
             let now = Date()
-            let schedule = provider.isfEntries()
-            let isf = provider.isf(at: now)
-            let target = provider.target(at: now)
+            let schedule = reads.isfEntries()
+            let isf = reads.isf(at: now)
+            let target = reads.target(at: now)
             let gate = readBasalGate()
             await MainActor.run {
                 isfSchedule = schedule
@@ -994,58 +1049,35 @@ extension ISFTest {
                 basalGate = gate
             }
             do {
-                let shared = provider.shared
-                let readings = try await shared.fetchRecentGlucose(minutes: Self.recentReadingsMinutes)
-                let iob = provider.currentIOB()
+                let readings = try await reads.fetchRecentGlucose(minutes: Self.recentReadingsMinutes)
+                let iob = reads.currentIOB()
                 // From a determination at most 12 minutes old; none, or a read that failed, is unread, not none.
-                let cob = (try? await provider.currentCOB()) ?? nil
-                let adjustment = try await shared.hasActiveAdjustment()
-                let pumpTempBasal = shared.hasPumpSetTempBasal()
-                let delivery = provider.pumpDelivery()
-                let devices = shared.hasCgmAndPump()
-                let direction = try await shared.fetchNewestDirection()
-                await MainActor.run {
-                    recentReadings = readings
-                    currentIOB = iob
-                    currentCOB = cob
-                    hasActiveAdjustment = adjustment
-                    hasPumpSetTempBasal = pumpTempBasal
-                    pumpDelivery = delivery
-                    hasDevices = devices
-                    trendDirection = direction
-                }
+                let cob = (try? await reads.currentCOB()) ?? nil
+                let adjustment = try await reads.hasActiveAdjustment()
+                let pumpTempBasal = reads.hasPumpSetTempBasal()
+                let delivery = reads.pumpDelivery()
+                let devices = reads.hasCgmAndPump()
+                let direction = try await reads.fetchNewestDirection()
+                let data = ScreenData(
+                    readings: readings,
+                    iob: iob,
+                    cob: cob,
+                    hasActiveAdjustment: adjustment,
+                    hasPumpSetTempBasal: pumpTempBasal,
+                    pumpDelivery: delivery,
+                    hasDevices: devices,
+                    trendDirection: direction
+                )
+                await MainActor.run { show(data) }
             } catch {
                 await MainActor.run { errorMessage = "Couldn't read your data: \(error.localizedDescription)" }
             }
-            // Before the bolus, the running check reads insulin on board for a counted dose (`refreshDoseIOB`).
-            await checkRunningTest()
-        }
-
-        /// Reads insulin on board for a counted dose, before the bolus of a test that counts it, from Trio's newest
-        /// determination of the last 12 minutes. Cleared otherwise, and when they can't be read.
-        private func refreshDoseIOB() async {
-            guard let test, test.iobHandling == .count, test.phase == .raising || test.phase == .dosing else {
-                await MainActor.run { doseIOB = nil }
-                return
-            }
-            let now = Date()
-            let iob: Decimal?
-            do {
-                let determinations = try await provider.fetchDeterminations(
-                    from: now.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - Config.savedDateTolerance),
-                    to: now.addingTimeInterval(Config.savedDateTolerance)
-                )
-                iob = ISFTestEvaluator.recentIOB(determinations, now: now)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read insulin on board for the dose", error: error)
-                iob = nil
-            }
-            await MainActor.run { doseIOB = iob }
+            await runner?.check()
         }
 
         /// The newest basal test against the basal schedule now.
         private func readBasalGate() -> SettingsTestSchedule.BasalGate {
-            SettingsTestSchedule.basalGate(history: testService.history(for: .basal), current: provider.basalEntries())
+            SettingsTestSchedule.basalGate(history: testService.history(for: .basal), current: reads.basalEntries())
         }
 
         // MARK: - Start
@@ -1068,7 +1100,10 @@ extension ISFTest {
             showStartConfirmation = true
         }
 
-        func confirmStart() {
+        /// Begin: the runner saves the test, starts its session and switches to Basal Testing. Only when every check
+        /// passes, Basal Testing being off among them, so the runner never records it as the usual mode, and with a
+        /// glucose to start from: none is made up.
+        @MainActor func confirmStart() {
             showStartConfirmation = false
             guard readyToStart else { return }
             // The reading may have grown too old while the confirmation was up.
@@ -1076,74 +1111,17 @@ extension ISFTest {
                 errorMessage = noRecentGlucoseMessage
                 return
             }
-
-            let now = Date()
-            // What the dose and the result use, kept so neither depends on what the settings say by then.
-            guard let isf = provider.isf(at: now), isf > 0, let target = provider.target(at: now) else {
-                errorMessage = String(localized: "Trio couldn't read your ISF and glucose target. Check them, then try again.")
-                return
+            if let error = runner?.begin(ISFTestBegin(glucose: glucose, iob: currentIOB, iobChoice: iobChoice)) {
+                errorMessage = error.message
             }
-            let previous = currentMode
-            var state = ISFTestState(
-                phase: .settling,
-                startedAt: now,
-                previousMode: previous,
-                isf: isf,
-                target: target,
-                carbRatio: provider.carbRatio(at: now)
-            )
-            // What insulin on board is measured against, fixed for the test, from the same glucose and settings.
-            let path = ISFTestEvaluator.startPath(glucose: glucose, target: target)
-            let expected = ISFTestEvaluator.expectedDose(startPath: path, glucose: glucose, target: target, isf: isf)
-            state.expectedDose = expected
-            state.iobLine = expected.map { ISFTestEvaluator.iobLine(expectedDose: $0) }
-            state.iobHandling = ISFTestEvaluator.iobHandling(
-                for: ISFTestEvaluator.iobDecision(iob: currentIOB, expectedDose: expected),
-                chosen: iobChoice
-            )
-            state.plannedPhase = ISFTestEvaluator.startPhase(glucose: glucose, target: target)
-            // The schedule as it is at Begin, over every hour settling, a bolus in the time allowed and its 4 hours could
-            // reach, so an ISF edited before the bolus is found doesn't become what the test ran on.
-            state.coveredEntries = ISFTestEvaluator.coveredAtBegin(provider.isfEntries(), startedAt: now)
-            // The target schedule over the same hours, so the dose and the result use the target in force at the time.
-            state.targetEntries = ISFTestEvaluator.coveredAtBegin(provider.targetEntries(), startedAt: now)
-            // The docs' dose is rounded up to it before a low's bolus is held against it.
-            state.bolusIncrement = bolusIncrement
-
-            // Saved first, so a crash from here on leaves a test this screen can finish: one that never reached Basal
-            // Testing ends as interrupted.
-            provider.storage.save(state, as: Config.statePath)
-            // Register the way back before changing anything, so an interruption can't leave the user in Basal Testing
-            // with nobody watching it.
-            guard let session = testService.begin(
-                kind: .isf,
-                expiresIn: Config.settleAllowance + Config.doseAllowance + Config.docsWait + Config.expiryGrace,
-                restoring: [.dosingMode(testMode: .basalTesting, previous: previous)],
-                settles: true
-            ) else {
-                provider.storage.remove(Config.statePath)
-                errorMessage = String(localized: "Another settings test is running. Finish it first.")
-                return
-            }
-            // Saved again with its session, before the mode changes, so the service's record of ending it can be matched
-            // to this test.
-            state.sessionID = session.id
-            provider.storage.save(state, as: Config.statePath)
-            settingsManager.settings.dosingMode = .basalTesting
-            settling = nil
-            settlingBoluses = []
-            settleReadings = nil
-            test = state
         }
 
         // MARK: - Settle
 
         /// After the settling allowance, with insulin on board still over the line: count it and go on.
-        func countAndGoOn() {
-            guard var current = test, current.phase == .settling, case .timeUp = settling else { return }
-            current.iobHandling = .count
-            save(current)
-            Task { await checkRunningTest() }
+        @MainActor func countAndGoOn() {
+            guard case .timeUp = settling else { return }
+            runner?.countAndGoOn()
         }
 
         /// Whether the Settle step shows insulin on board: in a test that waits for it, and in one that had no choice once
@@ -1260,749 +1238,81 @@ extension ISFTest {
 
         /// The user took the tablets the Raise step counted. They are kept for the record, not logged as carbs, and the
         /// step then waits for glucose to level off. Without a count there is nothing to have taken, so it says why; once
-        /// they are marked taken, another tap does nothing.
-        func tabletsTaken() {
-            guard var current = test, current.phase == .raising, current.tabletsTakenAt == nil else { return }
+        /// they are marked taken, another tap does nothing (the runner's).
+        @MainActor func tabletsTaken() {
             let count = tabletCount
             guard count > 0 else {
                 errorMessage = noTabletsReason == .noRecentReading ? noRecentGlucoseMessage : noTabletsMessage
                 return
             }
-            current.tabletBrand = selectedBrand.rawValue
-            // Added to tablets taken before going back from the Dose step, so the record holds all of them.
-            current.tabletCarbs = (current.tabletCarbs ?? 0) + Decimal(count) * selectedBrand.carbsPerTablet
-            current.tabletsTakenAt = Date()
             // What glucose has to rise above before the dose, so a reading from before they acted can't unlock it.
-            current.tabletsGlucose = doseGlucose
-            save(current)
+            runner?.tabletsTaken(ISFTestTabletsTaken(brand: selectedBrand, count: count, glucose: doseGlucose))
         }
 
         /// From the Raise step to the Dose step, once glucose has leveled off after the tablets.
-        func workOutDose() {
-            guard var current = test, current.phase == .raising, canDose else { return }
-            current.phase = .dosing
-            save(current)
+        @MainActor func workOutDose() {
+            guard canDose else { return }
+            runner?.moveToDose()
         }
 
         /// From the Raise step to the Dose step without tablets.
-        func skipTablets() {
-            guard var current = test, current.phase == .raising else { return }
-            current.phase = .dosing
-            save(current)
+        @MainActor func skipTablets() {
+            runner?.moveToDose()
         }
 
         /// Back from the Dose step to the Raise step, only when glucose is at or below the target, so the docs' formula
         /// gives no dose, and the target is below the docs' 150 for tablets to aim past (`canRaise`). Tablets already
         /// taken stay in the record.
-        func raiseFirst() {
-            guard var current = test, current.phase == .dosing, noDoseReason == .atOrBelowTarget, canRaise else { return }
-            current.phase = .raising
-            current.tabletsTakenAt = nil
-            current.tabletsGlucose = nil
-            save(current)
+        @MainActor func raiseFirst() {
+            guard noDoseReason == .atOrBelowTarget, canRaise else { return }
+            runner?.raiseFirst()
         }
 
         /// Trio's own Treatments screen gives the bolus, so its checks all apply.
-        func openTreatments() {
+        @MainActor func openTreatments() {
             guard canDose else { return }
-            router.mainModalScreen.send(.treatmentView)
+            sendToTreatments()
         }
 
-        private func save(_ state: ISFTestState) {
-            provider.storage.save(state, as: Config.statePath)
-            test = state
+        /// Opens Treatments. A screen opened from a notice comes back when Treatments closes (`treatmentsOpened`).
+        @MainActor func sendToTreatments() {
+            if opener.wasOpenedFromNotice(.isf) {
+                opener.treatmentsOpened(from: .isf)
+            }
+            router.mainModalScreen.send(.treatmentView)
         }
 
         // MARK: - Running
 
-        /// While settling, sees whether the real test can start. Before the bolus, looks for it, then ends the test if the
-        /// service ended it, Trio suspended insulin for a low, the time for the bolus or the 4 hours ran out, the dosing
-        /// mode was changed, or something spoiled it.
+        /// Has the runner check the test now: the steps' timers, and the Wait step's.
         func checkRunningTest() async {
-            guard let test, test.phase != .finished, !isFinishing else { return }
-            // What the check finishes below is this test, and only this one: the reads in between give the user time to
-            // discard it and start another, which this check knows nothing about.
-            let testID = test.id
-            let now = Date()
-
-            if test.phase == .settling {
-                await checkSettling(of: testID)
-            }
-            await shareBolusWindowStart(of: testID)
-
-            // Waiting, the bolus is known, so nothing below waits on reading it.
-            var bolusesRead = true
-            if let latest = self.test, latest.id == testID, latest.phase == .raising || latest.phase == .dosing {
-                // Insulin on board for a counted dose grows old between loops too.
-                await refreshDoseIOB()
-                bolusesRead = await lookForTestBolus(of: testID)
-            }
-            // Settling may have ended, and the bolus may have moved it on to the 4 hours.
-            guard let current = self.test, current.id == testID, current.phase != .finished, !isFinishing else { return }
-
-            // Counting insulin on board needs it at the bolus; a tick that couldn't read it tries again.
-            if current.phase == .waiting, ISFTestEvaluator.iobAtBolusUnread(of: current), let bolusAt = current.bolusAt,
-               let iob = await readIOB(before: bolusAt, of: current)
-            {
-                await updateIOBAtBolus(iob, of: testID)
-            }
-
-            // Judged on what the pump delivered: the amount first seen can be the one programmed, and a bolus cut short
-            // is written with less once the pump reports it.
-            if current.phase == .waiting, let bolusAt = current.bolusAt {
-                switch await ISFTestEvaluator.bolusAmount(
-                    saved: current.bolusUnits,
-                    reread: rereadTestBolus(at: bolusAt),
-                    bolusAt: bolusAt,
-                    finishing: false
-                ) {
-                case .cancelled:
-                    let ending = ISFTestEvaluator.ending(for: .bolusCancelled, doseDeadline: current.noBolusDeadline)
-                    await finish(for: testID, reason: ending.reason, at: ending.at, note: ending.note)
-                    return
-                case let .units(units):
-                    if units != current.bolusUnits {
-                        await updateBolusUnits(units, of: testID)
-                    }
-                case .unread:
-                    break
-                }
-            }
-
-            // Only the test itself: a zero temp after the planned end isn't this test's low. From Begin, so a low before
-            // the bolus, settling's among them, is seen as one.
-            let end = min(now, current.plannedEnd ?? current.noBolusDeadline)
-            // Trio's determinations say whether a zero temp was its suspend for a low or one set on the pump.
-            let suspend: BasalTestEvaluator.SuspendReading
-            do {
-                // A zero temp only Closed Loop asked for as the test began is settling's, not a low.
-                suspend = try await provider.fetchSuspendReading(startedAt: current.startedAt, to: end)
-            } catch {
-                // Without them a low can't be told from a test that ran its course. Before the end nothing is decided on
-                // them this time; at it, the test still ends, without a verdict.
-                warning(.settings, "ISFTest: couldn't read temp basals to check for a low", error: error)
-                suspend = .unreadable
-            }
-
-            // Read together on the main actor, where the service keeps its record before it brings the usual mode back,
-            // so a mode changed by the service is never seen without the reason.
-            let (mode, serviceEnd) = await MainActor.run { (currentMode, testService.lastEnd()) }
-            let found = ISFTestEvaluator.runningCheck(
-                phase: current.phase,
-                sessionID: current.sessionID,
-                serviceEnd: serviceEnd,
-                suspend: suspend,
-                now: now,
-                doseDeadline: current.noBolusDeadline,
-                // Both always while waiting: without the bolus time a low before the dose can't be told from one after.
-                bolusAt: current.bolusAt,
-                plannedEnd: current.plannedEnd,
-                mode: mode
-            )
-            if let check = ISFTestEvaluator.decidable(found, bolusesRead: bolusesRead) {
-                let ending = ISFTestEvaluator.ending(for: check, doseDeadline: current.noBolusDeadline)
-                await finish(for: testID, reason: ending.reason, at: ending.at, note: ending.note)
-            } else if case .found = await wasInterrupted(current, until: end) {
-                await finish(for: testID, reason: .interrupted)
-            }
+            await runner?.check()
         }
 
-        /// Reads Trio's determinations and the boluses since Begin, and insulin on board now, and ends settling when
-        /// `ISFTestEvaluator.settling` says it has: the real test starts now, on the step the glucose now leads to
-        /// (`phaseAfterSettling`), and the service learns where the bolus window starts. Determinations that can't be read
-        /// leave it settling.
-        private func checkSettling(of testID: UUID) async {
-            guard let test, test.id == testID, test.phase == .settling else { return }
-            let now = Date()
-            let determinations: [Date]
-            do {
-                determinations = try await provider.fetchDeterminations(from: test.startedAt, to: now).map(\.date)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read Trio's determinations to settle the test", error: error)
-                return
-            }
-            let boluses: [ISFTestBolus]?
-            do {
-                boluses = try await provider.fetchBoluses(from: test.startedAt, to: now)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read boluses given while the test settles", error: error)
-                boluses = nil
-            }
-            // Which of them the pump history flags as SMBs, to say which Trio gave. Unread, none is called one.
-            let smbs = try? await provider.shared.fetchSMBs(since: test.startedAt, until: now)
-            // The CGM readings since Begin, of which those after Trio's first loop in Basal Testing count. Unread, settling
-            // waits for a tick that reads them.
-            let readings: [Date]
-            do {
-                readings = try await provider.shared.fetchGlucose(from: test.startedAt, to: now).map(\.date)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read glucose to settle the test", error: error)
-                return
-            }
-            let iob = provider.currentIOB()
-            // A temp basal still running at the end of settling would change the basal the test runs on. Unread, it
-            // doesn't hold settling up.
-            let tempBasalRunning = provider.pumpDelivery().map { $0 == .tempBasal }
-
-            await MainActor.run {
-                guard var latest = self.test, latest.id == testID, latest.phase == .settling, !isFinishing else { return }
-                currentIOB = iob
-                settleTempBasalRunning = tempBasalRunning == true
-                if let boluses {
-                    settlingBoluses = ISFTestEvaluator.settlingBoluses(
-                        boluses,
-                        smbs: smbs,
-                        startedAt: latest.startedAt,
-                        settledAt: nil
-                    )
-                }
-                let decision = ISFTestEvaluator.settling(
-                    startedAt: latest.startedAt,
-                    determinations: determinations,
-                    readings: readings,
-                    tempBasalRunning: tempBasalRunning,
-                    iob: iob,
-                    line: latest.iobLine,
-                    handling: latest.iobHandling,
-                    now: now
-                )
-                settling = decision
-                settleReadings = ISFTestEvaluator.firstLoopInTestMode(determinations, startedAt: latest.startedAt)
-                    .map { ISFTestEvaluator.readingsAfterLoop(readings, loopedAt: $0) }
-                // A test whose session the service ended, or ran out of time, is ended by the running check instead.
-                guard decision == .settled,
-                      ISFTestEvaluator.canSettle(
-                          sessionID: latest.sessionID,
-                          activeSessionID: testService.activeSession?.id,
-                          mode: currentMode,
-                          now: Date(),
-                          noBolusDeadline: latest.noBolusDeadline
-                      )
-                else { return }
-                // A bolus from here on can be the test's; one before it was given while settling.
-                let settledAt = Date()
-                latest.settledAt = settledAt
-                latest.phase = ISFTestEvaluator.phaseAfterSettling(latest, glucose: doseGlucose, at: settledAt)
-                provider.storage.save(latest, as: Config.statePath)
-                self.test = latest
-                testService.setBolusWindowStart(kind: .isf, at: settledAt)
-                settling = nil
-                settlingBoluses = []
-                settleReadings = nil
-            }
-        }
-
-        /// Makes sure the service knows where the bolus window starts, for a test past settling whose session doesn't:
-        /// one begun before settling was kept, whose window starts at Start, or one the app closed on as it settled.
-        private func shareBolusWindowStart(of testID: UUID) async {
-            await MainActor.run {
-                guard let test, test.id == testID, test.phase != .finished, let start = test.bolusWindowStart,
-                      let session = testService.activeSession, session.kind == .isf, session.id == test.sessionID,
-                      session.bolusWindowStart == nil
-                else { return }
-                testService.setBolusWindowStart(kind: .isf, at: start)
-            }
-        }
-
-        /// Insulin on board just before the bolus, from Trio's determinations in the 12 minutes before it
-        /// (`ISFTestEvaluator.iobAtBolus`). Nil when there is none that recent, or they couldn't be read.
-        private func readIOB(before bolusAt: Date, of test: ISFTestState) async -> Decimal? {
-            do {
-                let oldest = bolusAt.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - Config.savedDateTolerance)
-                let determinations = try await provider.fetchDeterminations(from: max(test.startedAt, oldest), to: bolusAt)
-                return ISFTestEvaluator.iobAtBolus(determinations, bolusAt: bolusAt)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read insulin on board at the bolus", error: error)
-                return nil
-            }
-        }
-
-        /// Insulin on board Trio reports still left at the planned end, from its determinations in the 12 minutes up to it
-        /// (`ISFTestEvaluator.iobAtEnd`), the same source and age as at the bolus. Nil when there is none that recent, or
-        /// they couldn't be read.
-        private func readIOB(atEnd plannedEnd: Date, of test: ISFTestState) async -> Decimal? {
-            do {
-                let oldest = plannedEnd.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - Config.savedDateTolerance)
-                let determinations = try await provider.fetchDeterminations(
-                    from: max(test.startedAt, oldest),
-                    to: plannedEnd.addingTimeInterval(Config.savedDateTolerance)
-                )
-                return ISFTestEvaluator.iobAtEnd(determinations, plannedEnd: plannedEnd)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read insulin on board at the end of the 4 hours", error: error)
-                return nil
-            }
-        }
-
-        /// Saves the insulin on board at the bolus, for a test that counts it.
-        private func updateIOBAtBolus(_ iob: Decimal, of testID: UUID) async {
-            await MainActor.run {
-                guard var latest = test, latest.id == testID, latest.phase == .waiting, !isFinishing else { return }
-                latest.iobAtBolus = iob
-                provider.storage.save(latest, as: Config.statePath)
-                test = latest
-            }
-        }
-
-        /// Finds the test bolus, the first bolus from the end of settling to the deadline from any source, and moves the
-        /// test on to the 4 hours with the bolus, the glucose it was given at, the ISF entries the 4 hours cover and, in
-        /// a test that counts it, the insulin on board just before it. A bolus given while a condition the Dose step holds
-        /// the dose for didn't hold (`ISFTestEvaluator.failedBolusCondition`) ends the test with no verdict. Returns whether the boluses could be read, so a
-        /// tick that couldn't read them doesn't decide there was none.
-        private func lookForTestBolus(of testID: UUID) async -> Bool {
-            guard let test, test.id == testID, let windowStart = test.bolusWindowStart else { return true }
-            let bolus: ISFTestBolus?
-            do {
-                // Read a little past the deadline, which is saved to the millisecond, so a bolus at the same moment as it
-                // reaches `testBolus`, which counts it as inside. One before the end of settling isn't the test's.
-                let boluses = try await provider.fetchBoluses(
-                    from: windowStart,
-                    to: test.doseDeadline.addingTimeInterval(Config.savedDateTolerance)
-                )
-                bolus = ISFTestEvaluator.testBolus(boluses, since: windowStart, deadline: test.doseDeadline)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read boluses to look for the test bolus", error: error)
-                return false
-            }
-            guard let bolus else { return true }
-
-            // The mean of the last 3 readings at or before the bolus. If they can't be read now, finishing tries again.
-            let startGlucose: Int?
-            do {
-                let readings = try await provider.shared.fetchGlucose(
-                    from: bolus.date.addingTimeInterval(-Self.startReadingsLookback),
-                    to: bolus.date
-                )
-                startGlucose = BasalTestEvaluator.endGlucose(from: readings, endingAt: bolus.date)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read glucose at the bolus", error: error)
-                startGlucose = nil
-            }
-            // Only a test that counts it needs it; if it can't be read now, the next tick and finishing try again.
-            let iobAtBolus = test.iobHandling == .count ? await readIOB(before: bolus.date, of: test) : nil
-
-            // What the Dose step holds the dose for, as it was at the bolus, which can come from Home, the pump or the
-            // Watch as well as from Open Treatments. A read that fails leaves its condition unread.
-            let conditionReadings: [BasalTestReading]?
-            if let takenAt = test.tabletsTakenAt {
-                conditionReadings = try? await provider.shared.fetchGlucose(
-                    from: min(takenAt, bolus.date).addingTimeInterval(-Self.startReadingsLookback),
-                    to: bolus.date.addingTimeInterval(Config.savedDateTolerance)
-                )
-            } else {
-                conditionReadings = []
-            }
-            let arrow = try? await provider.fetchArrowReading(atOrBefore: bolus.date)
-            let atBolusDeterminations = try? await provider.fetchDeterminations(
-                from: bolus.date.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - Config.savedDateTolerance),
-                to: bolus.date.addingTimeInterval(Config.savedDateTolerance)
-            )
-
-            // On the main actor, from the state as it is now, so a tap on the Raise or Dose step in the meantime isn't
-            // lost and a test discarded or finished in the meantime isn't brought back.
-            let moved: (state: ISFTestState, failed: ISFTestBolusCondition?)? = await MainActor.run {
-                guard let shown = self.test, shown.id == testID, !isFinishing,
-                      shown.phase == .raising || shown.phase == .dosing
-                else { return nil }
-                // The ISF and target the result uses become those in force at the bolus, from the schedules saved at Begin,
-                // so an ISF edited since doesn't become what the test ran on, and the ISF schedule narrows to its 4 hours.
-                var latest = ISFTestEvaluator.atBolus(shown, bolusAt: bolus.date)
-                latest.phase = .waiting
-                latest.bolusAt = bolus.date
-                // A bolus with no amount recorded still started the test, but there is no amount to judge it by.
-                latest.bolusUnits = bolus.units > 0 ? bolus.units : nil
-                latest.startGlucose = startGlucose
-                latest.iobAtBolus = iobAtBolus
-                provider.storage.save(latest, as: Config.statePath)
-                self.test = latest
-                // The line for insulin on board is the docs' smallest ISF change of the docs' dose at the bolus.
-                let docsDose = startGlucose.flatMap {
-                    ISFTestEvaluator.dose(glucose: $0, target: latest.target, isf: latest.isf)
-                }
-                let failed = ISFTestEvaluator.failedBolusCondition(
-                    bolusAt: bolus.date,
-                    readings: conditionReadings,
-                    tabletsTakenAt: latest.tabletsTakenAt,
-                    tabletsGlucose: latest.tabletsGlucose,
-                    arrow: arrow,
-                    determinations: atBolusDeterminations,
-                    handling: latest.iobHandling,
-                    line: ISFTestEvaluator.doseIOBLine(dose: docsDose, handling: latest.iobHandling)
-                )
-                return (latest, failed)
-            }
-            // A bolus the Dose step would have held: the test ends with no verdict, and the usual mode comes back.
-            if let failed = moved?.failed {
-                await finish(for: testID, reason: .interrupted, note: failed.note)
-                return true
-            }
-            // A test found after its 4 hours finishes right away, so there is nothing to tell the user later.
-            if let plannedEnd = moved?.state.plannedEnd, plannedEnd > Date() {
-                scheduleFinishedNotification(at: plannedEnd)
-            }
-            return true
-        }
-
-        /// The bolus rows around the saved bolus time, read again, so the test bolus's amount is the one the pump history
-        /// holds now. Any bolus row, because the history can flag the test bolus as an SMB when it writes the amount
-        /// delivered. Nil when they couldn't be read.
-        private func rereadTestBolus(at bolusAt: Date) async -> [ISFTestBolusRecord]? {
-            do {
-                return try await provider.fetchBolusRecords(
-                    from: bolusAt.addingTimeInterval(-Config.savedDateTolerance),
-                    to: bolusAt.addingTimeInterval(Config.savedDateTolerance)
-                )
-            } catch {
-                warning(.settings, "ISFTest: couldn't read the test bolus again", error: error)
-                return nil
-            }
-        }
-
-        /// Saves the amount the pump history now holds for the test bolus, so the Wait step shows what was delivered.
-        private func updateBolusUnits(_ units: Decimal?, of testID: UUID) async {
-            await MainActor.run {
-                guard var latest = test, latest.id == testID, latest.phase == .waiting, !isFinishing else { return }
-                latest.bolusUnits = units
-                provider.storage.save(latest, as: Config.statePath)
-                test = latest
-            }
-        }
-
-        // MARK: - Finish
-
-        /// Ending early gives no result.
+        /// End Test: ending early gives no result.
         func endEarly() async {
-            await finish(reason: .endedEarly)
+            await runner?.endEarly()
         }
 
-        /// Cancel Test, before the bolus: the usual mode comes back and nothing is kept.
+        /// Cancel Test, before the bolus: the usual mode comes back and nothing is kept. The next test's Check starts on
+        /// the docs' way.
         @MainActor func discard() {
-            if let test {
-                endSession(of: test)
-            } else {
-                testService.end(kind: .isf)
-            }
-            clearTest()
-            cancelFinishedNotification()
+            runner?.discard()
+            iobChoice = .wait
+            Task { await refresh() }
         }
 
-        /// Ends the test's session, so the service puts the usual mode back, on the main actor, where the service changes
-        /// the mode and the screen reads it. When the session is lost (no session runs and the service kept no end of
-        /// it) with Basal Testing still on, the screen puts the mode Begin saved back itself
-        /// (`ISFTestEvaluator.modeToRestore`); otherwise nothing it doesn't own is changed.
-        @MainActor private func endSession(of test: ISFTestState) {
-            let restore = ISFTestEvaluator.modeToRestore(
-                mode: currentMode,
-                testSessionID: test.sessionID,
-                activeSessionID: testService.activeSession?.id,
-                lastEndSessionID: testService.lastEnd()?.sessionID,
-                previousMode: test.previousMode
-            )
-            testService.end(kind: .isf)
-            if let restore {
-                debug(.settings, "ISFTest: the test's session was lost, restoring \(restore.rawValue) itself")
-                settingsManager.settings.dosingMode = restore
-            }
+        /// Done: clears a finished result so the user can start over, on the docs' way.
+        @MainActor func acknowledgeResult() {
+            runner?.acknowledgeResult()
+            iobChoice = .wait
+            Task { await refresh() }
         }
 
         /// Whether Basal Testing is still on with no test running it, so the Result says so instead of the usual dosing
         /// coming back (`SettingsTestModeRule.basalTestingLeftOn`).
         var basalTestingLeftOn: Bool {
             SettingsTestModeRule.basalTestingLeftOn(mode: currentMode, activeSessionID: testService.activeSession?.id)
-        }
-
-        /// `endedAt` is when a low ended the test, or when the service ended it; without it the test ends now, or at the
-        /// planned end (the dose deadline before the bolus) if that came first. `note` says what interrupted it when the
-        /// records don't. `reason` is what the caller saw; the history up to the end can still make it a low or an
-        /// interruption (`settle`). With `testID`, it finishes only that test: a check that read the history for one
-        /// test must not end another that was started while it waited.
-        func finish(
-            for testID: UUID? = nil,
-            reason: ISFTestEndReason,
-            at endedAt: Date? = nil,
-            note: String? = nil
-        ) async {
-            // Claimed on the main actor, where Cancel Test and Start run, so the claim and the save below are ordered
-            // with them.
-            let claimed: ISFTestState? = await MainActor.run {
-                guard let current = test, current.phase != .finished, !isFinishing,
-                      testID == nil || current.id == testID
-                else { return nil }
-                isFinishing = true
-                return current
-            }
-            guard var current = claimed else { return }
-
-            // Fixed before normal dosing comes back, so nothing the usual mode does next falls inside the test.
-            let endedBy = ISFTestEvaluator.endTime(
-                endedAt: endedAt,
-                limit: current.plannedEnd ?? current.noBolusDeadline,
-                now: Date()
-            )
-
-            // Normal dosing comes back first, on the main actor; the rest is bookkeeping.
-            let ending = current
-            await MainActor.run { endSession(of: ending) }
-            cancelFinishedNotification()
-
-            // The history up to the end decides how the test ended, so a suspend the periodic checks hadn't seen yet
-            // isn't lost. Read once normal dosing is back, so the read never holds it up.
-            let settled = await settle(current, reason: reason, at: endedBy)
-            var reason = settled.reason
-            let end = settled.at ?? endedBy
-            var note = note ?? settled.note
-
-            // What the pump delivered, read again: a bolus cut short is judged per unit delivered, one cancelled before
-            // any insulin went in leaves nothing to judge, and an amount that can't be read isn't trusted.
-            var bolusUnread = false
-            if let bolusAt = current.bolusAt {
-                switch await ISFTestEvaluator.bolusAmount(
-                    saved: current.bolusUnits,
-                    reread: rereadTestBolus(at: bolusAt),
-                    bolusAt: bolusAt,
-                    finishing: true
-                ) {
-                case let .units(units):
-                    current.bolusUnits = units
-                case .cancelled:
-                    // Something else that interrupted the test keeps its own words.
-                    if reason != .interrupted {
-                        let cancelled = ISFTestEvaluator.ending(for: .bolusCancelled, doseDeadline: current.noBolusDeadline)
-                        reason = cancelled.reason
-                        note = cancelled.note
-                    }
-                case .unread:
-                    bolusUnread = true
-                }
-                // Counting insulin on board needs it at the bolus, read once more if no tick could.
-                if ISFTestEvaluator.iobAtBolusUnread(of: current) {
-                    current.iobAtBolus = await readIOB(before: bolusAt, of: current)
-                }
-                // A test that ran its 4 hours is judged on the insulin that acted in them: what Trio reports still on
-                // board at the planned end is left out. Unread, there is no verdict.
-                if reason == .completed, let plannedEnd = current.plannedEnd {
-                    current.iobAtEnd = await readIOB(atEnd: plannedEnd, of: current)
-                }
-            }
-
-            // From the bolus, or from Start if none came, and from a little before it for the start glucose. A little
-            // past the end, which is saved to the millisecond, so a reading at the same moment as it is read.
-            let anchor = current.bolusAt ?? current.startedAt
-            let fetched: [BasalTestReading]
-            do {
-                fetched = try await provider.shared.fetchGlucose(
-                    from: anchor.addingTimeInterval(-Self.startReadingsLookback),
-                    to: end.addingTimeInterval(Config.savedDateTolerance)
-                )
-            } catch {
-                warning(.settings, "ISFTest: couldn't read the test's glucose", error: error)
-                fetched = []
-            }
-            // A reading at the same moment as the saved bolus counts as at it, for both, and one at the end as at it.
-            let readings = ISFTestEvaluator.readings(ISFTestEvaluator.readings(fetched, since: anchor), atOrBefore: end)
-            let startGlucose = current.startGlucose ?? current.bolusAt.flatMap { bolusAt in
-                BasalTestEvaluator.endGlucose(from: ISFTestEvaluator.readings(fetched, atOrBefore: bolusAt), endingAt: bolusAt)
-            }
-            // Where the 4 hours ended, or, for a low, the glucose at Trio's suspend.
-            let endGlucose = ISFTestEvaluator.endGlucose(fetched, bolusAt: current.bolusAt, end: end, reason: reason)
-            let checked = await wasInterrupted(current, until: end)
-            let interference: String?
-            if case let .found(message) = checked {
-                interference = message
-            } else {
-                interference = note
-            }
-            let interferenceUnread = checked == .unreadable || bolusUnread
-
-            // `reason` as the finish decided it, so a test that ran its 4 hours needs the insulin left at the end read.
-            current.endReason = reason
-            let evaluation = ISFTestEvaluator.evaluate(
-                startGlucose: startGlucose,
-                endGlucose: endGlucose,
-                units: ISFTestEvaluator.judgedUnits(of: current),
-                elapsed: end.timeIntervalSince(anchor),
-                reason: reason,
-                interference: interference,
-                interferenceUnread: interferenceUnread,
-                // Insulin on board the units judged rest on couldn't be read: no units to judge by.
-                iobUnread: ISFTestEvaluator.iobUnread(of: current),
-                isf: current.isf,
-                // A low says the ISF number is too low only at or below the target, after no more than the docs' dose.
-                target: current.target,
-                givenUnits: ISFTestEvaluator.givenUnits(of: current),
-                increment: current.bolusIncrement ?? 0
-            )
-
-            current.phase = .finished
-            current.endedAt = end
-            current.endReason = reason
-            current.startGlucose = startGlucose
-            current.endGlucose = endGlucose
-            current.readings = readings
-            current.outcome = evaluation.outcome
-            current.interference = interference
-            current.interferenceUnread = interferenceUnread
-
-            // Only a verdict on the ISF is kept. A low has one whatever the readings were, so it needs only one of them.
-            var record: SettingsTestRecord?
-            if evaluation.outcome.isConclusive, let direction = evaluation.direction, let bolusAt = current.bolusAt,
-               let recordStart = startGlucose ?? endGlucose
-            {
-                record = SettingsTestRecord(
-                    kind: .isf,
-                    startedAt: bolusAt,
-                    completedAt: end,
-                    timeBlock: BasalTestEvaluator.timeBlock(for: bolusAt),
-                    startGlucose: recordStart,
-                    endGlucose: endGlucose ?? recordStart,
-                    direction: direction,
-                    summary: ISFTestEvaluator.summary(
-                        for: evaluation.outcome,
-                        reason: reason,
-                        startGlucose: startGlucose,
-                        endGlucose: endGlucose
-                    ),
-                    // Only what the hours it ran covered, so a test ended by a low doesn't vouch for the rest.
-                    coveredEntries: ISFTestEvaluator.coveredEntries(current.coveredEntries ?? [], from: bolusAt, to: end),
-                    bolusUnits: current.bolusUnits,
-                    tabletCarbs: current.tabletCarbs,
-                    iobHandling: current.iobHandling?.rawValue,
-                    iobCounted: current.iobHandling == .count ? current.iobAtBolus : nil,
-                    judgedUnits: ISFTestEvaluator.judgedUnits(of: current)
-                )
-            }
-
-            // Kept only if it is still the test on screen: a Cancel Test or a new Start while the history was read owns
-            // the screen and the saved state now. One step on the main actor, so neither can come in between.
-            let finished = current
-            let archived = record
-            await MainActor.run {
-                isFinishing = false
-                guard let shown = test, shown.id == finished.id, shown.phase != .finished else { return }
-                provider.storage.save(finished, as: Config.statePath)
-                if let archived {
-                    testService.archive(archived)
-                }
-                test = finished
-            }
-        }
-
-        /// How the test ends, from what the pump history and Trio's determinations up to `end` say: see
-        /// `ISFTestEvaluator.finishing`. A reason already decided needs no read.
-        private func settle(
-            _ test: ISFTestState,
-            reason: ISFTestEndReason,
-            at end: Date
-        ) async -> ISFTestEvaluator.Ending {
-            guard ISFTestEvaluator.rereadsHistory(reason) else {
-                return ISFTestEvaluator.Ending(reason: reason, at: end, note: nil)
-            }
-            let suspend: BasalTestEvaluator.SuspendReading
-            do {
-                suspend = try await provider.fetchSuspendReading(startedAt: test.startedAt, to: end)
-            } catch {
-                warning(.settings, "ISFTest: couldn't read temp basals to check the finished test for a low", error: error)
-                suspend = .unreadable
-            }
-            return ISFTestEvaluator.finishing(
-                reason: reason,
-                at: end,
-                suspend: suspend,
-                bolusAt: test.bolusAt,
-                doseDeadline: test.noBolusDeadline
-            )
-        }
-
-        /// What spoiled the test, if anything: carbs, the pump suspended, alarmed or changed, a bolus after the test's own,
-        /// or Trio dosing, which it doesn't in Basal Testing. Each record is read on its own, so one that can't be read is
-        /// logged without hiding what the others show; with nothing found, the test is left unchecked. Trio's SMBs and its temp basals are read apart,
-        /// so one that can't be read doesn't hide what the other shows. Carbs count from Begin; Trio's dosing only from the
-        /// end of settling, because what a loop already running at Begin gave lands while settling, in the insulin on
-        /// board the test waits for or counts. A test that never settled has no dosing of Trio's to check.
-        private func wasInterrupted(_ test: ISFTestState, until end: Date) async -> BasalTestEvaluator.Interference {
-            let start = test.startedAt
-            let windowStart = test.bolusWindowStart
-            let bolusAt = test.bolusAt
-            let provider: Provider = self.provider
-            let dosed = String(localized: "Trio dosed during the test, so Basal Testing wasn't on the whole time.")
-            return await BasalTestEvaluator.firstInterference([
-                (name: "carbs", read: {
-                    try await provider.shared.hasCarbEntries(from: start, to: end)
-                        ? String(localized: "Carbs were logged during the test.")
-                        : nil
-                }),
-                // From Begin: a suspend, an alarm, or a site or reservoir change means basal or the bolus may not have
-                // gone in as recorded.
-                (name: "pump events", read: {
-                    try await provider.fetchPumpInterruptions(from: start, to: end).isEmpty
-                        ? nil
-                        : ISFTestEvaluator.pumpInterruptedNote
-                }),
-                (name: "boluses", read: {
-                    // Before the bolus there is no test bolus for another to come after.
-                    guard let bolusAt else { return nil }
-                    let boluses = try await provider.fetchBoluses(from: start, to: end)
-                    return ISFTestEvaluator.hasExtraBolus(boluses, after: bolusAt)
-                        ? String(localized: "Another bolus was given during the test.")
-                        : nil
-                }),
-                (name: "Trio's SMBs", read: {
-                    guard let windowStart else { return nil }
-                    // The test bolus itself may be flagged as an SMB; any other bolus is the boluses read's to find.
-                    let smbs = try await ISFTestEvaluator.smbs(
-                        provider.shared.fetchSMBs(since: windowStart, until: end),
-                        besidesTestBolusAt: bolusAt
-                    )
-                    return BasalTestEvaluator.dosedDuringFast(smbs: smbs, temps: [], since: windowStart, until: end)
-                        ? dosed
-                        : nil
-                }),
-                (name: "Trio's temp basals", read: {
-                    guard let windowStart else { return nil }
-                    let temps = try await provider.shared.fetchTempBasals(from: windowStart, to: end)
-                    return BasalTestEvaluator.dosedDuringFast(smbs: [], temps: temps, since: windowStart, until: end)
-                        ? dosed
-                        : nil
-                })
-            ])
-        }
-
-        /// Clears a finished result so the user can start over.
-        func acknowledgeResult() {
-            clearTest()
-        }
-
-        private func clearTest() {
-            provider.storage.remove(Config.statePath)
-            test = nil
-            settling = nil
-            settlingBoluses = []
-            settleReadings = nil
-            settleTempBasalRunning = false
-            // The next test's Check starts on the docs' way.
-            iobChoice = .wait
-            Task { await refresh() }
-        }
-
-        // MARK: - Notifications
-
-        private func scheduleFinishedNotification(at date: Date) {
-            let content = UNMutableNotificationContent()
-            content.title = String(localized: "ISF test finished")
-            content.body = String(localized: "Open Trio to see what your ISF did.")
-            content.sound = .default
-            let request = UNNotificationRequest(
-                identifier: Self.finishedNotificationID,
-                content: content,
-                trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, date.timeIntervalSinceNow), repeats: false)
-            )
-            UNUserNotificationCenter.current().add(request)
-        }
-
-        private func cancelFinishedNotification() {
-            let center = UNUserNotificationCenter.current()
-            center.removePendingNotificationRequests(withIdentifiers: [Self.finishedNotificationID])
-            center.removeDeliveredNotifications(withIdentifiers: [Self.finishedNotificationID])
         }
     }
 }

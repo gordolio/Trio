@@ -76,7 +76,7 @@ extension BasalTest {
                     // Only with an ISF and a basal to work the band out from.
                     if state.steadyBand != nil {
                         Text(
-                            "Inside the green band, the change is smaller than the docs' smallest basal change (\(state.stepPercent)%)."
+                            "Inside the green band, the change is smaller than the smallest basal change in Trio docs (\(state.stepPercent)%)."
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)

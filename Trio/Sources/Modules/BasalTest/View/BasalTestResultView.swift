@@ -146,60 +146,7 @@ extension BasalTest {
         }
 
         private func paragraphs(for outcome: BasalTestOutcome, test: BasalTestState) -> [String] {
-            let elapsed = (test.endedAt ?? test.plannedEnd).timeIntervalSince(test.startedAt)
-            let evaluation = state.evaluation
-            let noReadings = String(
-                localized: "No CGM readings were recorded during the fast, so there is no end glucose to compare."
-            )
-            // With readings but no ISF or basal, so there is no rate or share to work out.
-            let noWorking = String(
-                localized: "Trio couldn't read your ISF or basal schedule for these hours, so there is no working to show."
-            )
-            let missingInputs = test.endGlucose != nil && (evaluation?.ratePerHour == nil || evaluation?.share == nil)
-            // A low has no working on purpose: its own card says when Trio suspended.
-            let missingWorking = missingInputs && test.endReason != .low
-            switch outcome {
-            case .steady:
-                return [String(localized: "Glucose moved less than the docs' smallest basal change would explain.")]
-            case .rising:
-                return [String(localized: "A higher basal number gives more insulin.")] + (missingWorking ? [noWorking] : [])
-            case .falling:
-                return [String(localized: "A lower basal number gives less insulin.")]
-                    + (test.endGlucose == nil ? [noReadings] : missingWorking ? [noWorking] : [])
-            case .inconclusive:
-                if test.interferenceUnread == true {
-                    return [
-                        String(
-                            localized: "Trio couldn't read all its records of carbs, boluses and its own dosing, so it can't tell whether something interrupted this fast."
-                        )
-                    ] + (test.endGlucose == nil ? [noReadings] : [])
-                }
-                if test.endReason == .unchecked {
-                    return [
-                        String(localized: "Trio couldn't read the pump history to check for a low, so it can't judge this fast.")
-                    ] + (test.endGlucose == nil ? [noReadings] : [])
-                }
-                if test.endGlucose == nil {
-                    return [noReadings]
-                }
-                guard elapsed < Config.docsShortestFast else {
-                    return [
-                        String(
-                            localized: "Trio couldn't read your ISF or basal schedule for these hours, so it can't tell what your basal did."
-                        )
-                    ]
-                }
-                return [
-                    String(
-                        localized: "The docs say to fast 4–6 hours, and this one ended after \(SettingsTestFormat.duration(elapsed)). That's too soon to trust."
-                    )
-                ] + (missingInputs ? [noWorking] : [])
-            case .invalid:
-                return [
-                    test.interference
-                        ?? String(localized: "Something changed during the fast, so the result can't be trusted. Try again.")
-                ]
-            }
+            BasalTestEvaluator.resultParagraphs(for: outcome, test: test, evaluation: state.evaluation)
         }
 
         // MARK: - Chart
@@ -234,7 +181,7 @@ extension BasalTest {
 
                 if state.resultBand != nil, !test.readings.isEmpty {
                     Text(
-                        "Inside the green band, the change is smaller than the docs' smallest basal change (\(state.stepPercent)%)."
+                        "Inside the green band, the change is smaller than the smallest basal change in Trio docs (\(state.stepPercent)%)."
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -386,19 +333,19 @@ extension BasalTest {
             )
         }
 
-        /// "18% is more than the docs' smallest change (10%)", from the share as shown, so it always agrees with the
+        /// "18% is more than the smallest change in Trio docs (10%)", from the share as shown, so it always agrees with the
         /// verdict. A size against a size, so a fall reads without its minus sign.
         private func comparison(for share: Decimal) -> Text {
             let shown = abs(BasalTestEvaluator.wholePercent(share))
             let percent = Text(verbatim: "\(shown.formatted())%").bold()
             let step = state.stepPercent
             if shown < step {
-                return Text("\(percent) is less than the docs' smallest change (\(step)%).")
+                return Text("\(percent) is less than the smallest change in Trio docs (\(step)%).")
             }
             if shown == step {
-                return Text("\(percent) is the docs' smallest change (\(step)%).")
+                return Text("\(percent) is the smallest change in Trio docs (\(step)%).")
             }
-            return Text("\(percent) is more than the docs' smallest change (\(step)%).")
+            return Text("\(percent) is more than the smallest change in Trio docs (\(step)%).")
         }
 
         // MARK: - Next

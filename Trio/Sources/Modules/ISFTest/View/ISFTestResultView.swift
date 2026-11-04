@@ -18,10 +18,11 @@ extension ISFTest {
                     chartCard(for: test)
 
                     // A low ends the test at Trio's suspend, which is the point of this result, so it isn't judged on
-                    // the drop and there is no working to show.
-                    if test.endReason == .low {
+                    // the drop and there is no working to show. A suspend on Trio's forecast, with glucose above the
+                    // target, isn't a low to treat, and says nothing of the drop either.
+                    if ISFTestEvaluator.showsLowCard(for: test) {
                         lowCard
-                    } else if let working = working(for: test) {
+                    } else if test.endReason != .low, let working = working(for: test) {
                         formulaCard(for: working)
                     }
 
@@ -79,34 +80,20 @@ extension ISFTest {
         /// "Glucose dropped 112 mg/dL on 2.24 U", or for a low when Trio suspended insulin. In a test that counted insulin
         /// on board, both amounts, "on 2.00 U plus 0.24 U on board" (`ISFTestEvaluator.unitsText`).
         private func observation(for outcome: ISFTestOutcome, test: ISFTestState) -> String {
-            if test.endReason == .low, let suspendedAt = test.endedAt {
-                return String(
-                    localized: "Trio suspended insulin for a low at \(suspendedAt.formatted(date: .omitted, time: .shortened))"
-                )
+            // Not for a forecast suspend, which isn't a low: it falls through to the lines of a test with no verdict.
+            if let suspended = ISFTestEvaluator.lowSuspendObservation(for: test) {
+                return suspended
             }
             guard outcome.isConclusive, let start = test.startGlucose, let end = test.endGlucose,
                   let given = ISFTestEvaluator.unitsText(of: test, format: state.formatUnits)
             else {
-                return String(localized: "Ended after \(elapsedText(for: test))")
+                return String(localized: "Ended after \(ISFTestEvaluator.elapsedText(for: test))")
             }
             let drop = start - end
             let amount = state.formatWithUnits(abs(drop))
             if drop > 0 { return String(localized: "Glucose dropped \(amount) on \(given)") }
             if drop < 0 { return String(localized: "Glucose rose \(amount) on \(given)") }
             return String(localized: "Glucose didn't move on \(given)")
-        }
-
-        /// From the bolus, or from Start if none came, to the end.
-        private func elapsed(for test: ISFTestState) -> TimeInterval {
-            let end = test.endedAt ?? test.plannedEnd ?? test.doseDeadline
-            return max(0, end.timeIntervalSince(test.bolusAt ?? test.startedAt))
-        }
-
-        /// "4 h", or "2 h 10 m" when it isn't whole hours.
-        private func elapsedText(for test: ISFTestState) -> String {
-            let elapsed = elapsed(for: test)
-            let minutes = Int(elapsed) / 60
-            return minutes % 60 == 0 && minutes > 0 ? "\(minutes / 60) h" : SettingsTestFormat.duration(elapsed)
         }
 
         private func icon(for outcome: ISFTestOutcome) -> String {
@@ -203,46 +190,7 @@ extension ISFTest {
                     higherISF
             case .inconclusive,
                  .invalid:
-                return whyNoVerdict(noVerdict, test: test)
-            }
-        }
-
-        private func whyNoVerdict(_ noVerdict: ISFTestNoVerdict?, test: ISFTestState) -> String {
-            switch noVerdict {
-            case .noBolus:
-                let minutes = Int(Config.doseAllowance / 60)
-                return String(
-                    localized: "The test needs your bolus within \(minutes) minutes of starting. Trio didn't see one, so there was nothing to judge."
-                )
-            case .interrupted:
-                return test.interference
-                    ?? String(localized: "Something changed during the test, so the result can't be trusted. Try again.")
-            case .historyUnread:
-                return ISFTestEvaluator.historyUnreadNote
-            case .tooSoon:
-                return String(
-                    localized: "This test ended after \(elapsedText(for: test)), so it's too soon to tell what your ISF did."
-                )
-            case .lowUnchecked:
-                return String(localized: "Trio couldn't read the pump history to check for a low, so it can't judge this test.")
-            case .noReadings:
-                return String(
-                    localized: "No CGM readings were recorded at the bolus or at the end of the test, so there is nothing to compare."
-                )
-            case .noAmount:
-                return String(
-                    localized: "The pump didn't record how much insulin the bolus gave, so there is no drop per unit to work out."
-                )
-            case .doseTooSmall:
-                return String(localized: "The dose was too small for this test to tell your ISF apart from CGM noise.")
-            case .forecastSuspend:
-                return String(
-                    localized: "Trio suspended insulin on its forecast while your glucose was still above your target, so the test can't tell."
-                )
-            case .doseOverDocs:
-                return String(localized: "The bolus was more than the docs' dose, so the low can't be put down to your ISF.")
-            case nil:
-                return String(localized: "Trio couldn't tell what your ISF did from this test.")
+                return ISFTestEvaluator.noVerdictText(noVerdict, test: test)
             }
         }
 
@@ -284,17 +232,7 @@ extension ISFTest {
         private func window(for test: ISFTestState) -> String {
             let start = (test.bolusAt ?? test.startedAt).formatted(date: .omitted, time: .shortened)
             let end = (test.endedAt ?? test.plannedEnd ?? test.doseDeadline).formatted(date: .omitted, time: .shortened)
-            let reason: String
-            switch test.endReason {
-            case .low: reason = String(localized: ". Ended early: Trio suspended insulin for a low.")
-            case .endedEarly: reason = String(localized: ". You ended it early.")
-            case .interrupted: reason = String(localized: ". Ended early: it was interrupted.")
-            case .completed,
-                 nil,
-                 .noBolus,
-                 .unchecked: reason = ""
-            }
-            return "\(start) – \(end)\(reason)"
+            return "\(start) – \(end)\(ISFTestEvaluator.endedEarlyCaption(for: test))"
         }
 
         // MARK: - Mode
@@ -466,7 +404,7 @@ extension ISFTest {
                 title: String(localized: "How Trio worked this out"),
                 rows: rows,
                 result: results,
-                conclusion: Text("The docs' smallest change is \(state.stepPercent)%.")
+                conclusion: Text("The smallest change in Trio docs is \(state.stepPercent)%.")
             )
         }
 
