@@ -41,7 +41,19 @@ extension SettingsTest {
                         footer: basalPeriodsFooter
                     ) {
                         ForEach(state.basalPeriods, id: \.entry.startMinutes) { period in
-                            periodRow(for: period)
+                            periodRow(for: period, kind: .basal)
+                        }
+                    }
+                    .listRowBackground(Color.chart)
+                }
+
+                if !state.isfPeriods.isEmpty {
+                    Section(
+                        header: Text("ISF time periods"),
+                        footer: isfPeriodsFooter
+                    ) {
+                        ForEach(state.isfPeriods, id: \.entry.startMinutes) { period in
+                            periodRow(for: period, kind: .isf)
                         }
                     }
                     .listRowBackground(Color.chart)
@@ -104,6 +116,19 @@ extension SettingsTest {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 2)
+                    // A warning only: the row still opens the test. The ISF Check screen's orange triangle, so it isn't
+                    // missed among the row's grey lines.
+                    if kind == .isf, !locked, let note = state.isfGateNote {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Image(systemName: SettingsTestCheckState.warning.icon)
+                                .foregroundStyle(SettingsTestCheckState.warning.color)
+                                .accessibilityLabel(Text("Warning"))
+                            Text(note)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .font(.caption)
+                    }
                 }
             }
             .padding(.vertical, 4)
@@ -163,31 +188,34 @@ extension SettingsTest {
             }
         }
 
-        private func periodRow(for period: SettingsTestBasalPeriod) -> some View {
+        // MARK: - ISF time periods
+
+        /// Two lines of the docs, word for word, and what the blue values are.
+        private var isfPeriodsFooter: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(verbatim: "\(ISFTest.Docs.testSystematically). \(ISFTest.Docs.waitBetweenChanges).")
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Image(systemName: "gearshape")
+                        .accessibilityHidden(true)
+                    Text("Blue values come from your settings")
+                }
+            }
+        }
+
+        private func periodRow(for period: SettingsTestPeriod, kind: SettingsTestKind) -> some View {
             let span = SettingsTestSchedule.spanText(of: period.entry)
-            let rate = period.entry.value.formatted(.number.precision(.fractionLength(2)))
+            let value = kind == .isf
+                ? state.formatISF(period.entry.value)
+                : "\(period.entry.value.formatted(.number.precision(.fractionLength(2)))) U/h"
             return VStack(alignment: .leading, spacing: 3) {
-                // The rate is the user's own setting, so it is blue.
-                (Text(verbatim: "\(span) · ") + Text(verbatim: "\(rate) U/h").foregroundStyle(Color.accentColor))
+                // The value is the user's own setting, so it is blue.
+                (Text(verbatim: "\(span) · ") + Text(verbatim: value).foregroundStyle(Color.accentColor))
                     .font(.body.weight(.medium))
-                Text(periodStatusText(for: period))
+                Text(kind.periodStatusText(for: period))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
-        }
-
-        private func periodStatusText(for period: SettingsTestBasalPeriod) -> String {
-            guard let lastTest = period.lastTest, let direction = period.lastDirection else {
-                return String(localized: "Not tested yet")
-            }
-            if period.changedSince { return String(localized: "Changed since the last test") }
-            let when = lastTest.formatted(.relative(presentation: .named))
-            switch direction {
-            case .keep: return String(localized: "Steady \(when)")
-            case .increase: return String(localized: "Basal looked too low \(when)")
-            case .decrease: return String(localized: "Basal looked too high \(when)")
-            }
         }
 
         private func activeBanner(for session: SettingsTestSession) -> some View {

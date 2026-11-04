@@ -742,6 +742,13 @@ extension BasalTest {
                     at: endedAt,
                     note: String(localized: "Carbs were logged during the fast.")
                 )
+            case let .bolusGiven(endedAt):
+                await finish(
+                    for: testID,
+                    reason: .interrupted,
+                    at: endedAt,
+                    note: String(localized: "A bolus was given during the fast.")
+                )
             case .completed:
                 await finish(for: testID, reason: .completed)
             case .completedUnchecked:
@@ -751,6 +758,14 @@ extension BasalTest {
                     for: testID,
                     reason: .interrupted,
                     note: String(localized: "The dosing mode changed during the fast.")
+                )
+            case .modeChangedRestored:
+                await finish(
+                    for: testID,
+                    reason: .interrupted,
+                    note: String(
+                        localized: "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
+                    )
                 )
             case let .unexplainedSuspend(stoppedAt):
                 await finish(
@@ -777,6 +792,12 @@ extension BasalTest {
 
         func endEarly() async {
             await finish(reason: .endedEarly)
+        }
+
+        /// Whether Basal Testing is still on with no test running it, so the Result says so rather than that the usual
+        /// dosing came back (`SettingsTestModeRule.basalTestingLeftOn`).
+        var basalTestingLeftOn: Bool {
+            SettingsTestModeRule.basalTestingLeftOn(mode: currentMode, activeSessionID: testService.activeSession?.id)
         }
 
         /// Stops without keeping a result.

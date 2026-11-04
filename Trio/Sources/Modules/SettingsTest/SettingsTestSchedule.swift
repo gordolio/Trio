@@ -38,12 +38,12 @@ extension SettingsTestTimeWindow {
     }
 }
 
-/// One entry of the current basal schedule and what the newest test over it said.
-struct SettingsTestBasalPeriod: Equatable {
+/// One entry of a current schedule and what the newest test of the same kind over it said.
+struct SettingsTestPeriod: Equatable {
     let entry: SettingsTestScheduleEntry
     /// When the newest test over this entry finished. Nil when no test has covered it.
     let lastTest: Date?
-    /// What that test said about basal.
+    /// What that test said about the setting.
     let lastDirection: SettingsTestDirection?
     /// The entry no longer matches what that test covered: a rate or a boundary was edited since.
     let changedSince: Bool
@@ -75,6 +75,31 @@ enum SettingsTestSchedule {
     /// The saved basal schedule as entries, empty when there is none.
     static func basalEntries(from storage: FileStorage) -> [SettingsTestScheduleEntry] {
         entries(storage.retrieve(OpenAPS.Settings.basalProfile, as: [BasalProfileEntry].self) ?? [])
+    }
+
+    /// An insulin sensitivity profile as entries in mg/dL per unit that each run to the next start, the last to
+    /// midnight. A profile saved in mmol/L is converted without rounding (`isfInMgdL`).
+    static func entries(_ isf: InsulinSensitivities) -> [SettingsTestScheduleEntry] {
+        let sorted = isf.sensitivities.sorted { $0.offset < $1.offset }
+        return sorted.enumerated().map { index, entry in
+            let end = index + 1 < sorted.count ? sorted[index + 1].offset : 1440
+            let value = isfInMgdL(entry.sensitivity, units: isf.units)
+            return SettingsTestScheduleEntry(startMinutes: entry.offset, endMinutes: end, value: value)
+        }
+    }
+
+    /// An insulin sensitivity in mg/dL per unit. One in mmol/L per unit keeps its decimals: the app's own helper rounds
+    /// to whole mg/dL, which moves an ISF of 2.8 mmol/L (50.45 mg/dL) by close to 1%, a fifth of the docs' smallest step,
+    /// and shown in mmol/L again it reads as the number the user entered.
+    static func isfInMgdL(_ sensitivity: Decimal, units: GlucoseUnits) -> Decimal {
+        units == .mmolL ? sensitivity / GlucoseUnits.exchangeRate : sensitivity
+    }
+
+    /// The saved insulin sensitivity schedule as entries in mg/dL per unit, empty when there is none.
+    static func isfEntries(from storage: FileStorage) -> [SettingsTestScheduleEntry] {
+        guard let profile = storage.retrieve(OpenAPS.Settings.insulinSensitivities, as: InsulinSensitivities.self)
+        else { return [] }
+        return entries(profile)
     }
 
     /// The entries that overlap the window at all.
@@ -119,25 +144,26 @@ enum SettingsTestSchedule {
         }
     }
 
-    /// Each current entry with what the newest basal test over it said. A test counts for an entry when the
-    /// schedule it saved had an entry overlapping this one. Tests saved without a schedule can't be placed, so
-    /// they are skipped. `history` can be in any order.
-    static func basalPeriods(
+    /// Each current entry with what the newest test of `kind` over it said. A test counts for an entry when the
+    /// schedule it saved had an entry overlapping this one. Tests of other kinds, and tests saved without a schedule
+    /// that can't be placed, are skipped. `history` can be in any order.
+    static func periods(
+        for kind: SettingsTestKind,
         current: [SettingsTestScheduleEntry],
         history: [SettingsTestRecord]
-    ) -> [SettingsTestBasalPeriod] {
-        let basalTests = history.filter { $0.kind == .basal && $0.coveredEntries != nil }
+    ) -> [SettingsTestPeriod] {
+        let tests = history.filter { $0.kind == kind && $0.coveredEntries != nil }
         return current.map { entry in
             let span = SettingsTestTimeWindow(startMinutes: entry.startMinutes, endMinutes: entry.endMinutes)
-            let latest = basalTests
+            let latest = tests
                 .filter { !covered(by: span, in: $0.coveredEntries ?? []).isEmpty }
                 .max { $0.completedAt < $1.completedAt }
             guard let latest else {
-                return SettingsTestBasalPeriod(entry: entry, lastTest: nil, lastDirection: nil, changedSince: false)
+                return SettingsTestPeriod(entry: entry, lastTest: nil, lastDirection: nil, changedSince: false)
             }
             // What that test saw over this stretch of the day, against what is there now.
             let seen = covered(by: span, in: latest.coveredEntries ?? [])
-            return SettingsTestBasalPeriod(
+            return SettingsTestPeriod(
                 entry: entry,
                 lastTest: latest.completedAt,
                 lastDirection: latest.direction,
@@ -166,8 +192,16 @@ enum SettingsTestSchedule {
         formatter.string(from: Date(timeIntervalSince1970: TimeInterval(minutes * 60)))
     }
 
-    /// An entry's stretch of the day, e.g. "00:00–06:00".
-    static func spanText(of entry: SettingsTestScheduleEntry, formatter: DateFormatter = timeFormatter) -> String {
+    /// An entry's stretch of the day, e.g. "00:00–06:00". One that runs the whole day is "All day", not midnight to
+    /// midnight, or "all day" `inSentence` ("This test covered all day.").
+    static func spanText(
+        of entry: SettingsTestScheduleEntry,
+        inSentence: Bool = false,
+        formatter: DateFormatter = timeFormatter
+    ) -> String {
+        if entry.startMinutes == 0, entry.endMinutes == 1440 {
+            return inSentence ? String(localized: "all day") : String(localized: "All day")
+        }
         let start = timeText(minutes: entry.startMinutes, formatter: formatter)
         let end = timeText(minutes: entry.endMinutes, formatter: formatter)
         return "\(start)–\(end)"

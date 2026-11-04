@@ -125,43 +125,117 @@ protocol SettingsTestStep: Hashable, CaseIterable {
     var order: Int { get }
 }
 
+/// How the step bar shows a step.
+enum SettingsTestStepStatus: Equatable {
+    /// Before the current step, and it happened: a green check.
+    case done
+    case current
+    /// Before the current step, but the test went past it without doing it: a grey dash, never the green check.
+    case skipped
+    /// Still to come.
+    case upcoming
+}
+
 struct SettingsTestStepBar<Step: SettingsTestStep>: View where Step.AllCases: RandomAccessCollection {
     let current: Step
+    /// Steps the test went past without doing, e.g. a step it didn't need. Only steps before the current one show it.
+    var skipped: Set<Step> = []
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let circle: CGFloat = 30
 
+    /// How `step` shows while the test is at `current`: a step before it is done unless it was skipped.
+    static func status(of step: Step, current: Step, skipped: Set<Step>) -> SettingsTestStepStatus {
+        if step == current { return .current }
+        guard step.order < current.order else { return .upcoming }
+        return skipped.contains(step) ? .skipped : .done
+    }
+
     var body: some View {
+        // At accessibility sizes five titles don't fit in a row, so the circles stand alone and the current step's
+        // title is said once, under them.
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 6) {
+                bar(showsTitles: false)
+                Text(current.title)
+                    .font(.caption2)
+                    .foregroundStyle(Color.primary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    // Each circle already says its step.
+                    .accessibilityHidden(true)
+            }
+        } else {
+            bar(showsTitles: true)
+        }
+    }
+
+    private func bar(showsTitles: Bool) -> some View {
         HStack(spacing: 0) {
             ForEach(Array(Step.allCases.enumerated()), id: \.offset) { index, step in
                 if index > 0 {
                     Rectangle()
                         .fill(step.order <= current.order ? Color.accentColor : Color.secondary.opacity(0.3))
                         .frame(height: 2)
-                        .padding(.bottom, 16)
+                        // Level with the circles' centres, above the titles under them.
+                        .padding(.bottom, showsTitles ? 16 : 0)
                 }
-                indicator(for: step)
+                indicator(for: step, showsTitle: showsTitles)
             }
         }
         .padding(.horizontal, 4)
     }
 
-    private func indicator(for step: Step) -> some View {
-        let done = step.order < current.order
-        let isCurrent = step == current
+    private func indicator(for step: Step, showsTitle: Bool) -> some View {
+        let status = Self.status(of: step, current: current, skipped: skipped)
         return VStack(spacing: 4) {
             ZStack {
                 Circle()
-                    .fill(done ? Color.green : isCurrent ? Color.accentColor : Color.secondary.opacity(0.2))
+                    .fill(fill(for: status))
                     .frame(width: circle, height: circle)
-                Image(systemName: done ? "checkmark" : step.iconName)
-                    .font(.system(size: 13, weight: done ? .bold : .regular))
-                    .foregroundStyle(done || isCurrent ? Color.white : Color.secondary)
+                Image(systemName: icon(for: step, status: status))
+                    .font(.system(size: 13, weight: status == .done || status == .skipped ? .bold : .regular))
+                    .foregroundStyle(status == .upcoming ? Color.secondary : Color.white)
             }
-            Text(step.title)
-                .font(.caption2)
-                .foregroundStyle(isCurrent ? Color.primary : Color.secondary)
-                .lineLimit(1)
-                .fixedSize()
+            if showsTitle {
+                Text(step.title)
+                    .font(.caption2)
+                    .foregroundStyle(status == .current ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(step.title))
+        .accessibilityValue(Text(spokenStatus(status)))
+    }
+
+    private func fill(for status: SettingsTestStepStatus) -> Color {
+        switch status {
+        case .done: return .green
+        case .current: return .accentColor
+        // Solid like a done step, so it reads as passed, but neutral, so it never reads as a check.
+        case .skipped: return Color(uiColor: .systemGray)
+        case .upcoming: return Color.secondary.opacity(0.2)
+        }
+    }
+
+    private func icon(for step: Step, status: SettingsTestStepStatus) -> String {
+        switch status {
+        case .done: return "checkmark"
+        case .skipped: return "minus"
+        case .current,
+             .upcoming: return step.iconName
+        }
+    }
+
+    private func spokenStatus(_ status: SettingsTestStepStatus) -> String {
+        switch status {
+        case .done: return String(localized: "Done")
+        case .current: return String(localized: "Current step")
+        case .skipped: return String(localized: "Skipped")
+        case .upcoming: return String(localized: "Not started")
         }
     }
 }
@@ -174,6 +248,8 @@ enum SettingsTestCheckState {
     case pending
     /// Neither a pass nor a fail: something the user should know.
     case info
+    /// Still only informs and never blocks, but is easy to miss and worth a look before starting.
+    case warning
 
     var icon: String {
         switch self {
@@ -181,6 +257,7 @@ enum SettingsTestCheckState {
         case .failed: return "xmark.circle.fill"
         case .pending: return "circle.dotted"
         case .info: return "info.circle"
+        case .warning: return "exclamationmark.triangle.fill"
         }
     }
 
@@ -190,6 +267,7 @@ enum SettingsTestCheckState {
         case .failed: return .red
         case .pending: return .secondary
         case .info: return .secondary
+        case .warning: return .orange
         }
     }
 }
@@ -230,12 +308,15 @@ struct SettingsTestValueRow: View {
     let title: String
     let value: String
     var info: SettingsTestInfo?
+    /// `.warning` puts its orange triangle before the title, for a reading that is easy to miss. The row still only
+    /// informs. Any other state shows nothing extra.
+    var state: SettingsTestCheckState = .info
 
     var body: some View {
         SettingsTestInfoButton(info: info) {
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(title)
+                    titleLabel
                         .lineLimit(1)
                     Spacer(minLength: 8)
                     Text(value)
@@ -243,13 +324,26 @@ struct SettingsTestValueRow: View {
                         .lineLimit(1)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    titleLabel
                     Text(value)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.subheadline)
+        }
+    }
+
+    @ViewBuilder private var titleLabel: some View {
+        if state == .warning {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: state.icon)
+                    .foregroundStyle(state.color)
+                    .accessibilityLabel(Text("Warning"))
+                Text(title)
+            }
+        } else {
+            Text(title)
         }
     }
 }
@@ -328,9 +422,17 @@ struct SettingsTestDocsLinks: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(links) { link in
-                // The app has its own `Link` view modifier, so the SwiftUI one has to be named.
-                SwiftUI.Link(link.title, destination: link.url)
-                    .font(.subheadline.weight(.medium))
+                // The app has its own `Link` view modifier, so the SwiftUI one has to be named. A link centres the lines
+                // of a title it lays out itself, so the title is a label of its own that runs from the leading edge on
+                // every line, like the card's text.
+                SwiftUI.Link(destination: link.url) {
+                    Text(link.title)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.subheadline.weight(.medium))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -372,20 +474,29 @@ struct SettingsTestMetricRow: View {
 
 // MARK: - Buttons
 
-/// Upstream's Treatments button colours: system blue when it can be tapped, system grey when it can't.
+/// Upstream's Treatments blue when it can be tapped. When it can't, a neutral system fill with grey text: grey reads
+/// as off, and a blue that can't be tapped looked like the secondary button under it.
 struct SettingsTestPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
-            .foregroundStyle(.white)
+            .foregroundStyle(isEnabled ? Color.white : disabledText)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(
-                Color(uiColor: isEnabled ? .systemBlue : .systemGray).opacity(configuration.isPressed ? 0.8 : 1),
+                isEnabled
+                    ? Color(uiColor: .systemBlue).opacity(configuration.isPressed ? 0.8 : 1)
+                    : Color(uiColor: .tertiarySystemFill),
                 in: RoundedRectangle(cornerRadius: 12, style: .continuous)
             )
+    }
+
+    /// In dark mode a step dimmer, because the secondary grey there is brighter than the secondary button's blue text.
+    private var disabledText: Color {
+        Color(uiColor: colorScheme == .dark ? .tertiaryLabel : .secondaryLabel)
     }
 }
 
@@ -394,18 +505,40 @@ struct SettingsTestPrimaryButtonStyle: ButtonStyle {
 struct SettingsTestSecondaryButtonStyle: PrimitiveButtonStyle {
     var destructive = false
 
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.isEnabled) private var isEnabled
+
+    /// The text of a secondary button that can be tapped: a darker blue than the tint in light mode (the system's
+    /// increased-contrast blue) and a lighter one in dark mode, so it reads at 4.5:1 or more on the tinted fill. The
+    /// tint itself measured about 2.8:1 in light mode and 4.3:1 in dark; these about 5.9:1 and 6.1:1.
+    static var textColor: UIColor {
+        UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor(red: 100 / 255, green: 175 / 255, blue: 1, alpha: 1)
+                : UIColor(red: 0, green: 64 / 255, blue: 221 / 255, alpha: 1)
+        }
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         Button(role: destructive ? .destructive : configuration.role, action: configuration.trigger) {
-            configuration.label
+            label(configuration)
                 .fontWeight(.bold)
                 .frame(maxWidth: .infinity, minHeight: 30)
         }
         .buttonStyle(.bordered)
-        // On the light footer bar the bordered grey all but disappears, so in light mode the fill takes the tint, as
-        // upstream's tinted bordered buttons do. Dark mode keeps the grey, which shows.
-        .tint(destructive ? .red : colorScheme == .light ? Color.accentColor : nil)
+        // The fill takes the tint, as upstream's tinted bordered buttons do: untinted, the bordered grey all but
+        // disappears on the light footer bar and is near black on the dark one.
+        .tint(destructive ? .red : Color.accentColor)
+    }
+
+    /// The text in `textColor`, except where the system's own colour says more: a destructive button's red, and the
+    /// greyed text of one that can't be tapped.
+    @ViewBuilder private func label(_ configuration: Configuration) -> some View {
+        if destructive || !isEnabled {
+            configuration.label
+        } else {
+            configuration.label
+                .foregroundStyle(Color(uiColor: Self.textColor))
+        }
     }
 }
 
@@ -452,17 +585,68 @@ struct SettingsTestGlucoseChart: View {
     let units: GlucoseUnits
     /// mg/dL band to shade, e.g. the range a test wants glucose to stay in.
     var band: ClosedRange<Int>?
+    /// mg/dL to mark with a dashed line, e.g. the user's target. Secondary, so the glucose line stays the one in colour.
+    var target: Int?
+    /// The times to shade the band over, e.g. where a test's expected end applies. Nil shades it across the whole chart.
+    var bandTimes: ClosedRange<Date>?
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Chart {
-            if let band {
+            if let band, let bandTimes {
+                // A small patch at the end of the chart, so a faint wash like the full-width band's doesn't show,
+                // least of all in dark mode: a stronger fill and a thin outline. Drawn before the glucose line, which
+                // stays on top of it.
+                let low = band.lowerBound.valueForChart(units)
+                let high = band.upperBound.valueForChart(units)
+                RectangleMark(
+                    xStart: .value("Time", bandTimes.lowerBound),
+                    xEnd: .value("Time", bandTimes.upperBound),
+                    yStart: .value("Low", low),
+                    yEnd: .value("High", high)
+                )
+                .foregroundStyle(Color.green.opacity(0.3))
+                // The outline, one side at a time: a band of one reading has its top and bottom on the same line.
+                RuleMark(
+                    xStart: .value("Time", bandTimes.lowerBound),
+                    xEnd: .value("Time", bandTimes.upperBound),
+                    y: .value("Low", low)
+                )
+                .foregroundStyle(Color.green)
+                .lineStyle(StrokeStyle(lineWidth: 1))
+                RuleMark(
+                    xStart: .value("Time", bandTimes.lowerBound),
+                    xEnd: .value("Time", bandTimes.upperBound),
+                    y: .value("High", high)
+                )
+                .foregroundStyle(Color.green)
+                .lineStyle(StrokeStyle(lineWidth: 1))
+                RuleMark(x: .value("Time", bandTimes.lowerBound), yStart: .value("Low", low), yEnd: .value("High", high))
+                    .foregroundStyle(Color.green)
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                RuleMark(x: .value("Time", bandTimes.upperBound), yStart: .value("Low", low), yEnd: .value("High", high))
+                    .foregroundStyle(Color.green)
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+            } else if let band {
                 RectangleMark(
                     yStart: .value("Low", band.lowerBound.valueForChart(units)),
                     yEnd: .value("High", band.upperBound.valueForChart(units))
                 )
                 .foregroundStyle(Color.green.opacity(0.12))
+            }
+            if let target {
+                RuleMark(y: .value("Target", target.valueForChart(units)))
+                    .foregroundStyle(Color.secondary)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                    .annotation(position: .top, alignment: .leading) {
+                        // On the card's own colour, so the gridlines behind it don't run through the word.
+                        Text("Target")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.trailing, 3)
+                            .background(Color.chart)
+                    }
             }
             ForEach(points) { point in
                 LineMark(
@@ -488,10 +672,25 @@ struct SettingsTestGlucoseChart: View {
     }
 
     private var yDomain: ClosedRange<Double> {
-        let values = points.map(\.glucose) + (band.map { [$0.lowerBound, $0.upperBound] } ?? [])
-        let low = max(40, (values.min() ?? 70) - 10)
-        let high = min(400, (values.max() ?? 180) + 10)
-        return low.valueForChart(units) ... high.valueForChart(units)
+        let range = Self.yRange(
+            values: points.map(\.glucose) + (band.map { [$0.lowerBound, $0.upperBound] } ?? []),
+            target: target
+        )
+        return range.lowerBound.valueForChart(units) ... range.upperBound.valueForChart(units)
+    }
+
+    /// The y range in mg/dL: the values and the target with 10 mg/dL either side, kept within 40–400. The target's
+    /// label sits above its line, so above the target there is room for it too: a fifth of the range below it, and at
+    /// least the 10 mg/dL. At least 10 mg/dL is always shown, so readings or a target all past one end of 40–400 still
+    /// give a range: the 10 mg/dL at that end.
+    static func yRange(values: [Int], target: Int?) -> ClosedRange<Int> {
+        let all = values + (target.map { [$0] } ?? [])
+        let low = min(390, max(40, (all.min() ?? 70) - 10))
+        var high = (all.max() ?? 180) + 10
+        if let target {
+            high = max(high, target + max(10, (target - low) / 5))
+        }
+        return low ... max(low + 10, min(400, high))
     }
 }
 

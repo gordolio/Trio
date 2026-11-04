@@ -14,7 +14,14 @@ extension SettingsTest {
         var lastRecords: [SettingsTestKind: SettingsTestRecord] = [:]
 
         /// The basal schedule's entries, each with what its latest test said.
-        var basalPeriods: [SettingsTestBasalPeriod] = []
+        var basalPeriods: [SettingsTestPeriod] = []
+
+        /// The insulin sensitivity schedule's entries, each with what its latest test said.
+        var isfPeriods: [SettingsTestPeriod] = []
+
+        /// What the newest basal test says about starting a sensitivity test, or nil until it has been read. A warning
+        /// only: it never locks the row.
+        var basalGate: SettingsTestSchedule.BasalGate?
 
         /// Whether the old carb ratio wizard left a test under way. Its row then offers to end it; it never opens the
         /// wizard, which is being rebuilt.
@@ -51,10 +58,28 @@ extension SettingsTest {
             }
             lastRecords = latest
 
-            basalPeriods = SettingsTestSchedule.basalPeriods(
-                current: provider.basalEntries(),
-                history: testService.history(for: .basal)
+            let basalEntries = provider.basalEntries()
+            let basalHistory = testService.history(for: .basal)
+            basalPeriods = SettingsTestSchedule.periods(for: .basal, current: basalEntries, history: basalHistory)
+            basalGate = SettingsTestSchedule.basalGate(history: basalHistory, current: basalEntries)
+
+            isfPeriods = SettingsTestSchedule.periods(
+                for: .isf,
+                current: provider.isfEntries(),
+                history: testService.history(for: .isf)
             )
+        }
+
+        /// The warning under the sensitivity row, or nil when the newest basal test is steady, and while a test runs,
+        /// when the row says that instead.
+        var isfGateNote: String? {
+            guard activeSession == nil, let basalGate else { return nil }
+            return SettingsTestKind.isfGateNote(for: basalGate)
+        }
+
+        /// A sensitivity in mg/dL per unit, in the user's units.
+        func formatISF(_ mgdl: Decimal) -> String {
+            SettingsTestKind.isfText(mgdl, units: glucoseUnits)
         }
 
         /// The carb ratio wizard recovers its saved test only when its own screen opens, so before that the saved file
@@ -100,8 +125,8 @@ extension SettingsTest {
             guard kind.availability == .available, !isLocked(kind) else { return nil }
             switch kind {
             case .basal: return .basalTest
-            case .carbRatio,
-                 .isf: return nil
+            case .isf: return .isfTest
+            case .carbRatio: return nil
             }
         }
     }

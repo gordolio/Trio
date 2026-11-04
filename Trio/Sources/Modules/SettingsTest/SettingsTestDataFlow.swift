@@ -9,5 +9,10 @@ extension SettingsTest {
         func basalEntries() -> [SettingsTestScheduleEntry] {
             SettingsTestSchedule.basalEntries(from: storage)
         }
+
+        /// The insulin sensitivity schedule in mg/dL per unit, empty when there is none saved.
+        func isfEntries() -> [SettingsTestScheduleEntry] {
+            SettingsTestSchedule.isfEntries(from: storage)
+        }
     }
 }

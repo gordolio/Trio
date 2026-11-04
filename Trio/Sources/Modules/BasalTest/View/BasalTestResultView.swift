@@ -26,6 +26,11 @@ extension BasalTest {
 
                     nextCard(for: outcome, test: test)
 
+                    // The usual dosing didn't come back: no test runs Basal Testing now, so the screen doesn't say it did.
+                    if state.basalTestingLeftOn {
+                        basalTestingCard
+                    }
+
                     if let smbs = state.smbCheck {
                         SettingsTestCard(title: String(localized: "Before the test")) {
                             SettingsTestValueRow(title: smbs.title, value: smbs.value ?? "", info: smbs.info)
@@ -253,6 +258,22 @@ extension BasalTest {
             return "\(start) – \(end)\(reason)"
         }
 
+        // MARK: - Mode
+
+        /// The same card as the ISF Result's, under the same condition.
+        private var basalTestingCard: some View {
+            SettingsTestCard {
+                Label {
+                    Text("Basal Testing is still on. Switch back to your usual dosing mode in Settings.")
+                        .font(.subheadline.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+
         // MARK: - Low
 
         private func lowCard(at suspendedAt: Date) -> some View {
@@ -415,7 +436,7 @@ extension BasalTest {
             guard let end = test.endedAt,
                   let entries = BasalTestEvaluator.coveredEntries(for: test, endingAt: end)
             else { return nil }
-            return entries.map { SettingsTestSchedule.spanText(of: $0) }.formatted(.list(type: .and))
+            return entries.map { SettingsTestSchedule.spanText(of: $0, inSentence: true) }.formatted(.list(type: .and))
         }
     }
 }

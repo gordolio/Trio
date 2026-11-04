@@ -347,12 +347,17 @@ enum BasalTestEvaluator {
         case low(at: Date)
         /// The service ended the test at this time because carbs were logged.
         case carbsLogged(at: Date)
+        /// The service ended the test at this time because a bolus was given. A basal session never gets this cause.
+        case bolusGiven(at: Date)
         /// The planned time is up.
         case completed
         /// The planned time is up, but the pump history couldn't be read, so a low can't be ruled out.
         case completedUnchecked
         /// The dosing mode was changed before the planned end, so the rest of the fast didn't run in Basal Testing.
         case modeChanged
+        /// The same, and the service's end of the session put the usual mode back, because Basal Testing was on again by
+        /// then (`SettingsTestEnd.modeRestored`).
+        case modeChangedRestored
         /// Basal was stopped inside the fast at this time, and it can't be told that was Basal Testing's suspend for a
         /// low: none of Trio's determinations asked for it, or Basal Testing was off by the time of the check and the
         /// service didn't end the test for it.
@@ -384,6 +389,14 @@ enum BasalTestEvaluator {
             case .carbsLogged: return .carbsLogged(at: serviceEnd.date)
             case .basalStopped: return .unexplainedSuspend(at: serviceEnd.date)
             case .carbsUnreadable: return .carbsUnreadable(at: serviceEnd.date)
+            case .extraBolus: return .bolusGiven(at: serviceEnd.date)
+            // A basal session never gets this cause. If one did, the service brought the usual mode back, so the fast
+            // didn't run to its end.
+            case .noBolus: return .modeChanged
+            // Another mode was picked during the fast, so the rest of it didn't run in Basal Testing.
+            case .modeChanged: return serviceEnd.modeRestored == true ? .modeChangedRestored : .modeChanged
+            // A basal session doesn't get this cause yet. If one did, basal was stopped.
+            case .pumpInterrupted: return .unexplainedSuspend(at: serviceEnd.date)
             }
         }
         let timeUp = now >= plannedEnd
