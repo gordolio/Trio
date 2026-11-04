@@ -9,13 +9,27 @@ extension ISFTest {
         @State private var showsCancelConfirmation = false
 
         var body: some View {
+            // The dose and its gate read the time (the newest reading's age, the 4 hours from now), so the step is drawn
+            // again each minute, as Settle and Wait are, and a dose from a reading grown old doesn't stay on screen.
+            TimelineView(.everyMinute) { _ in
+                content
+            }
+            .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+                Task { await state.checkRunningTest() }
+            }
+        }
+
+        private var content: some View {
             SettingsTestScreen(paintsBackground: false) {
-                if state.docsDose != nil, !state.glucoseIsLevel {
-                    // The dose waits for a flat CGM arrow on this path too (round 13), so none is shown while glucose moves.
+                if state.docsDose != nil, !state.glucoseIsLevel || state.doseWaitsForTablets {
+                    // The dose waits for a flat CGM arrow on this path too (round 13), so none is shown while glucose moves,
+                    // and after tablets until glucose has stopped rising again.
                     LevelingCard(
                         state: state,
                         title: ISFTestEvaluator.levelingTitle(phase: .dosing, tabletsActed: false),
-                        status: String(localized: "Open Treatments turns on once the arrow is flat.")
+                        status: state.glucoseIsLevel
+                            ? nil
+                            : String(localized: "Open Treatments turns on once the arrow is flat.")
                     )
                     deadlineText
                 } else if let dose = state.docsDose, !state.doseIOBAllows {
@@ -67,8 +81,8 @@ extension ISFTest {
                 if state.docsDose != nil {
                     Button("Open Treatments") { state.openTreatments() }
                         .buttonStyle(.testPrimary)
-                        .disabled(!state.canDose)
-                    if state.canDose {
+                        .disabled(!state.canDose || state.isEnding)
+                    if state.canDose, !state.isEnding {
                         Text("Waiting for your bolus. The test starts when Trio sees it.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -83,9 +97,12 @@ extension ISFTest {
                 } else if state.noDoseReason == .atOrBelowTarget, state.canRaise {
                     Button("Take Glucose Tablets") { state.raiseFirst() }
                         .buttonStyle(.testPrimary)
+                        .disabled(state.isEnding)
                 }
                 Button("Cancel Test") { showsCancelConfirmation = true }
                     .buttonStyle(.testSecondary)
+                    // Off while the test ends.
+                    .disabled(state.isEnding)
                     // On the button, so where the dialog shows as a popover it points at the button.
                     .confirmationDialog("Cancel the test?", isPresented: $showsCancelConfirmation, titleVisibility: .visible) {
                         Button("Cancel Test", role: .destructive) { state.discard() }
@@ -93,9 +110,6 @@ extension ISFTest {
                     } message: {
                         Text("Your usual dosing mode comes back, and nothing is saved.")
                     }
-            }
-            .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
-                Task { await state.checkRunningTest() }
             }
         }
 
@@ -180,23 +194,9 @@ extension ISFTest {
 
         /// Glucose has leveled off, but insulin on board is over the line for this dose: the docs' smallest ISF change of
         /// the dose shown, which can be smaller than the one Begin expected. Open Treatments waits until it is under it.
-        private func iobWaitCard(dose: Decimal) -> some View {
-            let doseText = SettingsTestFormat.keepTogether(state.formatUnits(dose), unit: "U")
-            let reading: String
-            if let iob = state.currentIOB, let line = state.doseIOBLine {
-                let iobText = SettingsTestFormat.keepTogether(state.formatSignedUnits(iob), unit: "U")
-                reading = iob < 0
-                    ? String(
-                        localized: "Your insulin on board is \(iobText), more than \(state.lineText(line)) from zero: \(state.stepPercent)% of this dose of \(doseText), the smallest ISF change in Trio docs."
-                    )
-                    : String(
-                        localized: "Your insulin on board is \(iobText), over \(state.lineText(line)): \(state.stepPercent)% of this dose of \(doseText), the smallest ISF change in Trio docs."
-                    )
-            } else {
-                reading = String(localized: "Waiting for Trio's insulin on board.")
-            }
-            return SettingsTestCard(title: String(localized: "Waiting for insulin on board")) {
-                Text(reading)
+        private func iobWaitCard(dose _: Decimal) -> some View {
+            SettingsTestCard(title: String(localized: "Waiting for insulin on board")) {
+                Text(state.iobWaitText ?? "")
                     .font(.subheadline)
                     .fixedSize(horizontal: false, vertical: true)
                 Text("Open Treatments turns on once it's under the line.")
@@ -216,18 +216,15 @@ extension ISFTest {
             SettingsTestCard {
                 switch state.noDoseReason {
                 case .carbsOnBoard:
-                    Text("Carbs are on board, so the test can't be judged. The docs test ISF with no carbs on board.")
-                        .font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // The runner ends the test with the same sentence (`ISFTestEvaluator.doseDeadEnd`).
+                    noDoseText(.carbsOnBoard)
                     SettingsTestDocsQuote(text: Docs.testISFWhenFasting)
                 case .carbsUnread:
                     WaitingRow(text: String(localized: "Waiting for Trio to read carbs on board"))
                 case .noRecentReading:
                     WaitingRow.recentReading
                 case .atOrBelowTarget:
-                    Text("Your glucose is at or below your target, so the formula gives no dose.")
-                        .font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
+                    noDoseText(.atOrBelowTarget)
                     readingsLine
                     if !state.canRaise {
                         Text(state.tabletAimText)
@@ -236,17 +233,33 @@ extension ISFTest {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 case .iobCoversDose:
-                    Text("Your insulin on board already covers the formula's correction, so there's no dose to give.")
-                        .font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
+                    noDoseText(.iobCoversDose)
                 case .iobUnread:
                     WaitingRow(text: String(localized: "Waiting for Trio's insulin on board"))
+                case .isfChanges,
+                     .isfChangesUntilDeadline:
+                    // The Check screen's ISF-change row: its sentence, the hours with their ISFs, and the docs' rule.
+                    noDoseText(.isfChanges)
+                    if let spans = state.doseISFChangeReading {
+                        Text("These hours cover \(spans)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    SettingsTestDocsQuote(text: Docs.testSystematically)
                 case nil,
                      .noSettings:
-                    Text("Trio couldn't read your ISF or target, so it can't work out the dose.")
-                        .font(.subheadline)
-                        .fixedSize(horizontal: false, vertical: true)
+                    noDoseText(.noSettings)
                 }
+            }
+        }
+
+        /// The card's sentence for why there is no dose (`ISFTestEvaluator.noDoseSentence`).
+        @ViewBuilder private func noDoseText(_ noDose: ISFTestNoDose) -> some View {
+            if let sentence = ISFTestEvaluator.noDoseSentence(noDose) {
+                Text(sentence)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
 

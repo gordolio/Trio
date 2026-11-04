@@ -63,6 +63,9 @@ extension SettingsTestKind {
 /// appear is sent again on the 1 s timer only. Main's pipelines echo a `nil` they were sent back to the router once more,
 /// a turn or two later, and a screen sent again in between is wiped by that echo, again and again, until the opener
 /// gives up. A second later they have settled.
+///
+/// A tap still pending when Trio goes to the background is dropped, so a sheet that closes much later doesn't bring a
+/// screen up uninvited, and the 1 s re-check doesn't run in the background.
 @MainActor final class SettingsTestScreenOpener {
     static let shared = SettingsTestScreenOpener()
 
@@ -94,17 +97,34 @@ extension SettingsTestKind {
     private var openedFromNotice: Set<SettingsTestKind> = []
     /// The pending kind, when `treatmentsOpened` made it pending: it waits for Treatments to take its screen's place.
     private var awaitsTreatments: SettingsTestKind?
+    /// Drops a pending tap when Trio goes to the background.
+    private var backgroundSubscription: AnyCancellable?
 
+    /// `backgrounded` emits each time Trio goes to the background, on the main thread.
     init(
         router: @escaping @MainActor() -> Router? = { TrioApp.resolver.resolve(Router.self) },
         keyWindowPresents: @escaping @MainActor() -> Bool = { AIRequestTreatmentsOpener.keyWindowPresentsAnything() },
         recheckTicks: @escaping () -> AnyPublisher<Void, Never> = {
             Timer.publish(every: 1, on: .main, in: .common).autoconnect().map { _ in () }.eraseToAnyPublisher()
-        }
+        },
+        backgrounded: AnyPublisher<Void, Never> = Foundation.NotificationCenter.default
+            .publisher(for: UIApplication.didEnterBackgroundNotification)
+            .map { _ in () }
+            .eraseToAnyPublisher()
     ) {
         self.router = router
         self.keyWindowPresents = keyWindowPresents
         self.recheckTicks = recheckTicks
+        backgroundSubscription = backgrounded
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.dropPending() }
+    }
+
+    /// Drops the tap waiting to be shown, if any, as Trio goes to the background.
+    private func dropPending() {
+        guard pending != nil else { return }
+        debug(.settings, "SettingsTest: Trio went to the background, so the tap waiting to open its screen is dropped")
+        stopWaiting()
     }
 
     /// Whether the 1 s re-check runs: only while a kind is pending.

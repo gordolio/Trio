@@ -181,6 +181,10 @@ enum SettingsTestBeginError: Error, Equatable {
     /// Basal Testing is already on, so it would be kept as the usual mode and nothing would ever turn it off.
     case basalTestingOn
     case settingsUnreadable
+    /// What Begin keeps couldn't be read (the carb entries there at Begin), with the error's description.
+    case dataUnreadable(String)
+    /// The test or its session didn't save, so a relaunch would find no way back from Basal Testing.
+    case notSaved
 
     var message: String {
         switch self {
@@ -191,6 +195,12 @@ enum SettingsTestBeginError: Error, Equatable {
             return String(localized: "Switch to your usual dosing mode first, so Trio can return you to it")
         case .settingsUnreadable:
             return String(localized: "Trio couldn't read your ISF and glucose target. Check them, then try again.")
+        case let .dataUnreadable(description):
+            // What the test screens say when their own reads fail.
+            return "Couldn't read your data: \(description)"
+        case .notSaved:
+            // Trio's own words for a change it couldn't save (`AdjustmentManager`).
+            return String(localized: "Could not save the change.")
         }
     }
 }

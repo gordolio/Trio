@@ -141,7 +141,7 @@ extension ISFTestRunner {
             case .unread:
                 bolusUnread = true
             }
-            // Counting insulin on board needs it at the bolus, read once more if no tick could.
+            // The units given count the insulin on board at the bolus: read once more if no tick could.
             if ISFTestEvaluator.iobAtBolusUnread(of: current) {
                 current.iobAtBolus = await readIOB(before: bolusAt, of: current)
             }
@@ -203,6 +203,7 @@ extension ISFTestRunner {
         current.phase = .finished
         current.pendingEnd = nil
         current.doseNoticeDue = nil
+        current.raiseNoticeDue = nil
         current.endedAt = end
         current.endReason = reason
         current.startGlucose = startGlucose
@@ -231,31 +232,37 @@ extension ISFTestRunner {
                     startGlucose: startGlucose,
                     endGlucose: endGlucose
                 ),
-                // Only what the hours it ran covered, so a test ended by a low doesn't vouch for the rest.
-                coveredEntries: ISFTestEvaluator.coveredEntries(current.coveredEntries ?? [], from: bolusAt, to: end),
+                // The entries fixed at the bolus, the 4 hours it covered (`ISFTestEvaluator.atBolus`), which a bolus
+                // whose hours cover more than one ISF value doesn't get to (`failedBolusCondition`). Not narrowed again here:
+                // the calendar now, after a time zone change, would read other minutes of the day for the same hours.
+                coveredEntries: current.coveredEntries,
                 bolusUnits: current.bolusUnits,
                 tabletCarbs: current.tabletCarbs,
                 iobHandling: current.iobHandling?.rawValue,
-                iobCounted: current.iobHandling == .count ? current.iobAtBolus : nil,
+                // Counted whatever the handling (`ISFTestEvaluator.givenUnits`).
+                iobCounted: current.iobAtBolus,
                 judgedUnits: ISFTestEvaluator.judgedUnits(of: current)
             )
         }
 
         // Kept only if it is still the test shown: a Cancel Test or a new Begin while the history was read owns the saved
         // state now. One step on the main actor, so neither can come in between.
-        let finished = current
+        let ended = current
         let archived = record
         let kept: Bool = await MainActor.run {
             isFinishing = false
             notifier.withdraw(.isf, .step)
             // Whether or not anything is posted: a test begun before the update may have one waiting for its planned end.
             notifier.withdrawLegacy()
-            guard let shown = state.test, shown.id == finished.id, shown.phase != .finished else { return false }
+            guard let shown = state.test, shown.id == ended.id, shown.phase != .finished else { return false }
             // No check runs once it has finished, so what only a running test reads is cleared here.
             publish {
                 $0.settling = nil
                 $0.doseIOB = nil
             }
+            // A note that says the usual dosing came back says so only when the mode in force now is it.
+            var finished = ended
+            finished.interference = ISFTestEvaluator.modeWorded(ended.interference, modeBack: modeIsBack(for: ended))
             save(finished)
             if let archived {
                 service?.archive(archived)
@@ -274,12 +281,16 @@ extension ISFTestRunner {
     /// gives, with the usual mode being back when it is.
     @MainActor private func endedNotice(for test: ISFTestState) -> SettingsTestNotice {
         if test.outcome?.isConclusive == true { return .finished(.isf) }
-        let mode = settingsManager.settings.dosingMode
         return .ended(
             .isf,
             sentence: ISFTestEvaluator.noVerdictText(ISFTestEvaluator.noVerdict(for: test), test: test),
-            modeBack: mode == test.previousMode && test.previousMode != .basalTesting
+            modeBack: modeIsBack(for: test)
         )
+    }
+
+    /// Whether the mode in force now is the usual one the test began from.
+    @MainActor private func modeIsBack(for test: ISFTestState) -> Bool {
+        settingsManager.settings.dosingMode == test.previousMode && test.previousMode != .basalTesting
     }
 
     /// How the test ends, from what the pump history and Trio's determinations up to `end` say: see
@@ -311,18 +322,24 @@ extension ISFTestRunner {
     /// What spoiled the test, if anything: carbs, the pump suspended, alarmed or changed, a bolus after the test's own, or
     /// Trio dosing, which it doesn't in Basal Testing. Each record is read on its own, so one that can't be read is logged
     /// without hiding what the others show; with nothing found, the test is left unchecked. Trio's SMBs and its temp
-    /// basals are read apart, so one that can't be read doesn't hide what the other shows. Carbs count from Begin; Trio's
-    /// dosing only from the end of settling, because what a loop already running at Begin gave lands while settling, in
-    /// the insulin on board the test waits for or counts. A test that never settled has no dosing of Trio's to check.
+    /// basals are read apart, so one that can't be read doesn't hide what the other shows. Carbs count from Begin, and
+    /// before it when they were logged since (`SettingsTestCarbRule`); Trio's dosing only from the end of settling,
+    /// because what a loop already running at Begin gave lands while settling, in the insulin on board the test waits
+    /// for or counts. A test that never settled has no dosing of Trio's to check.
     func wasInterrupted(_ test: ISFTestState, until end: Date) async -> BasalTestEvaluator.Interference {
         let start = test.startedAt
+        let kept = test.carbsAtBegin
         let windowStart = test.bolusWindowStart
         let bolusAt = test.bolusAt
         let reads = self.reads
         let dosed = String(localized: "Trio dosed during the test, so Basal Testing wasn't on the whole time.")
         return await BasalTestEvaluator.firstInterference([
             (name: "carbs", read: {
-                try await reads.hasCarbEntries(from: start, to: end)
+                let entries = try await reads.fetchCarbEntries(
+                    from: SettingsTestCarbRule.readFrom(startedAt: start, kept: kept),
+                    to: end
+                )
+                return SettingsTestCarbRule.spoil(entries, startedAt: start, kept: kept)
                     ? String(localized: "Carbs were logged during the test.")
                     : nil
             }),

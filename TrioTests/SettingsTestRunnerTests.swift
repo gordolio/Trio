@@ -169,7 +169,9 @@ private final class GatedRunner: SettingsTestRunner {
         #expect(harness.service.runner(for: .carbRatio) == nil)
     }
 
-    @Test("Data changes check a running test once, after the debounce") func dataChangeChecksOnce() async throws {
+    @Test(
+        "Data changes make one tick, after the debounce: the runner's check it starts, and one after the service's own"
+    ) func dataChangeChecksOnce() async throws {
         let triggers = PassthroughSubject<Void, Never>()
         var built: FakeSettingsTestRunner?
         // Nothing on disk and the fake idle at init, so there is no startup check.
@@ -193,9 +195,11 @@ private final class GatedRunner: SettingsTestRunner {
         triggers.send(())
         triggers.send(())
         triggers.send(())
-        #expect(await eventually { runner.checks == 1 })
+        // The tick starts the runner's check on its own, and the service's check asks it for one more once its reads are
+        // done, so the runner reads any ending the service kept.
+        #expect(await eventually { runner.checks == 2 })
         try await Task.sleep(for: .milliseconds(200))
-        #expect(runner.checks == 1)
+        #expect(runner.checks == 2)
     }
 
     @Test("A pump history, glucose, determination or carbs change is a trigger; another isn't") func triggerEntities() {
@@ -487,6 +491,47 @@ private final class GatedRunner: SettingsTestRunner {
         #expect(data.tempBasalReads == 1)
     }
 
+    @Test(
+        "A read of the service's own that never returns can't stop the runners' checks",
+        arguments: CheckCall.allCases
+    ) func stuckOwnReadRunnersChecked(_ call: CheckCall) async throws {
+        let data = FakeSettingsTestData()
+        let triggers = PassthroughSubject<Void, Never>()
+        // Every read of the temp basals, the service's first, waits at a gate this test opens only at its end.
+        let gate = TestGate()
+        data.onTempBasals = { await gate.pass() }
+        var built: FakeSettingsTestRunner?
+        let harness = makeTestService(
+            mode: .basalTesting,
+            existing: basalSession(startedAt: anHourAgo),
+            data: data,
+            triggers: triggers.eraseToAnyPublisher(),
+            runners: { context, _ in
+                let runner = FakeSettingsTestRunner(kind: .basal, service: context.service, running: true)
+                built = runner
+                return [runner]
+            }
+        )
+        defer { cleanUp(harness.storage) }
+        let runner = try #require(built)
+        defer {
+            runner.running = false
+            gate.open()
+        }
+
+        // The launch check is held at its first read, before it would start the runner's.
+        #expect(await eventually { gate.waiting == 1 })
+        #expect(runner.checks == 0)
+        switch call {
+        case .tick:
+            await MainActor.run { harness.service.watchdogTick() }
+        case .dataChange:
+            triggers.send(())
+        }
+        #expect(await eventually { runner.checks >= 1 })
+        #expect(data.tempBasalReads == 1)
+    }
+
     @Test("The service's own checks run one at a time; calls during one make one more, however many") func ownChecksCoalesce(
     ) async throws {
         let data = FakeSettingsTestData()
@@ -561,6 +606,12 @@ private final class GatedRunner: SettingsTestRunner {
             SettingsTestBeginError.settingsUnreadable.message
                 == "Trio couldn't read your ISF and glucose target. Check them, then try again."
         )
+        // The screens' own words for a read that failed, and Trio's for a change it couldn't save.
+        #expect(
+            SettingsTestBeginError.dataUnreadable("The disk is full.")
+                .message == "Couldn't read your data: The disk is full."
+        )
+        #expect(SettingsTestBeginError.notSaved.message == "Could not save the change.")
     }
 }
 
@@ -649,6 +700,8 @@ private final class GatedRunner: SettingsTestRunner {
 @MainActor private final class OpenerRig {
     let router = SettingsTestFakeRouter()
     let ticks = PassthroughSubject<Void, Never>()
+    /// Trio going to the background.
+    let backgrounds = PassthroughSubject<Void, Never>()
     /// What `keyWindowPresents` answers.
     var presents = false
     private(set) var opener: SettingsTestScreenOpener!
@@ -657,7 +710,8 @@ private final class GatedRunner: SettingsTestRunner {
         opener = SettingsTestScreenOpener(
             router: { [router] in router },
             keyWindowPresents: { [unowned self] in presents },
-            recheckTicks: { [ticks] in ticks.eraseToAnyPublisher() }
+            recheckTicks: { [ticks] in ticks.eraseToAnyPublisher() },
+            backgrounded: backgrounds.eraseToAnyPublisher()
         )
     }
 }
@@ -676,6 +730,28 @@ private final class GatedRunner: SettingsTestRunner {
         #expect(SettingsTestKind.basal.testScreen == .basalTest)
         #expect(SettingsTestKind.isf.testScreen == .isfTest)
         #expect(SettingsTestKind.carbRatio.testScreen == nil)
+    }
+
+    @Test("A tap still waiting when Trio goes to the background is dropped, and opens nothing later") func droppedInBackground(
+    ) async throws {
+        router.mainModalScreen.send(.treatmentView)
+        #expect(!opener.open(.isf))
+        #expect(opener.pending == .isf)
+        #expect(opener.isRechecking)
+
+        rig.backgrounds.send(())
+        #expect(await eventuallyOnMain { opener.pending == nil })
+        #expect(!opener.isRechecking)
+        // The sheet closes much later: the test's screen doesn't come up uninvited.
+        router.mainModalScreen.send(nil)
+        rig.ticks.send(())
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(router.mainModalScreen.value == nil)
+
+        // Going to the background with nothing waiting changes nothing; a new tap opens as usual.
+        rig.backgrounds.send(())
+        #expect(opener.open(.isf))
+        #expect(router.mainModalScreen.value == .isfTest)
     }
 
     @Test("A tap over another sheet waits for it to close, then opens") func waitsForAnotherSheet() async {
@@ -1187,7 +1263,7 @@ private final class RecordingISFTestRunner: ISFTestRunning {
     var state: ISFTestRunnerState { subject.value }
     var statePublisher: AnyPublisher<ISFTestRunnerState, Never> { subject.eraseToAnyPublisher() }
 
-    @MainActor func begin(_ begin: ISFTestBegin) -> SettingsTestBeginError? {
+    @MainActor func begin(_ begin: ISFTestBegin) async -> SettingsTestBeginError? {
         begins.append(begin)
         return beginError
     }
@@ -1195,6 +1271,7 @@ private final class RecordingISFTestRunner: ISFTestRunning {
     @MainActor func countAndGoOn() { actions.append("countAndGoOn") }
     @MainActor func tabletsTaken(_ tablets: ISFTestTabletsTaken) { self.tablets.append(tablets) }
     @MainActor func moveToDose() { actions.append("moveToDose") }
+    @MainActor func workOutDose(_: ISFTestDoseInputs) { actions.append("workOutDose") }
     @MainActor func raiseFirst() { actions.append("raiseFirst") }
     @MainActor func endEarly() async { actions.append("endEarly") }
     @MainActor func discard() { actions.append("discard") }
@@ -1212,7 +1289,7 @@ private final class RecordingBasalTestRunner: BasalTestRunning {
     var state: BasalTestState? { subject.value }
     var statePublisher: AnyPublisher<BasalTestState?, Never> { subject.eraseToAnyPublisher() }
 
-    @MainActor func begin(_ begin: BasalTestBegin) -> SettingsTestBeginError? {
+    @MainActor func begin(_ begin: BasalTestBegin) async -> SettingsTestBeginError? {
         begins.append(begin)
         return nil
     }
@@ -1226,15 +1303,17 @@ private final class RecordingBasalTestRunner: BasalTestRunning {
     @MainActor func check() async { checks += 1 }
 }
 
-/// What the ISF screen reads, as a test sets it: `data`, and no settings or basal schedule.
+/// What the ISF screen reads, as a test sets it: `data`, an ISF schedule (none by default), and no other settings or basal
+/// schedule.
 private final class FakeISFScreenReads: ISFTestProvider {
     var data: ISFTest.StateModel.ScreenData
+    var isfSchedule: [SettingsTestScheduleEntry] = []
 
     init(_ data: ISFTest.StateModel.ScreenData) {
         self.data = data
     }
 
-    func isfEntries() -> [SettingsTestScheduleEntry] { [] }
+    func isfEntries() -> [SettingsTestScheduleEntry] { isfSchedule }
     func basalEntries() -> [SettingsTestScheduleEntry] { [] }
     func isf(at _: Date) -> Decimal? { nil }
     func target(at _: Date) -> Decimal? { nil }
@@ -1491,7 +1570,7 @@ private final class FakeBasalScreenReads: BasalTestProvider {
 
     // MARK: Begin
 
-    @Test("The ISF screen begins only when its checks pass and it has a recent glucose") func isfBeginGuards() {
+    @Test("The ISF screen begins only when its checks pass and it has a recent glucose") func isfBeginGuards() async throws {
         let runner = RecordingISFTestRunner()
         let settings = FakeSettingsManager()
         settings.settings.dosingMode = .basalTesting
@@ -1503,34 +1582,38 @@ private final class FakeBasalScreenReads: BasalTestProvider {
         // Already on Basal Testing, which Begin would record as the usual mode: the runner isn't asked.
         #expect(!state.readyToStart)
         state.confirmStart()
+        try await Task.sleep(for: .milliseconds(100))
         #expect(runner.begins.isEmpty)
         #expect(state.errorMessage == nil)
 
-        // From the usual mode it is, with the glucose the dose is worked out from and the choice made.
+        // From the usual mode it is, with the glucose the dose is worked out from and the choice made. Begin reads, so the
+        // screen waits for it.
         settings.settings.dosingMode = .closed
         state.iobChoice = .count
         #expect(state.readyToStart)
         state.confirmStart()
+        #expect(await eventuallyOnMain { runner.begins.count == 1 })
         #expect(runner.begins == [ISFTestBegin(glucose: 180, iob: 0, iobChoice: .count)])
         #expect(state.errorMessage == nil)
 
         // The runner's refusal is said.
         runner.beginError = .otherTestRunning
         state.confirmStart()
-        #expect(state.errorMessage == SettingsTestBeginError.otherTestRunning.message)
+        #expect(await eventuallyOnMain { state.errorMessage == SettingsTestBeginError.otherTestRunning.message })
 
         // With no recent reading, no glucose is made up: today's message, and the runner isn't asked.
         state.errorMessage = nil
         state.show(isfData([BasalTestReading(date: Date().addingTimeInterval(-30 * minute), glucose: 180)]))
         #expect(state.readyToStart)
         state.confirmStart()
+        try await Task.sleep(for: .milliseconds(100))
         #expect(runner.begins.count == 2)
         #expect(state.errorMessage == String(
             localized: "Trio has no recent glucose reading. Wait for your CGM's next reading, then try again."
         ))
     }
 
-    @Test("The basal screen begins only when its checks pass and it has a glucose") func basalBeginGuards() {
+    @Test("The basal screen begins only when its checks pass and it has a glucose") func basalBeginGuards() async throws {
         let runner = RecordingBasalTestRunner()
         let settings = FakeSettingsManager()
         settings.settings.dosingMode = .basalTesting
@@ -1541,16 +1624,20 @@ private final class FakeBasalScreenReads: BasalTestProvider {
 
         #expect(!state.readyToStart)
         state.confirmStart()
+        try await Task.sleep(for: .milliseconds(100))
         #expect(runner.begins.isEmpty)
 
+        // Start reads, so the screen waits for it.
         settings.settings.dosingMode = .closed
         state.selectedHours = 6
         #expect(state.readyToStart)
         state.confirmStart()
+        #expect(await eventuallyOnMain { runner.begins.count == 1 })
         #expect(runner.begins == [BasalTestBegin(glucose: 110, iob: Decimal(string: "0.5")!, hours: 6)])
 
         state.show(basalData([]))
         state.confirmStart()
+        try await Task.sleep(for: .milliseconds(100))
         #expect(runner.begins.count == 1)
     }
 
@@ -1608,6 +1695,16 @@ private final class FakeBasalScreenReads: BasalTestProvider {
         state.show(isfData(readings(90)))
         state.raiseFirst()
         #expect(runner.actions == ["countAndGoOn", "moveToDose", "raiseFirst"])
+
+        // Work Out My Dose once glucose rose from the tablets and leveled off, with what the step read (fix round 5, L2).
+        var risen = isfTest(.raising)
+        risen.tabletsTakenAt = Date().addingTimeInterval(-40 * minute)
+        risen.tabletsGlucose = 110
+        state.apply(ISFTestRunnerState(test: risen))
+        state.show(isfData(readings([(3, 150), (8, 150), (13, 150), (18, 150), (23, 150), (28, 150), (33, 135), (38, 118)])))
+        #expect(state.canDose)
+        state.workOutDose()
+        #expect(runner.actions == ["countAndGoOn", "moveToDose", "raiseFirst", "workOutDose"])
     }
 
     @Test("Open Treatments only once the dose can be worked out") func openTreatmentsNeedsADose() {
@@ -1626,6 +1723,112 @@ private final class FakeBasalScreenReads: BasalTestProvider {
         #expect(state.canDose)
         state.openTreatments()
         #expect(router.mainModalScreen.value == .treatmentView)
+    }
+
+    // MARK: Ending
+
+    @Test("An ISF step whose test is ending takes none of its actions") func isfEndingTakesNoActions() async {
+        let runner = RecordingISFTestRunner()
+        let router = SettingsTestFakeRouter()
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.testService = makeTestService().service
+        state.screenReads = FakeISFScreenReads(isfData(readings(180)))
+        state.router = router
+        state.opener = makeOpener(router: router, ticks: PassthroughSubject())
+        state.runner = runner
+        state.show(isfData(readings(180)))
+        let ending = ISFTestPendingEnd(reason: .noBolus, at: Date(), note: nil, byUser: false)
+
+        // The Dose step, with a dose that Open Treatments would give.
+        var dosing = isfTest(.dosing)
+        dosing.pendingEnd = ending
+        state.apply(ISFTestRunnerState(test: dosing))
+        state.openTreatments()
+        state.discard()
+        #expect(router.mainModalScreen.value == nil)
+
+        // The Settle step, at its time-up question.
+        var settling = isfTest(.settling)
+        settling.pendingEnd = ending
+        state.apply(ISFTestRunnerState(test: settling, settling: ISFTestSettlingProgress(
+            decision: .timeUp(loopedAt: Date().addingTimeInterval(-50 * minute)),
+            boluses: [],
+            readingsAfterLoop: nil,
+            tempBasalRunning: false
+        )))
+        state.countAndGoOn()
+
+        // The Raise step and the Wait step.
+        var raising = isfTest(.raising)
+        raising.pendingEnd = ending
+        state.apply(ISFTestRunnerState(test: raising))
+        state.skipTablets()
+        state.tabletsTaken()
+        var waiting = isfTest(.waiting)
+        waiting.pendingEnd = ending
+        state.apply(ISFTestRunnerState(test: waiting))
+        await state.endEarly()
+
+        #expect(runner.actions.isEmpty)
+        #expect(runner.tablets.isEmpty)
+    }
+
+    @Test(
+        "A step whose session the service ended is ending until its runner finishes; a lost session's Cancel Test stays"
+    ) func endingWithNoSession() async throws {
+        let runner = RecordingISFTestRunner()
+        let settings = FakeSettingsManager()
+        let state = ISFTest.StateModel()
+        state.settingsManager = settings
+        state.testService = makeTestService().service
+        state.screenReads = FakeISFScreenReads(isfData(readings(180)))
+        state.runner = runner
+        let test = isfTest(.dosing)
+        let sessionID = try #require(test.sessionID)
+        state.apply(ISFTestRunnerState(test: test))
+        let session = SettingsTestSession(
+            id: sessionID,
+            kind: .isf,
+            startedAt: test.startedAt,
+            expiresAt: Date().addingTimeInterval(3600),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )
+
+        // Its session runs: the step's actions go to the runner.
+        settings.settings.dosingMode = .basalTesting
+        state.showSession(session, lastEnd: nil)
+        #expect(!state.isEnding)
+
+        // The service ended it for no bolus and brought the usual mode back: its runner's finish is to come.
+        settings.settings.dosingMode = .closed
+        state.showSession(nil, lastEnd: SettingsTestEnd(sessionID: sessionID, cause: .noBolus, date: Date()))
+        #expect(state.isEnding)
+        state.discard()
+        await state.endEarly()
+        #expect(runner.actions.isEmpty)
+
+        // Lost, with Basal Testing still on and no end of it kept: Cancel Test is the way back.
+        settings.settings.dosingMode = .basalTesting
+        state.showSession(nil, lastEnd: nil)
+        #expect(!state.isEnding)
+        state.discard()
+        #expect(runner.actions == ["discard"])
+    }
+
+    @Test("A fast that is ending takes neither End Now nor Discard") func basalEndingTakesNoActions() async {
+        let runner = RecordingBasalTestRunner()
+        let state = BasalTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.screenReads = FakeBasalScreenReads(basalData(readings(110)))
+        state.runner = runner
+        var fast = runningFast()
+        fast.pendingEnd = BasalTestPendingEnd(reason: .completed, at: Date(), note: nil, byUser: false)
+        state.apply(fast)
+
+        state.discard()
+        await state.endEarly()
+        #expect(runner.actions.isEmpty)
     }
 
     // MARK: Settle
@@ -1754,5 +1957,190 @@ private final class FakeBasalScreenReads: BasalTestProvider {
         state.apply(finished)
         try await Task.sleep(for: .milliseconds(100))
         #expect(reads.smbReadsSince.count == 1)
+    }
+
+    // MARK: Adversarial review 2, part 2
+
+    /// Readings at `(minutes before now, mg/dL)`, newest first.
+    private func readings(_ points: [(Double, Int)]) -> [BasalTestReading] {
+        points.map { BasalTestReading(date: Date().addingTimeInterval(-$0.0 * minute), glucose: $0.1) }
+    }
+
+    @Test(
+        "The basal fast starts from the 3-reading mean, and not without a reading 12 minutes old or newer"
+    ) func basalStartsFromTheMean() async throws {
+        let runner = RecordingBasalTestRunner()
+        let settings = FakeSettingsManager()
+        settings.settings.dosingMode = .closed
+        let state = BasalTest.StateModel()
+        state.settingsManager = settings
+        state.runner = runner
+        // 112, 108 and 104, the newest a minute old: the fast starts from their mean, 108, not the newest reading.
+        state.show(basalData(readings([(1, 112), (6, 108), (11, 104)])))
+        #expect(state.readyToStart)
+        state.confirmStart()
+        #expect(await eventuallyOnMain { runner.begins.count == 1 })
+        #expect(runner.begins.first?.glucose == 108)
+
+        // The newest 13 minutes old: Start says there is no recent reading, and the runner isn't asked.
+        let noRecent = "Trio has no recent glucose reading. Wait for your CGM's next reading, then try again."
+        state.show(basalData(readings([(13, 110), (18, 110), (23, 110)])))
+        state.requestStart()
+        #expect(!state.showStartConfirmation)
+        #expect(state.errorMessage == noRecent)
+        state.errorMessage = nil
+        state.confirmStart()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(runner.begins.count == 1)
+        #expect(state.errorMessage == noRecent)
+    }
+
+    @Test(
+        "The ISF Result's action follows the user's own Dynamic ISF: Logarithmic gets the docs' line for it"
+    ) func isfResultActionFollowsDynamicISF() {
+        let settings = FakeSettingsManager()
+        let state = ISFTest.StateModel()
+        state.settingsManager = settings
+        var finished = isfTest(.finished)
+        finished.outcome = .tooHigh
+        state.apply(ISFTestRunnerState(test: finished))
+        #expect(state.resultAction == .openSensitivities)
+        settings.preferences.useNewFormula = true
+        #expect(state.resultAction == .reevaluateDynamicSettings)
+        // Sigmoid's line in the docs is the profile ISF's.
+        settings.preferences.sigmoid = true
+        #expect(state.resultAction == .openSensitivities)
+    }
+
+    @Test("Open Treatments and Work Out My Dose say why when their gate fails") func gatesSayWhy() {
+        let router = SettingsTestFakeRouter()
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.router = router
+        state.opener = makeOpener(router: router, ticks: PassthroughSubject())
+        state.apply(ISFTestRunnerState(test: isfTest(.dosing)))
+
+        // The newest reading has aged past 12 minutes since the step was drawn: no dose now, so the tap says why.
+        state.show(isfData(readings([(13, 180), (18, 180), (23, 180)])))
+        state.openTreatments()
+        #expect(router.mainModalScreen.value == nil)
+        #expect(state.errorMessage == "Waiting for a recent CGM reading")
+        // A dose, with the arrow moving.
+        state.errorMessage = nil
+        var moving = isfData(readings(180))
+        moving.trendDirection = .singleUp
+        state.show(moving)
+        state.openTreatments()
+        #expect(router.mainModalScreen.value == nil)
+        #expect(state.errorMessage == "Open Treatments turns on once the arrow is flat.")
+        // Carbs on board: the step's own sentence.
+        state.errorMessage = nil
+        var carbs = isfData(readings(180))
+        carbs.cob = 8
+        state.show(carbs)
+        state.openTreatments()
+        #expect(
+            state.errorMessage == "Carbs are on board, so the test can't be judged. The docs test ISF with no carbs on board."
+        )
+
+        // Work Out My Dose with the tablets taken a minute ago: they haven't acted yet.
+        state.errorMessage = nil
+        var raising = isfTest(.raising)
+        raising.tabletsTakenAt = Date().addingTimeInterval(-minute)
+        raising.tabletsGlucose = 110
+        state.apply(ISFTestRunnerState(test: raising))
+        state.show(isfData(readings(110)))
+        state.workOutDose()
+        #expect(state.errorMessage == "Waiting for your glucose to rise from the tablets.")
+    }
+
+    @Test("The hub hears each runner's test reach finished, once each, and not the one there as it opened") func hubHearsFinishes() {
+        let held = isfTest(.finished)
+        let isf = CurrentValueSubject<ISFTestRunnerState, Never>(ISFTestRunnerState(test: held))
+        let basal = CurrentValueSubject<BasalTestState?, Never>(nil)
+        var heard = 0
+        let subscription = SettingsTest.StateModel.testFinishes(
+            isf: isf.eraseToAnyPublisher(),
+            basal: basal.eraseToAnyPublisher()
+        ).sink { heard += 1 }
+        defer { subscription.cancel() }
+        // The result each runner holds now is the one the hub read as it opened.
+        #expect(heard == 0)
+        // A new ISF test runs, then finishes: heard once, however often it is published after.
+        let running = isfTest(.waiting)
+        isf.send(ISFTestRunnerState(test: running))
+        #expect(heard == 0)
+        var done = running
+        done.phase = .finished
+        isf.send(ISFTestRunnerState(test: done))
+        #expect(heard == 1)
+        isf.send(ISFTestRunnerState(test: done, settling: nil, doseIOB: nil))
+        #expect(heard == 1)
+        // Done clears it: nothing to hear.
+        isf.send(ISFTestRunnerState())
+        #expect(heard == 1)
+        // A basal fast finishes.
+        let fast = runningFast()
+        basal.send(fast)
+        var ended = fast
+        ended.phase = .finished
+        basal.send(ended)
+        #expect(heard == 2)
+        basal.send(nil)
+        #expect(heard == 2)
+    }
+
+    // MARK: Adversarial review 2, fix round 3
+
+    /// An ISF schedule of 6-hour blocks in `Calendar.current`'s minutes of the day, values 50, 45, 40 and 35, whose first
+    /// change comes `firstChangeAfter` from now.
+    private func sixHourBlocks(firstChangeAfter: TimeInterval) -> [SettingsTestScheduleEntry] {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: Date().addingTimeInterval(firstChangeAfter))
+        let first = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        let starts = (0 ..< 4).map { (first + $0 * 360) % 1440 }.sorted()
+        let values: [Decimal] = [50, 45, 40, 35]
+        func entry(_ start: Int, _ end: Int, _ value: Decimal) -> SettingsTestScheduleEntry {
+            SettingsTestScheduleEntry(startMinutes: start, endMinutes: end, value: value)
+        }
+        let blocks = starts.enumerated().map { index, start in
+            entry(start, index + 1 < starts.count ? starts[index + 1] : 1440, values[index])
+        }
+        return ([entry(0, starts[0], values[3])] + blocks).filter { $0.startMinutes < $0.endMinutes }
+    }
+
+    @Test(
+        "The Check holds Begin up when no bolus moment the test can reach has its 4 hours on one ISF value, and only informs otherwise"
+    ) func checkBlocksAStuckISFChange() async {
+        let settings = FakeSettingsManager()
+        settings.settings.dosingMode = .closed
+        let state = ISFTest.StateModel()
+        state.settingsManager = settings
+        state.testService = makeTestService().service
+        let reads = FakeISFScreenReads(isfData(readings(180)))
+        // 6-hour blocks, the next change 2 h 45 m away: past the latest dose deadline, so every bolus moment's 4 hours
+        // reach past it (N1).
+        reads.isfSchedule = sixHourBlocks(firstChangeAfter: 165 * 60)
+        state.screenReads = reads
+        await state.refresh()
+        #expect(!state.readyToStart)
+        #expect(state.failingChecks.map(\.id).contains("isfChange"))
+        #expect(state.startBlocker == "The 4 hours from now cover more than one ISF.")
+        #expect(!state.informingChecks.map(\.id).contains("isfChange"))
+
+        // The next change 2 h 20 m away (a Begin at 9:40 on blocks at 00/06/12/18): past a dose deadline 90 minutes after
+        // settling's earliest end, so Begin waits too (fix round 5, M1).
+        reads.isfSchedule = sixHourBlocks(firstChangeAfter: 140 * 60)
+        await state.refresh()
+        #expect(!state.readyToStart)
+        #expect(state.startBlocker == "The 4 hours from now cover more than one ISF.")
+        reads.isfSchedule = sixHourBlocks(firstChangeAfter: 120 * 60)
+        await state.refresh()
+        #expect(!state.readyToStart)
+
+        // The next change an hour away: a bolus from it on is on one value, so the row only informs, as before.
+        reads.isfSchedule = sixHourBlocks(firstChangeAfter: 60 * 60)
+        await state.refresh()
+        #expect(state.readyToStart)
+        #expect(state.informingChecks.map(\.id).contains("isfChange"))
     }
 }

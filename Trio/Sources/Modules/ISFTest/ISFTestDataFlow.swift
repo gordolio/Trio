@@ -50,6 +50,10 @@ enum ISFTest {
         )!
         static let whyBasalRatesMatter = URL(string: "https://triodocs.org/usage/concepts/basal-rates/#why-basal-rates-matter")!
         static let bolusCalculator = URL(string: "https://triodocs.org/usage/concepts/isf/#bolus-calculator")!
+        /// The link in the docs' line for Logarithmic Dynamic ISF (`reevaluateDynamicSettings`): its "desmos graphs".
+        static let logarithmicDesmosGraphs = URL(
+            string: "https://triodocs.org/configuration/settings/algorithm/dynamic-settings/#logarithmic-desmos-graphs"
+        )!
 
         // Each link is named for its page, so two on one screen can be told apart.
         static var testingMethodLink: SettingsTestDocsLink {
@@ -93,6 +97,9 @@ enum ISFTest {
         static let smallChanges = "Make small changes: Adjust by 5-10% at a time"
         static let waitBetweenChanges = "Wait between changes: Give each adjustment 2-3 days to see the full effect"
         static let testSystematically = "Test systematically: Test one time period at a time"
+
+        // Common ISF mistakes (isf.md), the solution for Logarithmic Dynamic ISF, up to its link (`logarithmicDesmosGraphs`)
+        static let reevaluateDynamicSettings = "Re-evaluate your Adjustment Factor and other Dynamic Settings"
 
         // Carb ratios (carb-ratios.md)
         static let testISFWhenFasting = "Test ISF with correction boluses when fasting (no COB)"

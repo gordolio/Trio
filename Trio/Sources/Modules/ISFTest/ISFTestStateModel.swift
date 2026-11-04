@@ -53,6 +53,9 @@ extension ISFTest {
         private(set) var trendDirection: BloodGlucose.Direction?
         /// The kind of settings test running, if any. Only one can run at a time.
         private(set) var activeSessionKind: SettingsTestKind?
+        /// The session running and the one the service last ended on its own, as the service last said (`showSession`).
+        /// Nil until the screen has read them.
+        private(set) var serviceSession: (activeID: UUID?, lastEndID: UUID?)?
         /// The ISF schedule now, in mg/dL per unit, for the hours the Check screen says the test will cover.
         private(set) var isfSchedule: [SettingsTestScheduleEntry] = []
         /// The settings in force now, for the Check screen. A running test uses the ones it saved at Start.
@@ -240,6 +243,9 @@ extension ISFTest {
             if let iobBlockCheck {
                 checks.append(iobBlockCheck)
             }
+            if let isfChangeBlockCheck {
+                checks.append(isfChangeBlockCheck)
+            }
             return checks
         }
 
@@ -302,10 +308,17 @@ extension ISFTest {
             return ISFTestEvaluator.coveredEntries(isfSchedule, from: now, to: now.addingTimeInterval(Config.docsWait)) ?? []
         }
 
-        /// Whether the 4 hours from now cover more than one ISF value (R3). It only informs: the dose and the result use
-        /// the ISF in force at Start.
+        /// Whether the 4 hours from now cover more than one ISF value (R3). The row informs while a bolus moment the test
+        /// can reach clears the change; when none does, it holds Begin up instead (`isfChangeBlocksBegin`).
         var crossesISFChange: Bool {
             ISFTestEvaluator.crossesISFChange(isfSchedule, from: Date(), for: Config.docsWait)
+        }
+
+        /// Whether the ISF schedule holds Begin up, a docs rule ("Test one time period at a time"): no bolus moment the test
+        /// can reach has its 4 hours on one ISF value (`ISFTestEvaluator.isfChangeBlocksBegin`), so the Dose step could
+        /// only end the test.
+        var isfChangeBlocksBegin: Bool {
+            ISFTestEvaluator.isfChangeBlocksBegin(isfSchedule, now: Date())
         }
 
         /// The informing rows that warn, with an orange triangle, because they are easy to miss. None blocks the start.
@@ -663,9 +676,10 @@ extension ISFTest {
             )
         }
 
-        /// Shown only when the 4 hours from now cover more than one ISF value.
+        /// Shown only when the 4 hours from now cover more than one ISF value, while a bolus moment the test can reach
+        /// clears it (otherwise `isfChangeBlockCheck` holds Begin up).
         private var isfChangeCheck: Check? {
-            guard crossesISFChange else { return nil }
+            guard crossesISFChange, !isfChangeBlocksBegin else { return nil }
             let entries = plannedEntries
             // The test's 4 hours, split where the ISF changes, each part with its ISF, not the whole entries they touch.
             let spans = ISFTestEvaluator.isfChangeReading(
@@ -682,6 +696,30 @@ extension ISFTest {
                     body: String(
                         localized: "The 4 hours from now cover more than one ISF. The dose and the result use the one in force at your bolus. It doesn't hold up the start."
                     ),
+                    reading: String(localized: "These hours cover \(spans)"),
+                    quote: Docs.testSystematically,
+                    links: [Docs.bestPracticesLink]
+                )
+            )
+        }
+
+        /// Shown only when no bolus moment the test can reach has its 4 hours on one ISF value (`isfChangeBlocksBegin`): it
+        /// holds Begin up, as the docs' rule, with the informing row's first sentence and the docs' quote.
+        private var isfChangeBlockCheck: Check? {
+            guard isfChangeBlocksBegin else { return nil }
+            let sentence = ISFTestEvaluator.noDoseSentence(.isfChangesUntilDeadline)
+            let spans = ISFTestEvaluator.isfChangeReading(
+                ISFTestEvaluator.coveredSpans(isfSchedule, from: Date(), for: Config.docsWait),
+                units: glucoseUnits
+            )
+            return Check(
+                id: "isfChange",
+                title: String(localized: "ISF changes during the test"),
+                detail: sentence,
+                state: .failed,
+                info: SettingsTestInfo(
+                    title: String(localized: "ISF changes during the test"),
+                    body: sentence ?? "",
                     reading: String(localized: "These hours cover \(spans)"),
                     quote: Docs.testSystematically,
                     links: [Docs.bestPracticesLink]
@@ -867,10 +905,96 @@ extension ISFTest {
             ISFTestEvaluator.glucoseIsLevel(doseInputs)
         }
 
-        /// Whether the tablets taken have acted: a reading after them above the glucose they were counted from, and a
-        /// reading after that one (`ISFTestEvaluator.tabletsActed`). False before they are taken.
+        /// Whether the tablets taken have acted: the mean of the newest 3 readings after them above the glucose they were
+        /// counted from (`ISFTestEvaluator.tabletsActed`). False before they are taken.
         var tabletsActed: Bool {
             test.map { ISFTestEvaluator.tabletsActed(of: $0, doseInputs) } ?? false
+        }
+
+        /// Whether glucose rose from the tablets taken and then stopped rising (`ISFTestEvaluator.tabletsLeveledOff`).
+        /// False before they are taken.
+        var tabletsLeveledOff: Bool {
+            test.map { ISFTestEvaluator.tabletsLeveledOff(of: $0, doseInputs) } ?? false
+        }
+
+        /// Whether the Dose step after tablets waits for glucose to stop rising again, as the bolus check would hold it
+        /// (`ISFTestEvaluator.canDose`).
+        var doseWaitsForTablets: Bool {
+            guard let test, test.phase == .dosing, test.tabletsTakenAt != nil else { return false }
+            return !tabletsLeveledOff
+        }
+
+        /// What the Raise step's leveling card says the readings mean for the dose, once there is a recent reading: carbs
+        /// on board read as none, then glucose risen from the tablets, so a flat reading from before they acted can't
+        /// unlock it, then stopped rising, then a level arrow. Nil while glucose has risen and still rises under a level
+        /// arrow: the card's title says it waits for glucose to level off (`ISFTestEvaluator.levelingTitle`).
+        var raiseStatus: String? {
+            if canDose {
+                return trendArrow == nil
+                    ? String(localized: "Your CGM gives no arrow, so check that the readings have leveled off.")
+                    : String(localized: "Your glucose has leveled off.")
+            }
+            // Carbs on board hold the dose on this path too, and unread they aren't known to be none.
+            if currentCOB == nil {
+                return String(localized: "Waiting for Trio to read carbs on board")
+            }
+            if !ISFTestEvaluator.carbsAllowDose(currentCOB) {
+                return ISFTestEvaluator.noDoseSentence(.carbsOnBoard)
+            }
+            if !tabletsActed {
+                return String(localized: "Waiting for your glucose to rise from the tablets.")
+            }
+            if !tabletsLeveledOff { return nil }
+            return String(localized: "Work Out My Dose turns on once the arrow is flat.")
+        }
+
+        /// Why Work Out My Dose is off, in the words the Raise step shows for it: waiting for a recent reading, or what its
+        /// leveling card says (`raiseStatus`, or its title when that has no line). Nil while it is on.
+        var raiseHoldText: String? {
+            guard !canDose else { return nil }
+            if doseGlucose == nil { return WaitingRow.recentReading.text }
+            return raiseStatus ?? ISFTestEvaluator.levelingTitle(phase: .raising, tabletsActed: tabletsActed)
+        }
+
+        /// The Dose step's line while insulin on board is over the line for the dose shown: how much there is against the
+        /// line, or that Trio hasn't read it. Nil without a dose.
+        var iobWaitText: String? {
+            guard let dose = docsDose else { return nil }
+            let doseText = SettingsTestFormat.keepTogether(formatUnits(dose), unit: "U")
+            guard let iob = currentIOB, let line = doseIOBLine else {
+                return String(localized: "Waiting for Trio's insulin on board.")
+            }
+            let iobText = SettingsTestFormat.keepTogether(formatSignedUnits(iob), unit: "U")
+            return iob < 0
+                ? String(
+                    localized: "Your insulin on board is \(iobText), more than \(lineText(line)) from zero: \(stepPercent)% of this dose of \(doseText), the smallest ISF change in Trio docs."
+                )
+                : String(
+                    localized: "Your insulin on board is \(iobText), over \(lineText(line)): \(stepPercent)% of this dose of \(doseText), the smallest ISF change in Trio docs."
+                )
+        }
+
+        /// Why Open Treatments is off, in the words the Dose step shows for it: why there is no dose, or what it waits for;
+        /// the leveling card's line while the arrow moves, or its title while glucose still rises after the tablets; or the
+        /// insulin on board card's line. Nil while it is on.
+        var doseHoldText: String? {
+            guard !canDose else { return nil }
+            if let reason = noDoseReason {
+                switch reason {
+                case .noRecentReading: return WaitingRow.recentReading.text
+                case .carbsUnread: return String(localized: "Waiting for Trio to read carbs on board")
+                case .iobUnread: return String(localized: "Waiting for Trio's insulin on board")
+                case .atOrBelowTarget,
+                     .carbsOnBoard,
+                     .iobCoversDose,
+                     .isfChanges,
+                     .isfChangesUntilDeadline,
+                     .noSettings: return ISFTestEvaluator.noDoseSentence(reason)
+                }
+            }
+            if !glucoseIsLevel { return String(localized: "Open Treatments turns on once the arrow is flat.") }
+            if doseWaitsForTablets { return ISFTestEvaluator.levelingTitle(phase: .dosing, tabletsActed: true) }
+            return doseIOBAllows ? nil : iobWaitText
         }
 
         /// The line insulin on board must be under before the dose shown, in a test that doesn't count it: the docs'
@@ -883,6 +1007,14 @@ extension ISFTest {
         /// Whether insulin on board lets the dose shown go ahead (`ISFTestEvaluator.doseIOBAllows`).
         var doseIOBAllows: Bool {
             ISFTestEvaluator.doseIOBAllows(of: test, doseInputs)
+        }
+
+        /// The 4 hours from now, as the parts of the day they cover with their ISFs, from the schedule Begin saved, as the
+        /// Check screen's ISF-change row reads them (`ISFTestEvaluator.isfChangeReading`). Nil without a test or entries.
+        var doseISFChangeReading: String? {
+            guard let entries = test?.coveredEntries else { return nil }
+            let spans = ISFTestEvaluator.coveredSpans(entries, from: Date(), for: Config.docsWait)
+            return spans.isEmpty ? nil : ISFTestEvaluator.isfChangeReading(spans, units: glucoseUnits)
         }
 
         // MARK: - Waiting
@@ -944,6 +1076,19 @@ extension ISFTest {
             ISFTestEvaluator.takenTablets(carbs: test?.tabletCarbs, brand: test?.tabletBrand)
         }
 
+        /// What the Result offers for a verdict that says to change the ISF (`ISFTestEvaluator.resultAction`): Open
+        /// Insulin Sensitivities, or the docs' line for Logarithmic Dynamic ISF while it is on. Basal Testing turns
+        /// Dynamic ISF off only for the test, so the user's own setting is read. Nil for any other result.
+        var resultAction: ISFTestResultAction? {
+            guard let outcome = test?.outcome else { return nil }
+            let manager: SettingsManager? = settingsManager
+            let preferences = manager?.preferences ?? Preferences()
+            return ISFTestEvaluator.resultAction(
+                outcome: outcome,
+                logarithmicDynamicISF: preferences.useNewFormula && !preferences.sigmoid
+            )
+        }
+
         // MARK: - Subscription
 
         override func subscribe() {
@@ -975,11 +1120,11 @@ extension ISFTest {
                 .store(in: &dataSubscriptions)
 
             // Right away, so the first frame doesn't show "No other test running" as passed, or no basal test.
-            activeSessionKind = testService.activeSession?.kind
+            showSession(testService.activeSession, lastEnd: testService.lastEnd())
             basalGate = readBasalGate()
             testService.sessionPublisher
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] session in self?.activeSessionKind = session?.kind }
+                .sink { [weak self] session in self?.showSession(session, lastEnd: self?.testService.lastEnd()) }
                 .store(in: &dataSubscriptions)
 
             Task { await refresh() }
@@ -994,6 +1139,27 @@ extension ISFTest {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] state in self?.apply(state) }
                 .store(in: &dataSubscriptions)
+        }
+
+        /// Shows the service's session: the one running, and the one it last ended on its own (`lastEnd`), kept before it
+        /// sent its end, so a step whose session ended shows as ending (`isEnding`).
+        func showSession(_ session: SettingsTestSession?, lastEnd: SettingsTestEnd?) {
+            activeSessionKind = session?.kind
+            serviceSession = (activeID: session?.id, lastEndID: lastEnd?.sessionID)
+        }
+
+        /// Whether the test is ending, so its step takes none of its actions (`SettingsTestModeRule.isEnding`): its ending
+        /// is saved, or its session no longer runs while its runner's finish is to come.
+        var isEnding: Bool {
+            guard let test else { return false }
+            return SettingsTestModeRule.isEnding(
+                hasPendingEnd: test.pendingEnd != nil,
+                isRunning: test.phase != .finished,
+                testSessionID: test.sessionID,
+                session: serviceSession,
+                mode: currentMode,
+                previousMode: test.previousMode
+            )
         }
 
         /// Shows what the runner publishes: the test, settling's last check, and insulin on board for a counted dose. The
@@ -1111,8 +1277,12 @@ extension ISFTest {
                 errorMessage = noRecentGlucoseMessage
                 return
             }
-            if let error = runner?.begin(ISFTestBegin(glucose: glucose, iob: currentIOB, iobChoice: iobChoice)) {
-                errorMessage = error.message
+            let begin = ISFTestBegin(glucose: glucose, iob: currentIOB, iobChoice: iobChoice)
+            // Begin reads the carb entries there now before it switches the mode.
+            Task { @MainActor in
+                if let error = await runner?.begin(begin) {
+                    errorMessage = error.message
+                }
             }
         }
 
@@ -1120,7 +1290,7 @@ extension ISFTest {
 
         /// After the settling allowance, with insulin on board still over the line: count it and go on.
         @MainActor func countAndGoOn() {
-            guard case .timeUp = settling else { return }
+            guard !isEnding, case .timeUp = settling else { return }
             runner?.countAndGoOn()
         }
 
@@ -1194,26 +1364,9 @@ extension ISFTest {
 
         /// Once the settling allowance is up with no loop in Basal Testing, too few CGM readings since it, or a temp basal
         /// still running: counting insulin on board can't help, so the step offers only Cancel.
+        /// The runner ends the test with the same sentence (`ISFTestEvaluator.deadEndSentence`).
         var settleNoLoopMessage: String? {
-            switch settling {
-            case .noLoop:
-                return String(
-                    localized: "Trio hasn't looped in Basal Testing yet, so the test can't start. Check your CGM and pump, then begin again."
-                )
-            case .tooFewReadings:
-                return String(
-                    localized: "Trio hasn't had enough CGM readings since you began to start the test. Check your CGM, then begin again."
-                )
-            case .tempBasalRunning:
-                return String(
-                    localized: "A temp basal is still running on your pump, so the test can't start. Cancel it on the pump, then begin again."
-                )
-            case nil,
-                 .settled,
-                 .timeUp,
-                 .waiting:
-                return nil
-            }
+            settling.flatMap(ISFTestEvaluator.deadEndSentence(settling:))
         }
 
         /// The question once the settling allowance is up with insulin on board still over the line, or still unread.
@@ -1240,6 +1393,7 @@ extension ISFTest {
         /// step then waits for glucose to level off. Without a count there is nothing to have taken, so it says why; once
         /// they are marked taken, another tap does nothing (the runner's).
         @MainActor func tabletsTaken() {
+            guard !isEnding else { return }
             let count = tabletCount
             guard count > 0 else {
                 errorMessage = noTabletsReason == .noRecentReading ? noRecentGlucoseMessage : noTabletsMessage
@@ -1249,14 +1403,20 @@ extension ISFTest {
             runner?.tabletsTaken(ISFTestTabletsTaken(brand: selectedBrand, count: count, glucose: doseGlucose))
         }
 
-        /// From the Raise step to the Dose step, once glucose has leveled off after the tablets.
+        /// From the Raise step to the Dose step, once glucose has leveled off after the tablets, with what the step read,
+        /// which the runner judges again. A tap the step drew before its gate shut says why (`raiseHoldText`).
         @MainActor func workOutDose() {
-            guard canDose else { return }
-            runner?.moveToDose()
+            guard !isEnding else { return }
+            guard canDose else {
+                errorMessage = raiseHoldText
+                return
+            }
+            runner?.workOutDose(doseInputs)
         }
 
-        /// From the Raise step to the Dose step without tablets.
+        /// From the Raise step to the Dose step without tablets; the runner does nothing once they are taken.
         @MainActor func skipTablets() {
+            guard !isEnding else { return }
             runner?.moveToDose()
         }
 
@@ -1264,13 +1424,18 @@ extension ISFTest {
         /// gives no dose, and the target is below the docs' 150 for tablets to aim past (`canRaise`). Tablets already
         /// taken stay in the record.
         @MainActor func raiseFirst() {
-            guard noDoseReason == .atOrBelowTarget, canRaise else { return }
+            guard !isEnding, noDoseReason == .atOrBelowTarget, canRaise else { return }
             runner?.raiseFirst()
         }
 
-        /// Trio's own Treatments screen gives the bolus, so its checks all apply.
+        /// Trio's own Treatments screen gives the bolus, so its checks all apply. A tap the step drew before its gate shut
+        /// (a reading that aged since, say) says why (`doseHoldText`).
         @MainActor func openTreatments() {
-            guard canDose else { return }
+            guard !isEnding else { return }
+            guard canDose else {
+                errorMessage = doseHoldText
+                return
+            }
             sendToTreatments()
         }
 
@@ -1291,12 +1456,14 @@ extension ISFTest {
 
         /// End Test: ending early gives no result.
         func endEarly() async {
+            guard await MainActor.run(body: { !isEnding }) else { return }
             await runner?.endEarly()
         }
 
         /// Cancel Test, before the bolus: the usual mode comes back and nothing is kept. The next test's Check starts on
         /// the docs' way.
         @MainActor func discard() {
+            guard !isEnding else { return }
             runner?.discard()
             iobChoice = .wait
             Task { await refresh() }

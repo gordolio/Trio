@@ -11,6 +11,17 @@ extension ISFTest {
         private var tabletsTaken: Bool { state.test?.tabletsTakenAt != nil }
 
         var body: some View {
+            // The tablets and the gate read the time (the newest reading's age), so the step is drawn again each minute, as
+            // Settle and Wait are.
+            TimelineView(.everyMinute) { _ in
+                content
+            }
+            .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+                Task { await state.checkRunningTest() }
+            }
+        }
+
+        private var content: some View {
             SettingsTestScreen(paintsBackground: false) {
                 if tabletsTaken {
                     levelingCard
@@ -59,17 +70,19 @@ extension ISFTest {
                 if tabletsTaken {
                     Button("Work Out My Dose") { state.workOutDose() }
                         .buttonStyle(.testPrimary)
-                        .disabled(!state.canDose)
+                        .disabled(!state.canDose || state.isEnding)
                 } else {
                     Button("I've Taken Them") { state.tabletsTaken() }
                         .buttonStyle(.testPrimary)
-                        .disabled(state.tabletCount == 0)
+                        .disabled(state.tabletCount == 0 || state.isEnding)
                     Button("Skip, Dose Now") { state.skipTablets() }
                         .buttonStyle(.testSecondary)
+                        .disabled(state.isEnding)
                 }
-                // Before the bolus, so Basal Testing can be turned off from this step too.
+                // Before the bolus, so Basal Testing can be turned off from this step too. Off while the test ends.
                 Button("Cancel Test") { showsCancelConfirmation = true }
                     .buttonStyle(.testSecondary)
+                    .disabled(state.isEnding)
                     // On the button, so where the dialog shows as a popover it points at the button.
                     .confirmationDialog("Cancel the test?", isPresented: $showsCancelConfirmation, titleVisibility: .visible) {
                         Button("Cancel Test", role: .destructive) { state.discard() }
@@ -77,9 +90,6 @@ extension ISFTest {
                     } message: {
                         Text("Your usual dosing mode comes back, and nothing is saved.")
                     }
-            }
-            .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
-                Task { await state.checkRunningTest() }
             }
         }
 
@@ -181,35 +191,13 @@ extension ISFTest {
 
         /// After the tablets: the CGM's arrow and the last readings, until glucose has risen from them and the arrow is
         /// flat (or the CGM gives none).
+        /// What the readings mean for the dose (`StateModel.raiseStatus`).
         private var levelingCard: some View {
             LevelingCard(
                 state: state,
                 title: ISFTestEvaluator.levelingTitle(phase: state.test?.phase ?? .raising, tabletsActed: state.tabletsActed),
-                status: levelingStatus
+                status: state.raiseStatus
             )
-        }
-
-        /// What the readings mean for the dose, once there is a recent reading: carbs on board read as none, then glucose
-        /// risen from the tablets, so a flat reading from before they acted can't unlock it, then leveled off.
-        private var levelingStatus: String {
-            if state.canDose {
-                return state.trendArrow == nil
-                    ? String(localized: "Your CGM gives no arrow, so check that the readings have leveled off.")
-                    : String(localized: "Your glucose has leveled off.")
-            }
-            // Carbs on board hold the dose on this path too, and unread they aren't known to be none.
-            if state.currentCOB == nil {
-                return String(localized: "Waiting for Trio to read carbs on board")
-            }
-            if !ISFTestEvaluator.carbsAllowDose(state.currentCOB) {
-                return String(
-                    localized: "Carbs are on board, so the test can't be judged. The docs test ISF with no carbs on board."
-                )
-            }
-            if !state.tabletsActed {
-                return String(localized: "Waiting for your glucose to rise from the tablets.")
-            }
-            return String(localized: "Work Out My Dose turns on once the arrow is flat.")
         }
     }
 }

@@ -23,10 +23,12 @@ protocol ISFTestReads: AnyObject {
     func fetchBolusRecords(from start: Date, to end: Date) async throws -> [ISFTestBolusRecord]
     func fetchSMBs(since start: Date, until end: Date) async throws -> [BasalTestSMB]
     func fetchTempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal]
+    /// When Trio's determinations in the window asked for a zero temp with time on it (`SettingsTestEvents`).
+    func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date]
     func fetchArrowReading(atOrBefore date: Date) async throws -> ISFTestArrowReading?
     func fetchSuspendReading(startedAt: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading
     func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date]
-    func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool
+    func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry]
     /// Insulin on board for a counted dose, from Trio's newest determination of the 12 minutes up to `now`. Nil when there
     /// is none.
     func fetchDoseIOB(at now: Date) async throws -> Decimal?
@@ -84,17 +86,22 @@ enum ISFTestStepNotice {
     case settledToRaise
     /// The tablets acted and glucose leveled off, so the Raise step moved on to the Dose step.
     case tabletsActed
+    /// Settling's hour is up with insulin on board still over the line: the Settle step asks whether to count it and go
+    /// on, or cancel (`ISFTestSettling.timeUp`).
+    case timeUp
 }
 
 /// What the ISF screen asks of its runner.
 protocol ISFTestRunning: AnyObject {
     var state: ISFTestRunnerState { get }
     var statePublisher: AnyPublisher<ISFTestRunnerState, Never> { get }
-    @MainActor func begin(_ begin: ISFTestBegin) -> SettingsTestBeginError?
+    @MainActor func begin(_ begin: ISFTestBegin) async -> SettingsTestBeginError?
     @MainActor func countAndGoOn()
     @MainActor func tabletsTaken(_ tablets: ISFTestTabletsTaken)
-    /// Work Out the Dose and Skip, Dose Now.
+    /// Skip, Dose Now.
     @MainActor func moveToDose()
+    /// Work Out My Dose, with what the Raise step read.
+    @MainActor func workOutDose(_ inputs: ISFTestDoseInputs)
     @MainActor func raiseFirst()
     func endEarly() async
     /// Cancel Test.

@@ -36,6 +36,8 @@ final class FakeSettingsTestData: SettingsTestEvents {
     var temps: [BasalTestTempBasal] = []
     /// When Trio's determinations asked for a zero temp.
     var zeroTempDeterminations: [Date] = []
+    /// When each carb entry was eaten. Each one's ID is its date (`carbEntryID`), so an entry appended later is a new one
+    /// and one set again at the same date is the same.
     var carbs: [Date] = []
     var boluses: [ISFTestBolus] = []
     /// Boluses the pump history flagged as SMBs. In Basal Testing that can only be a bolus the user gave, flagged when
@@ -146,6 +148,17 @@ final class FakeSettingsTestData: SettingsTestEvents {
         zeroTempDeterminations.append(date.addingTimeInterval(-30))
     }
 
+    /// Trio's suspend for a low at `date` in a test begun at `startedAt`, asked for in Basal Testing: by a determination
+    /// made at least the settle margin after Begin (`ISFTest.Config.settleLoopMargin`), up to the 2 minutes after the zero
+    /// temp a pump clock a little behind allows (`BasalTestEvaluator.zeroTempAskedAfter`). For a suspend at Begin, which a
+    /// determination 30 seconds before it would make Closed Loop's.
+    func basalTestingSuspends(at date: Date, startedAt: Date) {
+        temps.append(BasalTestTempBasal(date: date, rate: 0, minutes: 30))
+        zeroTempDeterminations.append(
+            max(date.addingTimeInterval(-30), startedAt.addingTimeInterval(ISFTest.Config.settleLoopMargin))
+        )
+    }
+
     func tempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal] {
         countRead()
         counterLock.withLock { _tempBasalReads += 1 }
@@ -160,10 +173,16 @@ final class FakeSettingsTestData: SettingsTestEvents {
         return zeroTempDeterminations.filter { $0 >= start && $0 <= end }
     }
 
-    func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
+    /// The ID the carb entry eaten at `date` reads back with.
+    static func carbEntryID(_ date: Date) -> String {
+        "carb-\(date.timeIntervalSince1970)"
+    }
+
+    func carbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry] {
         countRead()
         if failing || failingCarbs { throw Failure() }
-        return carbs.contains { $0 >= start && $0 <= end }
+        return carbs.filter { $0 >= start && $0 <= end }.sorted()
+            .map { SettingsTestCarbEntry(id: Self.carbEntryID($0), date: $0) }
     }
 
     func allBoluses(from start: Date, to end: Date) async throws -> [ISFTestBolus] {
@@ -207,21 +226,30 @@ extension FakeSettingsTestData: ISFTestReads {
     func fetchGlucose(from start: Date, to end: Date) async throws -> [BasalTestReading] {
         if failing { throw Failure() }
         if takesFailure(.glucose) { throw Failure() }
-        return readings.filter { $0.date >= start && $0.date <= end }.sorted { $0.date < $1.date }
+        return withArrows(readings.filter { $0.date >= start && $0.date <= end }.sorted { $0.date < $1.date })
     }
 
     /// Newest first.
     func fetchRecentGlucose(minutes: Int) async throws -> [BasalTestReading] {
         if failing { throw Failure() }
         let cutoff = Date().addingTimeInterval(-Double(minutes) * 60)
-        return readings.filter { $0.date > cutoff }.sorted { $0.date > $1.date }
+        return withArrows(readings.filter { $0.date > cutoff }.sorted { $0.date > $1.date })
+    }
+
+    /// The readings with the arrow each came with (`arrows`), as the provider reads them from the same row; one that
+    /// carries its own keeps it.
+    private func withArrows(_ readings: [BasalTestReading]) -> [BasalTestReading] {
+        readings.map { reading in
+            reading.direction != nil ? reading
+                : BasalTestReading(date: reading.date, glucose: reading.glucose, direction: arrow(at: reading.date))
+        }
     }
 
     /// The newest reading's arrow, nil when it came with none, as the provider reads it.
     func fetchNewestDirection() async throws -> BloodGlucose.Direction? {
         if failing { throw Failure() }
         guard let newest = readings.max(by: { $0.date < $1.date }) else { return nil }
-        return arrow(at: newest.date)
+        return newest.direction ?? arrow(at: newest.date)
     }
 
     /// The arrow that came with the reading at `date`, nil when it came with none.
@@ -266,7 +294,7 @@ extension FakeSettingsTestData: ISFTestReads {
         let earliest = date.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - ISFTest.Config.savedDateTolerance)
         guard let newest = readings.filter({ $0.date >= earliest && $0.date <= latest }).max(by: { $0.date < $1.date })
         else { return nil }
-        return ISFTestArrowReading(date: newest.date, direction: arrow(at: newest.date))
+        return ISFTestArrowReading(date: newest.date, direction: newest.direction ?? arrow(at: newest.date))
     }
 
     func fetchSuspendReading(startedAt: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading {
@@ -275,6 +303,10 @@ extension FakeSettingsTestData: ISFTestReads {
 
     func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date] {
         try await pumpInterruptions(from: start, to: end)
+    }
+
+    func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry] {
+        try await carbEntries(from: start, to: end)
     }
 
     func fetchDoseIOB(at now: Date) async throws -> Decimal? {
@@ -299,6 +331,52 @@ extension FakeSettingsTestData: BasalTestReads {
         if failing || failingBoluses { throw Failure() }
         return boluses.contains { $0.date >= start && $0.date <= end }
     }
+}
+
+// MARK: - Storage
+
+/// The app's file storage, except that a save to one of `failingSaves` is dropped, as `BaseFileStorage` drops one whose
+/// write throws (a full disk, say): logged, and nothing written.
+final class FailingSaveFileStorage: FileStorage {
+    private let base = BaseFileStorage()
+    let failingSaves: Set<String>
+
+    init(failingSaves: Set<String>) {
+        self.failingSaves = failingSaves
+    }
+
+    func save<Value: JSON>(_ value: Value, as name: String) {
+        guard !failingSaves.contains(name) else { return }
+        base.save(value, as: name)
+    }
+
+    func saveAsync<Value: JSON>(_ value: Value, as name: String) async {
+        guard !failingSaves.contains(name) else { return }
+        await base.saveAsync(value, as: name)
+    }
+
+    func retrieve<Value: JSON>(_ name: String, as type: Value.Type) -> Value? { base.retrieve(name, as: type) }
+    func retrieveAsync<Value: JSON>(_ name: String, as type: Value.Type) async -> Value? {
+        await base.retrieveAsync(name, as: type)
+    }
+
+    func retrieveRaw(_ name: String) -> RawJSON? { base.retrieveRaw(name) }
+    func retrieveRawAsync(_ name: String) async -> RawJSON? { await base.retrieveRawAsync(name) }
+    func append<Value: JSON>(_ newValue: Value, to name: String) { base.append(newValue, to: name) }
+    func append<Value: JSON>(_ newValues: [Value], to name: String) { base.append(newValues, to: name) }
+    func append<Value: JSON, T: Equatable>(_ newValue: Value, to name: String, uniqBy keyPath: KeyPath<Value, T>) {
+        base.append(newValue, to: name, uniqBy: keyPath)
+    }
+
+    func append<Value: JSON, T: Equatable>(_ newValues: [Value], to name: String, uniqBy keyPath: KeyPath<Value, T>) {
+        base.append(newValues, to: name, uniqBy: keyPath)
+    }
+
+    func remove(_ name: String) { base.remove(name) }
+    func rename(_ name: String, to newName: String) { base.rename(name, to: newName) }
+    func transaction(_ exec: (FileStorage) -> Void) { exec(self) }
+    func urlFor(file: String) -> URL? { base.urlFor(file: file) }
+    func parseOnFileSettingsToMgdL() -> Bool { base.parseOnFileSettingsToMgdL() }
 }
 
 // MARK: - Notifications
@@ -610,12 +688,14 @@ struct SettingsTestHarness {
 /// `beforeStart(storage)` to write state files, sets `settings.settings.dosingMode = mode`, registers `storage`,
 /// `settings` and `SilentBroadcaster` in a `Container`, then builds the service with `events: data` and a runtime whose
 /// `makeRunners` calls `runners(context, notifier)`. The context's `settingsManager` is `settings`, the same instance.
-/// The calling suite must carry `.settingsTestFiles` (the files on disk are shared), which this checks.
+/// The calling suite must carry `.settingsTestFiles` (the files on disk are shared), which this checks. `storage` is the
+/// app's own file storage unless a test passes another over the same files (`FailingSaveFileStorage`).
 func makeTestService(
     mode: DosingMode = .closed,
     existing: SettingsTestSession? = nil,
     data: FakeSettingsTestData = FakeSettingsTestData(),
     settings: FakeSettingsManager = FakeSettingsManager(),
+    storage: FileStorage = BaseFileStorage(),
     beforeStart: (FileStorage) -> Void = { _ in },
     triggers: AnyPublisher<Void, Never> = Empty().eraseToAnyPublisher(),
     triggerDebounce: DispatchQueue.SchedulerTimeType.Stride = .milliseconds(50),
@@ -626,7 +706,6 @@ func makeTestService(
         SettingsTestFilesTrait.isHeld,
         "A suite that uses makeTestService must carry the .settingsTestFiles trait: the settings test files on disk are shared"
     )
-    let storage = BaseFileStorage()
     if !keepingFiles {
         SettingsTestFilesTrait.removeFiles(from: storage)
     }

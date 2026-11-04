@@ -27,8 +27,8 @@ extension ISFTest {
         let state: StateModel
         /// What the step waits for (`ISFTestEvaluator.levelingTitle`).
         let title: String
-        /// What the readings mean for the dose, shown once there is a recent reading.
-        let status: String
+        /// What the readings mean for the dose, shown once there is a recent reading. Nil when the title says it all.
+        let status: String?
 
         var body: some View {
             SettingsTestCard(title: title) {
@@ -46,7 +46,7 @@ extension ISFTest {
 
                 if state.doseGlucose == nil {
                     WaitingRow.recentReading
-                } else {
+                } else if let status {
                     Text(status)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

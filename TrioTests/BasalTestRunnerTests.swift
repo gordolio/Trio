@@ -39,8 +39,12 @@ private final class GatedBasalReads: BasalTestReads {
         try await base.fetchSuspendReading(from: start, to: end)
     }
 
-    func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
-        try await base.hasCarbEntries(from: start, to: end)
+    func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry] {
+        try await base.fetchCarbEntries(from: start, to: end)
+    }
+
+    func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date] {
+        try await base.fetchPumpInterruptions(from: start, to: end)
     }
 
     func hasManualBolus(from start: Date, to end: Date) async throws -> Bool {
@@ -86,6 +90,7 @@ private final class GatedBasalReads: BasalTestReads {
         data: FakeSettingsTestData,
         reads: BasalTestReads? = nil,
         settings: FakeSettingsManager = FakeSettingsManager(),
+        storage: FileStorage = BaseFileStorage(),
         beforeStart: ((FileStorage) -> Void)? = nil
     ) throws -> Rig {
         var built: BasalTestRunner?
@@ -94,6 +99,7 @@ private final class GatedBasalReads: BasalTestReads {
             existing: session,
             data: data,
             settings: settings,
+            storage: storage,
             beforeStart: { storage in
                 if let test { storage.save(test, as: Self.statePath) }
                 beforeStart?(storage)
@@ -189,11 +195,11 @@ private final class GatedBasalReads: BasalTestReads {
         )
     }
 
-    /// Readings of `glucose` every 15 minutes from the start of the fast to the planned end, or to now if that is sooner,
-    /// and one 30 seconds before it.
+    /// Readings of `glucose` every 5 minutes, as a CGM gives them, from the start of the fast to the planned end, or to now
+    /// if that is sooner, and one 30 seconds before it.
     private func readings(_ glucose: Int, for test: BasalTestState) -> [BasalTestReading] {
         let span = min(test.plannedDuration, Date().timeIntervalSince(test.startedAt))
-        return (stride(from: 0, to: span, by: 15 * minute) + [span - 30]).map {
+        return (stride(from: 0, to: span, by: 5 * minute) + [span - 30]).map {
             BasalTestReading(date: test.startedAt.addingTimeInterval($0), glucose: glucose)
         }
     }
@@ -938,5 +944,195 @@ private final class GatedBasalReads: BasalTestReads {
             BasalTestEvaluator.resultParagraphs(for: .inconclusive, test: unchecked, evaluation: nil).first
                 == "Trio couldn't read the pump history to check for a low, so it can't judge this fast."
         )
+    }
+
+    // MARK: - Adversarial review 2, part 1
+
+    /// What the Result says when the pump was suspended, alarmed or changed.
+    private static let pumpNote = "Your pump was suspended, gave an alarm, or had its site or reservoir changed during the test."
+
+    @Test(
+        "A pump suspended, alarmed or changed during the fast ends it with no verdict and the usual mode back, screen closed"
+    ) func pumpEventEndsTheFast() async throws {
+        let test = runningFast(startedAgo: 2 * hour)
+        let data = basalData()
+        // A 30-minute shower with the pump suspended.
+        data.pumpEvents = [test.startedAt.addingTimeInterval(30 * minute), test.startedAt.addingTimeInterval(hour)]
+        let rig = try makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.service.checkSessionAndRunners()
+        #expect(rig.service.lastEnd()?.cause == .pumpInterrupted)
+        #expect(rig.runner.state?.phase == .finished)
+        #expect(rig.runner.state?.outcome == .invalid)
+        #expect(rig.runner.state?.interference == Self.pumpNote)
+        #expect(rig.service.history(for: .basal).isEmpty)
+        #expect(rig.settings.settings.dosingMode == .closed)
+        #expect(rig.notifier.posted.last == .ended(.basal, sentence: Self.pumpNote, modeBack: true))
+    }
+
+    @Test("A fast that ran its hours with the pump suspended in it has no verdict") func pumpEventSpoilsACompletedFast(
+    ) async throws {
+        let (data, test) = completedFast()
+        data.pumpEvents = [test.startedAt.addingTimeInterval(2 * hour)]
+        // No session, so only the runner's own read can see it.
+        let rig = try makeRig(test: test, session: nil, data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.runner.state?.phase == .finished)
+        #expect(rig.runner.state?.outcome == .invalid)
+        #expect(rig.runner.state?.interference == Self.pumpNote)
+        #expect(rig.service.history(for: .basal).isEmpty)
+    }
+
+    @Test(
+        "Carbs logged during the fast but dated before Start end it; those already there at Start don't"
+    ) func backdatedCarbsEndTheFast() async throws {
+        let data = basalData()
+        // Dinner, logged before Start, eaten 3 hours before it: there at Start.
+        data.carbs = [Date().addingTimeInterval(-3 * hour)]
+        let rig = try makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+        #expect(await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4)) == nil)
+        await rig.service.checkSessionAndRunners()
+        #expect(rig.runner.state?.phase == .running)
+        #expect(rig.service.activeSession != nil)
+
+        // A snack eaten 30 minutes before Start, logged now with the time it was eaten.
+        data.carbs.append(Date().addingTimeInterval(-30 * minute))
+        await rig.service.checkSessionAndRunners()
+        #expect(rig.service.lastEnd()?.cause == .carbsLogged)
+        #expect(rig.runner.state?.phase == .finished)
+        #expect(rig.runner.state?.outcome == .invalid)
+        #expect(rig.runner.state?.interference == "Carbs were logged during the fast.")
+        #expect(rig.settings.settings.dosingMode == .closed)
+    }
+
+    @Test(
+        "A fast that ran its hours with carbs logged in it, dated before Start, has no verdict"
+    ) func backdatedCarbsSpoilACompletedFast() async throws {
+        let data = basalData()
+        let rig = try makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+        let startedAt = Date().addingTimeInterval(-(4 * hour + minute))
+        // There at Start.
+        data.carbs = [startedAt.addingTimeInterval(-3 * hour)]
+        try await beginThenChange(rig) { $0.startedAt = startedAt }
+        data.readings = readings(110, for: try #require(rig.runner.state))
+        // Logged during the fast, dated half an hour before Start.
+        data.carbs.append(startedAt.addingTimeInterval(-30 * minute))
+
+        await rig.runner.check()
+        #expect(rig.runner.state?.phase == .finished)
+        #expect(rig.runner.state?.outcome == .invalid)
+        #expect(rig.runner.state?.interference == "Carbs were logged during the fast.")
+        #expect(rig.service.history(for: .basal).isEmpty)
+    }
+
+    @Test(
+        "Start is refused, with nothing changed, when the session or the fast isn't saved",
+        arguments: ["trio/settings_test_session.json", "trio/basal_test_state.json"]
+    ) func beginRefusedWhenNotSaved(_ path: String) async throws {
+        let rig = try makeRig(
+            test: nil,
+            session: nil,
+            mode: .closed,
+            data: basalData(),
+            storage: FailingSaveFileStorage(failingSaves: [path])
+        )
+        defer { cleanUp(rig.storage) }
+
+        #expect(await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4)) == .notSaved)
+        #expect(rig.settings.settings.dosingMode == .closed)
+        #expect(rig.service.activeSession == nil)
+        #expect(rig.runner.state == nil)
+        #expect(!rig.runner.isRunning)
+    }
+
+    @Test(
+        "A fast with no session ID brings the usual mode back as it ends, with Basal Testing on and no session running"
+    ) func noSessionIDRestoresTheMode() async throws {
+        let (data, completed) = completedFast()
+        var test = completed
+        test.sessionID = nil
+        let rig = try makeRig(test: test, session: nil, mode: .basalTesting, data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.runner.state?.phase == .finished)
+        #expect(rig.settings.settings.dosingMode == .closed)
+    }
+
+    @Test(
+        "A note that says the usual dosing came back is worded from the mode in force once the fast ended"
+    ) func noteFollowsTheMode() async throws {
+        let test = runningFast(startedAgo: hour)
+        let sessionID = try #require(test.sessionID)
+        let kept = SettingsTestEnd(sessionID: sessionID, cause: .carbsUnreadable, date: Date().addingTimeInterval(-minute))
+        // The service ended the session, but Basal Testing is on: its write of the usual mode didn't last, say.
+        let rig = try makeRig(test: test, session: nil, mode: .basalTesting, data: basalData(), beforeStart: { storage in
+            storage.save(kept, as: "trio/settings_test_last_end.json")
+        })
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        let sentence =
+            "Trio couldn't read all its records of carbs, boluses and its own dosing, so it can't tell whether something interrupted this fast."
+        #expect(rig.runner.state?.phase == .finished)
+        #expect(rig.settings.settings.dosingMode == .basalTesting)
+        #expect(rig.runner.state?.interference == sentence)
+        #expect(rig.notifier.posted.last == .ended(.basal, sentence: sentence, modeBack: false))
+    }
+
+    @Test("Start keeps the carb entries there then, with the fast and its session") func beginKeepsTheCarbs() async throws {
+        let data = basalData()
+        let dinner = Date().addingTimeInterval(-3 * hour)
+        data.carbs = [dinner, Date().addingTimeInterval(-25 * hour)]
+        let rig = try makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+
+        #expect(await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4)) == nil)
+        let kept = [FakeSettingsTestData.carbEntryID(dinner)]
+        #expect(rig.runner.state?.carbsAtBegin == kept)
+        #expect(rig.service.activeSession?.carbsAtBegin == kept)
+        #expect(rig.service.savedSession()?.carbsAtBegin == kept)
+        await rig.runner.discard()
+    }
+
+    @Test("Start is refused, with nothing changed, when the carb entries can't be read") func beginRefusedWithoutCarbs(
+    ) async throws {
+        let data = basalData()
+        data.failingCarbs = true
+        let rig = try makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+
+        let refusal = await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4))
+        #expect(refusal == .dataUnreadable(FakeSettingsTestData.Failure().localizedDescription))
+        #expect(rig.settings.settings.dosingMode == .closed)
+        #expect(rig.service.activeSession == nil)
+        #expect(rig.runner.state == nil)
+    }
+
+    // MARK: - Adversarial review 2, part 2
+
+    @Test(
+        "A zero temp only Closed Loop asked for, landing just after Start, interrupts the fast: it isn't the fast's low"
+    ) func closedLoopZeroTempIsNoLow() async throws {
+        let test = runningFast(startedAgo: 2 * hour)
+        let data = basalData()
+        data.readings = readings(110, for: test)
+        // Closed Loop decided on a zero temp 20 seconds before Start, and the pump set it 3 seconds after.
+        data.temps = [BasalTestTempBasal(date: test.startedAt.addingTimeInterval(3), rate: 0, minutes: 30)]
+        data.zeroTempDeterminations = [test.startedAt.addingTimeInterval(-20)]
+        let rig = try makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.service.checkSessionAndRunners()
+        let finished = try #require(rig.runner.state)
+        #expect(finished.phase == .finished)
+        #expect(finished.outcome == .invalid)
+        #expect(finished.interference == BasalTestEvaluator.basalStoppedNote)
+        #expect(rig.service.history(for: .basal).isEmpty)
     }
 }

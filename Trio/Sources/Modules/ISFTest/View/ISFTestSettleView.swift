@@ -72,9 +72,12 @@ extension ISFTest {
                     if state.settleTimeUpQuestion != nil {
                         Button("Count It and Go On") { state.countAndGoOn() }
                             .buttonStyle(.testPrimary)
+                            .disabled(state.isEnding)
                     }
                     Button("Cancel Test") { showsCancelConfirmation = true }
                         .buttonStyle(.testSecondary)
+                        // Off while the test ends.
+                        .disabled(state.isEnding)
                         // On the button, so where the dialog shows as a popover it points at the button.
                         .confirmationDialog(
                             "Cancel the test?",

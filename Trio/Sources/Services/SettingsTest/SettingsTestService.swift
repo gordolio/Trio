@@ -21,12 +21,17 @@ protocol SettingsTestService: AnyObject {
     /// the moment the change takes effect. Restore actions only apply if the change is in effect.
     /// Returns nil, changing nothing, while another session is running: its way back must not be overwritten.
     /// `settles` marks an ISF session that settles before its bolus window starts (`setBolusWindowStart`).
+    /// `carbsAtBegin` are the carb entries Begin kept (`SettingsTestCarbRule.keptAtBegin`), nil for none.
     @discardableResult func begin(
         kind: SettingsTestKind,
         expiresIn: TimeInterval,
         restoring: [SettingsTestRestoreAction],
-        settles: Bool
+        settles: Bool,
+        carbsAtBegin: [String]?
     ) -> SettingsTestSession?
+
+    /// The session as saved, read back from disk: what a relaunch would find. Nil when none is.
+    func savedSession() -> SettingsTestSession?
 
     /// Puts everything back and clears the session, if the one running is of this kind. A test ends only its own
     /// session, so it can never undo another test's change.
@@ -53,13 +58,23 @@ protocol SettingsTestService: AnyObject {
 }
 
 extension SettingsTestService {
-    /// A session that doesn't settle.
+    /// A session that doesn't settle, with no carb entries kept.
     @discardableResult func begin(
         kind: SettingsTestKind,
         expiresIn: TimeInterval,
         restoring: [SettingsTestRestoreAction]
     ) -> SettingsTestSession? {
-        begin(kind: kind, expiresIn: expiresIn, restoring: restoring, settles: false)
+        begin(kind: kind, expiresIn: expiresIn, restoring: restoring, settles: false, carbsAtBegin: nil)
+    }
+
+    /// A session with no carb entries kept.
+    @discardableResult func begin(
+        kind: SettingsTestKind,
+        expiresIn: TimeInterval,
+        restoring: [SettingsTestRestoreAction],
+        settles: Bool
+    ) -> SettingsTestSession? {
+        begin(kind: kind, expiresIn: expiresIn, restoring: restoring, settles: settles, carbsAtBegin: nil)
     }
 }
 
@@ -73,8 +88,8 @@ protocol SettingsTestEvents {
     /// determination is dated by when it was due, or when it was made if that is missing. The pump history doesn't say
     /// who set a temp, so these are what tell Trio's suspend from a zero temp set on the pump.
     func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date]
-    /// Whether carbs were logged in the window.
-    func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool
+    /// The carb entries dated in the window, oldest first: carbs above 0, fat and protein's carb equivalents among them.
+    func carbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry]
     /// Every bolus in the window, oldest first, from any source (Treatments, the pump or the Watch), manual or flagged as
     /// an SMB: an ISF test runs in Basal Testing, which gives no SMBs, and the pump history can flag a manual bolus as an
     /// SMB when it writes the amount delivered, so the flag can't tell the test's boluses apart. A bolus recorded at 0 U,
@@ -169,17 +184,22 @@ final class CoreDataSettingsTestEvents: SettingsTestEvents {
             .sorted()
     }
 
-    func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
+    func carbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry] {
         let results = try await CoreDataStack.shared.fetchEntitiesAsync(
             ofType: CarbEntryStored.self,
             onContext: context,
             predicate: NSPredicate(format: "carbs > 0 AND date >= %@ AND date <= %@", start as NSDate, end as NSDate),
             key: "date",
-            ascending: false,
-            fetchLimit: 1
+            ascending: true
         )
         let context = context
-        return await context.perform { !((results as? [CarbEntryStored]) ?? []).isEmpty }
+        return await context.perform {
+            ((results as? [CarbEntryStored]) ?? []).compactMap { entry in
+                guard let date = entry.date else { return nil }
+                // A fetched entry's object ID is its permanent one, the same in every context and after a relaunch.
+                return SettingsTestCarbEntry(id: entry.objectID.uriRepresentation().absoluteString, date: date)
+            }
+        }
     }
 
     func allBoluses(from start: Date, to end: Date) async throws -> [ISFTestBolus] {
@@ -242,14 +262,70 @@ final class CoreDataSettingsTestEvents: SettingsTestEvents {
             .sorted { $0.date < $1.date }
     }
 
+    /// The CGM readings dated from `start` to `end` inclusive, oldest first: what the basal and ISF tests read glucose
+    /// from. A manual BG entry or a CGM calibration (`isManual`) is no CGM reading, has no arrow, and can sit 15 mg/dL off
+    /// the CGM, so it is left out of this and every other glucose read of the tests'. Not in `SettingsTestEvents`, because
+    /// the watchdog doesn't use it.
+    func glucose(from start: Date, to end: Date) async throws -> [BasalTestReading] {
+        try await glucose(
+            matching: NSPredicate(format: "date >= %@ AND date <= %@", start as NSDate, end as NSDate),
+            ascending: true
+        )
+    }
+
+    /// The CGM readings dated after `cutoff`, newest first.
+    func recentGlucose(since cutoff: Date) async throws -> [BasalTestReading] {
+        try await glucose(matching: NSPredicate(format: "date > %@", cutoff as NSDate), ascending: false)
+    }
+
+    /// CGM rows only: no manual BG entry or calibration (`glucose(from:to:)`).
+    private static let cgmOnly = NSPredicate(format: "isManual == NO")
+
+    private func glucose(matching predicate: NSPredicate, ascending: Bool) async throws -> [BasalTestReading] {
+        let results = try await CoreDataStack.shared.fetchEntitiesAsync(
+            ofType: GlucoseStored.self,
+            onContext: context,
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [Self.cgmOnly, predicate]),
+            key: "date",
+            ascending: ascending
+        )
+        let context = context
+        return await context.perform {
+            ((results as? [GlucoseStored]) ?? []).compactMap { stored in
+                guard let date = stored.date else { return nil }
+                return BasalTestReading(date: date, glucose: Int(stored.glucose), direction: stored.directionEnum)
+            }
+        }
+    }
+
+    /// The CGM's own arrow on the newest CGM reading dated after `cutoff`. Nil when there is none, or it gave none.
+    func newestDirection(since cutoff: Date) async throws -> BloodGlucose.Direction? {
+        let results = try await CoreDataStack.shared.fetchEntitiesAsync(
+            ofType: GlucoseStored.self,
+            onContext: context,
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                Self.cgmOnly,
+                NSPredicate(format: "date > %@", cutoff as NSDate)
+            ]),
+            key: "date",
+            ascending: false,
+            fetchLimit: 1
+        )
+        let context = context
+        return await context.perform { (results as? [GlucoseStored])?.first?.directionEnum }
+    }
+
     /// The newest CGM reading from `earliest` to `date` inclusive, with the CGM's own arrow for it: what the ISF test
-    /// reads the arrow at its bolus from. Nil when there is none. Not in `SettingsTestEvents`, because the watchdog
-    /// doesn't use it.
+    /// reads the arrow at its bolus from. Nil when there is none. A manual entry or calibration is left out
+    /// (`glucose(from:to:)`). Not in `SettingsTestEvents`, because the watchdog doesn't use it.
     func arrowReading(atOrBefore date: Date, since earliest: Date) async throws -> ISFTestArrowReading? {
         let results = try await CoreDataStack.shared.fetchEntitiesAsync(
             ofType: GlucoseStored.self,
             onContext: context,
-            predicate: NSPredicate(format: "date >= %@ AND date <= %@", earliest as NSDate, date as NSDate),
+            predicate: NSCompoundPredicate(andPredicateWithSubpredicates: [
+                Self.cgmOnly,
+                NSPredicate(format: "date >= %@ AND date <= %@", earliest as NSDate, date as NSDate)
+            ]),
             key: "date",
             ascending: false,
             fetchLimit: 1
@@ -361,20 +437,26 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         kind: SettingsTestKind,
         expiresIn: TimeInterval,
         restoring: [SettingsTestRestoreAction],
-        settles: Bool
+        settles: Bool,
+        carbsAtBegin: [String]?
     ) -> SettingsTestSession? {
         guard activeSession == nil else { return nil }
         let session = SettingsTestSession(
             kind: kind,
             expiresAt: Date().addingTimeInterval(expiresIn),
             restore: restoring,
-            settles: settles ? true : nil
+            settles: settles ? true : nil,
+            carbsAtBegin: carbsAtBegin
         )
         storage.save(session, as: SettingsTestStorage.sessionPath)
         sessionSubject.send(session)
         scheduleExpiryNotification(at: session.expiresAt, kind: kind)
         startWatchdog()
         return session
+    }
+
+    func savedSession() -> SettingsTestSession? {
+        storage.retrieve(SettingsTestStorage.sessionPath, as: SettingsTestSession.self)
     }
 
     func end(kind: SettingsTestKind) {
@@ -436,9 +518,10 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// mode the user picked since is theirs, unless Basal Testing suspended for a low before the change
     /// (`noteTestModeLeft`). That low is still this test's. Without one, the session ends as a mode change
     /// (`modeChanged`, dated at the change), so the runner reads it as an interrupted test. Either way the end puts the
-    /// usual mode back only if Basal Testing is on again by then (`SettingsTestRestoreAction.modeToRestore`). For an ISF
-    /// test, the pump suspended, alarmed or changed since Begin ends it too (`pumpInterrupted`), after a low and before
-    /// carbs.
+    /// usual mode back only if Basal Testing is on again by then (`SettingsTestRestoreAction.modeToRestore`). The pump
+    /// suspended, alarmed or changed since Begin ends a basal or an ISF test too (`pumpInterrupted`), after a low and
+    /// before carbs. Carbs are those dated from Begin on, and those dated in the day before it that weren't there at Begin
+    /// (`SettingsTestCarbRule`).
     ///
     /// An ISF test whose 4 hours from its bolus, and the grace after them, are over is ended too, with no reason kept,
     /// as on expiry: nothing spoiled it, so the runner finishes it as completed. Its session lasts until the latest the 4
@@ -477,7 +560,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         } else if case let .unexplained(stoppedAt) = suspend {
             debug(.settings, "SettingsTest: basal was stopped without Trio asking, ending the \(session.kind.rawValue) test")
             ending = SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt)
-        } else if session.kind == .isf, let interruptedAt = await pumpInterruption(of: session, until: now) {
+        } else if let interruptedAt = await pumpInterruption(of: session, until: now) {
             debug(.settings, "SettingsTest: the pump was suspended, alarmed or changed, ending the \(session.kind.rawValue) test")
             ending = SettingsTestEnd(sessionID: session.id, cause: .pumpInterrupted, date: interruptedAt)
         } else if session.kind == .basal || session.kind == .isf, let cause = await carbsEnding(of: session, until: now) {
@@ -528,11 +611,18 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
-    /// What carbs since `session` began say: they end it if any were logged, and also if they can't be read, so the
-    /// usual dosing comes back. Nil to keep going.
+    /// What carbs say about `session`: they end it if any were logged that spoil it (`SettingsTestCarbRule.spoil`), from
+    /// Begin on or dated before it and logged since, and also if they can't be read, so the usual dosing comes back. Nil
+    /// to keep going.
     private func carbsEnding(of session: SettingsTestSession, until end: Date) async -> SettingsTestEndCause? {
         do {
-            return try await events.hasCarbEntries(from: session.startedAt, to: end) ? .carbsLogged : nil
+            let entries = try await events.carbEntries(
+                from: SettingsTestCarbRule.readFrom(startedAt: session.startedAt, kept: session.carbsAtBegin),
+                to: end
+            )
+            return SettingsTestCarbRule.spoil(entries, startedAt: session.startedAt, kept: session.carbsAtBegin)
+                ? .carbsLogged
+                : nil
         } catch {
             warning(.settings, "SettingsTest: couldn't read carbs to watch the \(session.kind.rawValue) test", error: error)
             return .carbsUnreadable
@@ -610,7 +700,8 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// then the watchdog stops if nothing is running. In that order because a session past its deadline is ended whatever
     /// it finds, and ending it first would lose the low, which the runner would then report as an interrupted test; and a
     /// runner's check, started after them, reads the ending the service just kept (`lastEnd()`). The expiry check runs
-    /// even when the history can't be read, so the usual mode always comes back.
+    /// even when the history can't be read, so the usual mode always comes back. A tick starts the runners' checks before
+    /// this one too (`watchdogTick`), so a read here that never returns can't stop them.
     ///
     /// Nothing here waits for a runner. A runner's check that never returned (a stuck Core Data read, say) would
     /// otherwise stop every later check of the service, its expiry restore among them, for as long as Trio ran. Each
@@ -629,7 +720,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// Starts `runner`'s check without waiting for it, or asks the one going for one more run. After each run the watchdog
     /// stops if nothing is running, as at the end of `checkSession`, since a runner's check is what finishes its test.
     /// Nil for a runner the service doesn't hold.
-    private func checkInBackground(_ runner: SettingsTestRunner) -> Task<Void, Never>? {
+    @discardableResult private func checkInBackground(_ runner: SettingsTestRunner) -> Task<Void, Never>? {
         runnerChecks[ObjectIdentifier(runner)]?.request { [weak self, weak runner] in
             await runner?.check()
             await MainActor.run { self?.stopWatchdogIfIdle() }
@@ -637,12 +728,18 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     }
 
     /// What each tick of the watchdog and each change of the data a test reads does, on the main thread: the expiry
-    /// check first, then the checks without waiting for them (`checkSessionInBackground`). The expiry check needs only
-    /// the session and the clock, so a read that never returns, the service's own among them, can't hold back the
-    /// last-resort restore. A session the coalesced checks end meanwhile is gone by the time either looks again, so
-    /// running it twice ends nothing twice. Only at launch does the low come first (`init`). Internal, for tests.
+    /// check first, then each running runner's check, then the service's own, without waiting for either
+    /// (`checkSessionInBackground`). The expiry check needs only the session and the clock, so a read that never returns,
+    /// the service's own among them, can't hold back the last-resort restore. The runners' checks start here on their
+    /// own, not only after the service's reads, so a read of the service's that never returns can't stop them either; the
+    /// service's check asks each for one more run once its reads are done, so a runner still reads the ending it kept.
+    /// A session the coalesced checks end meanwhile is gone by the time either looks again, so running it twice ends
+    /// nothing twice. Only at launch does the low come first (`init`). Internal, for tests.
     func watchdogTick() {
         endIfExpired()
+        for runner in runners where runner.isRunning {
+            checkInBackground(runner)
+        }
         checkSessionInBackground()
     }
 

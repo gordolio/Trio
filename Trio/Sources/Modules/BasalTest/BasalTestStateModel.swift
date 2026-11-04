@@ -32,6 +32,9 @@ extension BasalTest {
         private(set) var trendDirection: BloodGlucose.Direction?
         /// The kind of settings test running, if any. Only one can run at a time.
         private(set) var activeSessionKind: SettingsTestKind?
+        /// The session running and the one the service last ended on its own, as the service last said (`showSession`).
+        /// Nil until the screen has read them.
+        private(set) var serviceSession: (activeID: UUID?, lastEndID: UUID?)?
         /// What the SMB row reads. Nil until the first read.
         private(set) var fastingSource: FastingSource?
         /// The basal schedule now, for the hours the Check screen says the fast will cover.
@@ -121,6 +124,13 @@ extension BasalTest {
         // MARK: - Readiness
 
         var currentGlucose: Int? { recentReadings.first?.glucose }
+
+        /// The glucose the fast starts from: the mean of the newest 3 readings, the same mean its end is read by
+        /// (`BasalTestEvaluator.endGlucose`). Nil without a reading 12 minutes old or newer, or with a CGM gap among them,
+        /// which holds Start up: a CGM that isn't reading can't watch the fast.
+        var startGlucose: Int? {
+            BasalTestEvaluator.endGlucose(from: Array(recentReadings.prefix(3)), endingAt: Date())
+        }
 
         var fastedLongEnough: Bool {
             guard let lastCarb else { return true }
@@ -594,13 +604,34 @@ extension BasalTest {
                 .store(in: &dataSubscriptions)
 
             // Right away, so the first frame doesn't show "No other test running" as passed.
-            activeSessionKind = testService.activeSession?.kind
+            showSession(testService.activeSession, lastEnd: testService.lastEnd())
             testService.sessionPublisher
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] session in self?.activeSessionKind = session?.kind }
+                .sink { [weak self] session in self?.showSession(session, lastEnd: self?.testService.lastEnd()) }
                 .store(in: &dataSubscriptions)
 
             Task { await refresh() }
+        }
+
+        /// Shows the service's session: the one running, and the one it last ended on its own (`lastEnd`), kept before it
+        /// sent its end, so a fast whose session ended shows as ending (`isEnding`).
+        func showSession(_ session: SettingsTestSession?, lastEnd: SettingsTestEnd?) {
+            activeSessionKind = session?.kind
+            serviceSession = (activeID: session?.id, lastEndID: lastEnd?.sessionID)
+        }
+
+        /// Whether the fast is ending, so its step takes neither End Now nor Discard (`SettingsTestModeRule.isEnding`): its
+        /// ending is saved, or its session no longer runs while its runner's finish is to come.
+        var isEnding: Bool {
+            guard let test else { return false }
+            return SettingsTestModeRule.isEnding(
+                hasPendingEnd: test.pendingEnd != nil,
+                isRunning: test.phase == .running,
+                testSessionID: test.sessionID,
+                session: serviceSession,
+                mode: currentMode,
+                previousMode: test.previousMode
+            )
         }
 
         /// Shows the runner's fast now, so the first frame is its step, and each change it publishes, on the main queue.
@@ -698,12 +729,16 @@ extension BasalTest {
 
         // MARK: - Start
 
+        /// What Start says without a recent glucose to start from: the ISF test's words for the same thing.
+        private var noRecentGlucoseMessage: String {
+            String(localized: "Trio has no recent glucose reading. Wait for your CGM's next reading, then try again.")
+        }
+
         func requestStart() {
             guard readyToStart else { return }
-            // The fast needs a glucose to start from, and no row blocks on it.
-            guard currentGlucose != nil else {
-                errorMessage =
-                    String(localized: "Trio has no glucose reading yet. Wait for your CGM's next reading, then try again.")
+            // The fast needs a recent glucose to start from (an app fact, as the devices are), and no row blocks on it.
+            guard startGlucose != nil else {
+                errorMessage = noRecentGlucoseMessage
                 return
             }
             showStartConfirmation = true
@@ -711,12 +746,21 @@ extension BasalTest {
 
         /// Start: the runner saves the fast, starts its session and switches to Basal Testing. Only when every check
         /// passes, Basal Testing being off among them, so the runner never records it as the usual mode, and with a
-        /// glucose to start from.
+        /// recent glucose to start from (`startGlucose`), none made up.
         @MainActor func confirmStart() {
             showStartConfirmation = false
-            guard readyToStart, let glucose = currentGlucose else { return }
-            if let error = runner?.begin(BasalTestBegin(glucose: glucose, iob: currentIOB, hours: selectedHours)) {
-                errorMessage = error.message
+            guard readyToStart else { return }
+            // The reading may have grown too old while the confirmation was up.
+            guard let glucose = startGlucose else {
+                errorMessage = noRecentGlucoseMessage
+                return
+            }
+            let begin = BasalTestBegin(glucose: glucose, iob: currentIOB, hours: selectedHours)
+            // Start reads the carb entries there now before it switches the mode.
+            Task { @MainActor in
+                if let error = await runner?.begin(begin) {
+                    errorMessage = error.message
+                }
             }
         }
 
@@ -729,6 +773,7 @@ extension BasalTest {
 
         /// End Now and See Result.
         func endEarly() async {
+            guard await MainActor.run(body: { !isEnding }) else { return }
             await runner?.endEarly()
         }
 
@@ -740,6 +785,7 @@ extension BasalTest {
 
         /// Stops without keeping a result.
         @MainActor func discard() {
+            guard !isEnding else { return }
             runner?.discard()
             Task { await refresh() }
         }

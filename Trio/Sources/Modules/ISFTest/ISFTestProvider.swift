@@ -116,19 +116,22 @@ extension ISFTest {
             Self.pumpDelivery(for: deviceManager.pumpManager?.status.basalDeliveryState)
         }
 
-        /// A pump's basal delivery state as the test reads it: scheduled basal, a temp basal running or changing, or no
-        /// basal going in (suspended, suspending, resuming, or not working). Nil when there is no state, and for an active
-        /// state dated in the distant past, which is how a pump that isn't available reports itself.
+        /// A pump's basal delivery state as the test reads it: scheduled basal, a temp basal running, one being set or
+        /// cancelled (which settling doesn't count as running: Basal Testing's own suspend for a low shows that way as the
+        /// pump enacts it), or no basal going in (suspended, suspending, resuming, or not working). Nil when there is no
+        /// state, and for an active state dated in the distant past, which is how a pump that isn't available reports
+        /// itself.
         static func pumpDelivery(for state: PumpManagerStatus.BasalDeliveryState?) -> ISFTestPumpDelivery? {
             switch state {
             case nil:
                 return nil
             case let .active(since):
                 return since == .distantPast ? nil : .delivering
-            case .cancelingTempBasal,
-                 .initiatingTempBasal,
-                 .tempBasal:
+            case .tempBasal:
                 return .tempBasal
+            case .cancelingTempBasal,
+                 .initiatingTempBasal:
+                return .tempBasalChanging
             case .pumpInoperable,
                  .resuming,
                  .suspended,
@@ -141,6 +144,11 @@ extension ISFTest {
         /// oldest first (`SettingsTestEvents.pumpInterruptions`).
         func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date] {
             try await events.pumpInterruptions(from: start, to: end)
+        }
+
+        /// When Trio's determinations in the window asked for a zero temp with time on it, oldest first.
+        func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date] {
+            try await events.zeroTempDeterminations(from: start, to: end)
         }
 
         /// Whether basal was stopped from Begin to `end`, and whether Trio asked for it in Basal Testing: a zero temp only
@@ -224,8 +232,8 @@ extension ISFTest {
             try await shared.fetchTempBasals(from: start, to: end)
         }
 
-        func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
-            try await shared.hasCarbEntries(from: start, to: end)
+        func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry] {
+            try await shared.fetchCarbEntries(from: start, to: end)
         }
     }
 }

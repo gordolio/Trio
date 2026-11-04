@@ -93,6 +93,15 @@ struct SettingsTestNotice: Equatable {
                 title: String(localized: "ISF Dose Ready"),
                 body: String(localized: "Your glucose rose from the tablets and leveled off. Tap to see your dose.")
             )
+        case .timeUp:
+            return SettingsTestNotice(
+                kind: .isf,
+                slot: .step,
+                title: String(localized: "ISF Test Waiting"),
+                body: String(
+                    localized: "Insulin on board is still over the line after an hour. Tap to count it and go on, or cancel."
+                )
+            )
         }
     }
 }

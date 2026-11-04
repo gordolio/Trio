@@ -15,6 +15,8 @@ extension BasalTest {
                 } footer: {
                     Button("Stop Test") { state.showStopOptions = true }
                         .buttonStyle(.testSecondary)
+                        // Off while the fast ends.
+                        .disabled(state.isEnding)
                 }
             }
             .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in

@@ -47,6 +47,35 @@ extension SettingsTest {
                     self?.refreshHistory()
                 }
                 .store(in: &lifetime)
+
+            // The session ends before the runner archives, so its end alone would leave the rows a test behind.
+            Self.testFinishes(
+                isf: testService.isfRunner?.statePublisher,
+                basal: testService.basalRunner?.statePublisher
+            )
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.refreshHistory() }
+            .store(in: &lifetime)
+        }
+
+        /// Each time a runner's test reaches `.finished`: the runner archives a verdict in the same step as that save, after
+        /// it ended the session, so the session's end alone comes before the history has it. Not for the test each runner
+        /// holds as this is subscribed, which `subscribe` reads already.
+        static func testFinishes(
+            isf: AnyPublisher<ISFTestRunnerState, Never>?,
+            basal: AnyPublisher<BasalTestState?, Never>?
+        ) -> AnyPublisher<Void, Never> {
+            /// The ID of the test a runner holds once it has finished, each new one once.
+            func finished(_ ids: AnyPublisher<UUID?, Never>) -> AnyPublisher<Void, Never> {
+                ids.removeDuplicates().dropFirst().compactMap { $0.map { _ in () } }.eraseToAnyPublisher()
+            }
+            let isfFinishes = isf.map { publisher in
+                finished(publisher.map { $0.test.flatMap { $0.phase == .finished ? $0.id : nil } }.eraseToAnyPublisher())
+            }
+            let basalFinishes = basal.map { publisher in
+                finished(publisher.map { $0.flatMap { $0.phase == .finished ? $0.id : nil } }.eraseToAnyPublisher())
+            }
+            return Publishers.MergeMany([isfFinishes, basalFinishes].compactMap { $0 }).eraseToAnyPublisher()
         }
 
         func refreshHistory() {

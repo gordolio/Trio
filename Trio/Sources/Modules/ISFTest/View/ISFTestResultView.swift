@@ -7,6 +7,8 @@ extension ISFTest {
     struct ResultView: View {
         @Bindable var state: StateModel
 
+        @Environment(\.openURL) private var openURL
+
         var body: some View {
             if let test = state.test, let outcome = test.outcome {
                 let noVerdict = state.noVerdict
@@ -41,9 +43,17 @@ extension ISFTest {
                     // action.
                     Button("Done") { state.acknowledgeResult() }
                         .buttonStyle(.testPrimary)
-                    if outcome == .tooHigh || outcome == .tooLow {
+                    switch state.resultAction {
+                    case .openSensitivities:
                         Button("Open Insulin Sensitivities") { state.showModal(for: .isfEditor) }
                             .buttonStyle(.testSecondary)
+                    case .reevaluateDynamicSettings:
+                        // With Logarithmic Dynamic ISF the profile ISF all but cancels out, so the docs' line for it, which
+                        // opens its desmos graphs.
+                        Button(Docs.reevaluateDynamicSettings) { openURL(Docs.logarithmicDesmosGraphs) }
+                            .buttonStyle(.testSecondary)
+                    case nil:
+                        EmptyView()
                     }
                 }
             }
@@ -190,7 +200,9 @@ extension ISFTest {
                     higherISF
             case .inconclusive,
                  .invalid:
-                return ISFTestEvaluator.noVerdictText(noVerdict, test: test)
+                let text = ISFTestEvaluator.noVerdictText(noVerdict, test: test)
+                // With Basal Testing still on, it doesn't say the usual dosing came back.
+                return ISFTestEvaluator.modeWorded(text, modeBack: !state.basalTestingLeftOn) ?? text
             }
         }
 
@@ -275,7 +287,8 @@ extension ISFTest {
             let end: Int
             /// The bolus, as the pump history holds it.
             let bolus: Decimal
-            /// The insulin on board at the bolus the test counted, signed. Nil when it counted none.
+            /// The insulin on board at the bolus the units counted, signed (`ISFTestEvaluator.shownIOBAtBolus`). Nil when
+            /// there is none to show.
             let onBoard: Decimal?
             /// The insulin Trio reported still on board at the end of the 4 hours, signed, which hadn't acted.
             let left: Decimal
@@ -305,7 +318,7 @@ extension ISFTest {
                 start: start,
                 end: end,
                 bolus: bolus,
-                onBoard: test.iobHandling == .count ? test.iobAtBolus : nil,
+                onBoard: ISFTestEvaluator.shownIOBAtBolus(of: test),
                 left: left,
                 units: units,
                 isf: test.isf,
@@ -315,7 +328,7 @@ extension ISFTest {
         }
 
         /// First Bolus − Left = Units: the insulin Trio reported still on board at the end of the 4 hours hadn't acted, so
-        /// it is left out. In a test that counted insulin on board, Bolus + On board − Left = Units (Bolus − Held back −
+        /// it is left out. With insulin on board at the bolus to show, Bolus + On board − Left = Units (Bolus − Held back −
         /// Left for negative insulin on board). On a line of its own, so the next fits a small phone. Then (Start − End) ÷
         /// Units = per unit, then (Per unit − ISF) ÷ ISF = how far off it is, with the ISF in blue because it is the
         /// user's setting, and under it the docs' smallest change, which is what decides the result. Insulin on board is
@@ -456,12 +469,9 @@ extension ISFTest {
             }
         }
 
-        /// The ISF schedule entries the hours from the bolus to the end covered, as saved at Start, e.g.
-        /// "12:00 AM–6:00 AM".
+        /// The ISF schedule entries the test covered, fixed at the bolus as its record keeps them, e.g. "12:00 AM–6:00 AM".
         private func coveredSpans(for test: ISFTestState) -> String? {
-            guard let bolusAt = test.bolusAt, let end = test.endedAt,
-                  let entries = ISFTestEvaluator.coveredEntries(test.coveredEntries ?? [], from: bolusAt, to: end)
-            else { return nil }
+            guard test.bolusAt != nil, let entries = test.coveredEntries, !entries.isEmpty else { return nil }
             return entries.map { SettingsTestSchedule.spanText(of: $0, inSentence: true) }.formatted(.list(type: .and))
         }
     }

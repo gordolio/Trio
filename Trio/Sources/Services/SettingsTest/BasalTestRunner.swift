@@ -11,7 +11,8 @@ protocol BasalTestReads: AnyObject {
     func isf(at date: Date) -> Decimal?
     func fetchGlucose(from start: Date, to end: Date) async throws -> [BasalTestReading]
     func fetchSuspendReading(from start: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading
-    func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool
+    func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry]
+    func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date]
     func hasManualBolus(from start: Date, to end: Date) async throws -> Bool
     func fetchSMBs(since start: Date, until end: Date) async throws -> [BasalTestSMB]
     func fetchTempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal]
@@ -32,7 +33,7 @@ protocol BasalTestRunning: AnyObject {
     /// The fast in progress or just finished, as saved. Nil with none.
     var state: BasalTestState? { get }
     var statePublisher: AnyPublisher<BasalTestState?, Never> { get }
-    @MainActor func begin(_ begin: BasalTestBegin) -> SettingsTestBeginError?
+    @MainActor func begin(_ begin: BasalTestBegin) async -> SettingsTestBeginError?
     /// End Now.
     func endEarly() async
     /// Discard.
@@ -101,14 +102,33 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
 
     // MARK: - Begin
 
-    /// Saves the fast from the settings in force now, starts its session and switches to Basal Testing. Refused, changing
-    /// nothing, while another test runs, this one included (a fast whose session was lost would otherwise hand the new one
-    /// Basal Testing as its usual mode), and while Basal Testing is on (kept as the usual mode, nothing would ever turn
-    /// it off). A new fast withdraws the last one's ended notice.
-    @MainActor func begin(_ begin: BasalTestBegin) -> SettingsTestBeginError? {
+    /// Why Begin is refused now, or nil: another test runs, this one included (a fast whose session was lost would
+    /// otherwise hand the new one Basal Testing as its usual mode), or Basal Testing is on (kept as the usual mode,
+    /// nothing would ever turn it off).
+    @MainActor private func beginRefusal() -> SettingsTestBeginError? {
         guard !isRunning, service?.activeSession == nil else { return .otherTestRunning }
         guard settingsManager.settings.dosingMode != .basalTesting else { return .basalTestingOn }
+        return nil
+    }
+
+    /// Saves the fast from the settings in force now, with the carb entries there now (`SettingsTestCarbRule`), starts
+    /// its session and switches to Basal Testing. Refused, changing nothing, for `beginRefusal`, when those entries can't
+    /// be read, and when the fast or its session didn't save: read back before the mode changes, so a relaunch always
+    /// finds the way back. A new fast withdraws the last one's ended notice.
+    @MainActor func begin(_ begin: BasalTestBegin) async -> SettingsTestBeginError? {
+        if let refusal = beginRefusal() { return refusal }
         let now = Date()
+        let carbsAtBegin: [String]
+        do {
+            carbsAtBegin = SettingsTestCarbRule.keptAtBegin(
+                try await reads.fetchCarbEntries(from: now.addingTimeInterval(-SettingsTestCarbRule.lookback), to: now)
+            )
+        } catch {
+            warning(.settings, "BasalTestRunner: couldn't read the carb entries there at Start", error: error)
+            return .dataUnreadable(error.localizedDescription)
+        }
+        // The read took time.
+        if let refusal = beginRefusal() { return refusal }
         let duration = TimeInterval(begin.hours) * 3600
         let previous = settingsManager.settings.dosingMode
         // What the test runs on, kept so the result and a later check of the schedule don't depend on what the settings say
@@ -125,6 +145,7 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
             scheduledBasal: snapshot.scheduledBasal,
             coveredEntries: snapshot.covered
         )
+        test.carbsAtBegin = carbsAtBegin
         let prior = subject.value
 
         // Saved first, so a crash from here on leaves a fast that can be finished: one that never reached Basal Testing
@@ -132,29 +153,44 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
         save(test)
         // Register the way back before changing anything, so an interruption can't leave the user in Basal Testing with
         // nobody watching it.
-        guard let session = service?.begin(
+        guard let service, let session = service.begin(
             kind: .basal,
             expiresIn: duration + BasalTest.Config.expiryGrace,
-            restoring: [.dosingMode(testMode: .basalTesting, previous: previous)]
+            restoring: [.dosingMode(testMode: .basalTesting, previous: previous)],
+            settles: false,
+            carbsAtBegin: carbsAtBegin
         ) else {
-            // What was there before stays.
-            if let shown = prior {
-                storage.save(shown, as: BasalTest.Config.statePath)
-            } else {
-                storage.remove(BasalTest.Config.statePath)
-            }
-            subject.send(prior)
+            putBack(prior)
             return .otherTestRunning
         }
         // Saved again with its session, before the mode changes, so the service's record of ending it for a low or for
         // carbs can be matched to this fast.
         test.sessionID = session.id
         save(test)
+        // Both read back before the mode changes: a write that didn't last would leave a relaunch in Basal Testing with
+        // no session, or with a fast that can't be matched to one.
+        let savedTest = storage.retrieve(BasalTest.Config.statePath, as: BasalTestState.self)
+        guard savedTest?.id == test.id, savedTest?.sessionID == session.id, service.savedSession()?.id == session.id else {
+            warning(.settings, "BasalTestRunner: the fast or its session didn't save, so it doesn't begin")
+            service.end(kind: .basal)
+            putBack(prior)
+            return .notSaved
+        }
         settingsManager.settings.dosingMode = .basalTesting
         // The notice of the fast before would open this one.
         notifier.withdraw(.basal, .ended)
         debug(.settings, "BasalTestRunner: began the fast, \(begin.hours) h")
         return nil
+    }
+
+    /// What was there before a Begin that didn't go ahead stays.
+    @MainActor private func putBack(_ prior: BasalTestState?) {
+        if let prior {
+            storage.save(prior, as: BasalTest.Config.statePath)
+        } else {
+            storage.remove(BasalTest.Config.statePath)
+        }
+        subject.send(prior)
     }
 
     // MARK: - Running
@@ -390,14 +426,17 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
 
         // Kept only if it is still the fast shown: a Discard or a new Begin while the history was read owns the saved state
         // now. One step on the main actor, so neither can come in between, and the notice goes with the save it reports.
-        let finished = current
+        let ended = current
         let archived = record
         let kept: Bool = await MainActor.run {
             isFinishing = false
             // Whether or not anything is posted: a fast begun before the update may have a notification waiting for its
             // planned end.
             notifier.withdrawLegacy()
-            guard let shown = state, shown.id == finished.id, shown.phase == .running else { return false }
+            guard let shown = state, shown.id == ended.id, shown.phase == .running else { return false }
+            // A note that says the usual dosing came back says so only when the mode in force now is it.
+            var finished = ended
+            finished.interference = BasalTestEvaluator.modeWorded(ended.interference, modeBack: modeIsBack(for: ended))
             save(finished)
             if let archived {
                 service?.archive(archived)
@@ -421,13 +460,17 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
             test: test,
             evaluation: BasalTestEvaluator.evaluation(of: test)
         )
-        let mode = settingsManager.settings.dosingMode
         return .ended(
             .basal,
             sentence: paragraphs.first
                 ?? String(localized: "Something changed during the fast, so the result can't be trusted. Try again."),
-            modeBack: mode == test.previousMode && test.previousMode != .basalTesting
+            modeBack: modeIsBack(for: test)
         )
+    }
+
+    /// Whether the mode in force now is the usual one the fast began from.
+    @MainActor private func modeIsBack(for test: BasalTestState) -> Bool {
+        settingsManager.settings.dosingMode == test.previousMode && test.previousMode != .basalTesting
     }
 
     /// How the fast ends, from what the pump history and Trio's determinations up to `end` say: see
@@ -448,14 +491,23 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
         return BasalTestEvaluator.finishing(reason: reason, at: end, suspend: suspend)
     }
 
-    /// What spoiled the fast, if anything: carbs, a bolus, or Trio dosing, which it doesn't in Basal Testing. Each record is
-    /// read on its own, so one that can't be read is logged without hiding what the others show; with nothing found, the
-    /// fast is left unchecked.
+    /// What spoiled the fast, if anything: carbs (from Start on, or dated before it and logged since,
+    /// `SettingsTestCarbRule`), the pump suspended, alarmed or changed, a bolus, or Trio dosing, which it doesn't in Basal
+    /// Testing. Each record is read on its own, so one that can't be read is logged without hiding what the others show;
+    /// with nothing found, the fast is left unchecked.
     private func wasInterrupted(_ test: BasalTestState, until end: Date) async -> BasalTestEvaluator.Interference {
         let start = test.startedAt
+        let kept = test.carbsAtBegin
         let reads = self.reads
         return await BasalTestEvaluator.firstInterference(BasalTestEvaluator.interferenceChecks(
-            hasCarbs: { try await reads.hasCarbEntries(from: start, to: end) },
+            hasCarbs: {
+                let entries = try await reads.fetchCarbEntries(
+                    from: SettingsTestCarbRule.readFrom(startedAt: start, kept: kept),
+                    to: end
+                )
+                return SettingsTestCarbRule.spoil(entries, startedAt: start, kept: kept)
+            },
+            pumpInterruptions: { try await reads.fetchPumpInterruptions(from: start, to: end) },
             hasManualBolus: { try await reads.hasManualBolus(from: start, to: end) },
             smbs: { try await reads.fetchSMBs(since: start, until: end) },
             temps: { try await reads.fetchTempBasals(from: start, to: end) },

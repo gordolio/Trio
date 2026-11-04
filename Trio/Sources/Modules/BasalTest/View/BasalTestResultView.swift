@@ -146,7 +146,10 @@ extension BasalTest {
         }
 
         private func paragraphs(for outcome: BasalTestOutcome, test: BasalTestState) -> [String] {
-            BasalTestEvaluator.resultParagraphs(for: outcome, test: test, evaluation: state.evaluation)
+            // With Basal Testing still on, they don't say the usual dosing came back.
+            let modeBack = !state.basalTestingLeftOn
+            return BasalTestEvaluator.resultParagraphs(for: outcome, test: test, evaluation: state.evaluation)
+                .map { BasalTestEvaluator.modeWorded($0, modeBack: modeBack) ?? $0 }
         }
 
         // MARK: - Chart

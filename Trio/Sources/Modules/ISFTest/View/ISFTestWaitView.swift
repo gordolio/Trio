@@ -17,6 +17,8 @@ extension ISFTest {
                 } footer: {
                     Button("End Test") { state.showStopOptions = true }
                         .buttonStyle(.testSecondary)
+                        // Off while the test ends.
+                        .disabled(state.isEnding)
                         // On the button, so where the dialog shows as a popover it points at the button.
                         .confirmationDialog("End the test?", isPresented: $state.showStopOptions, titleVisibility: .visible) {
                             Button("End Test", role: .destructive) { Task { await state.endEarly() } }
@@ -64,14 +66,14 @@ extension ISFTest {
             }
         }
 
-        /// "Bolus 2.24 U at 2:20 PM", or without the units when the pump recorded none, and, in a test that counts it,
-        /// "· 0.30 U on board counted" once it has been read.
+        /// "Bolus 2.24 U at 2:20 PM", or without the units when the pump recorded none, and the insulin on board at it the
+        /// units count (`ISFTestEvaluator.shownIOBAtBolus`), "· 0.30 U on board counted", once it has been read.
         private var bolusText: String? {
             guard let test = state.test, let bolusAt = test.bolusAt else { return nil }
             let time = bolusAt.formatted(date: .omitted, time: .shortened)
             let bolus = test.bolusUnits.map { String(localized: "Bolus \(state.formatUnits($0)) U at \(time)") }
                 ?? String(localized: "Bolus at \(time)")
-            guard test.iobHandling == .count, let iob = test.iobAtBolus else { return bolus }
+            guard let iob = ISFTestEvaluator.shownIOBAtBolus(of: test) else { return bolus }
             // The amount stays with its unit and "on board" stays together; the line can still break between the rest.
             let amount = SettingsTestFormat.keepTogether(state.formatSignedUnits(iob), unit: "U")
             let counted = String(localized: "\(amount) on board counted")

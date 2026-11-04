@@ -170,7 +170,9 @@ enum SettingsTestModeRule {
     /// Testing is still on and the test's session is lost, with no session running and no end of it kept by the service
     /// (`lastEndSessionID`), so nothing else will bring the usual mode back. A session that runs puts its own back (or,
     /// another test's, owns Basal Testing); one the service ended put it back then, or, once the user had picked a mode
-    /// of their own, left it theirs (`SettingsTestEndCause.modeChanged`). A test with no session never switched modes.
+    /// of their own, left it theirs (`SettingsTestEndCause.modeChanged`). A test with no session ID is one whose Begin
+    /// didn't save it with its session: only Begin turns Basal Testing on for a test, so with it on and no session
+    /// running, the usual mode comes back too.
     static func modeToRestore(
         mode: DosingMode,
         testSessionID: UUID?,
@@ -178,9 +180,73 @@ enum SettingsTestModeRule {
         lastEndSessionID: UUID?,
         previousMode: DosingMode
     ) -> DosingMode? {
-        guard let testSessionID, activeSessionID == nil, lastEndSessionID != testSessionID else { return nil }
+        guard activeSessionID == nil else { return nil }
+        if let testSessionID, lastEndSessionID == testSessionID { return nil }
         // The rule every end path uses: Basal Testing on, the usual mode comes back; any other mode is the user's.
         return SettingsTestRestoreAction.dosingMode(testMode: .basalTesting, previous: previousMode).modeToRestore(current: mode)
+    }
+
+    /// Whether a running test is ending, so its step takes none of its actions: its ending is saved (`hasPendingEnd`), or
+    /// its session no longer runs, ended by the service, at its expiry or by another test's, while its runner's finish is
+    /// still to come. Not a lost session that the runner's own end would put the usual mode back for (`modeToRestore`):
+    /// nothing else ends that test soon, and Cancel Test or End Test is the user's way back. `session` is nil while the
+    /// screen hasn't read the service's session, which then leaves only the saved ending to go by.
+    static func isEnding(
+        hasPendingEnd: Bool,
+        isRunning: Bool,
+        testSessionID: UUID?,
+        session: (activeID: UUID?, lastEndID: UUID?)?,
+        mode: DosingMode,
+        previousMode: DosingMode
+    ) -> Bool {
+        guard isRunning else { return false }
+        if hasPendingEnd { return true }
+        guard let session else { return false }
+        if let testSessionID, session.activeID == testSessionID { return false }
+        return modeToRestore(
+            mode: mode,
+            testSessionID: testSessionID,
+            activeSessionID: session.activeID,
+            lastEndSessionID: session.lastEndID,
+            previousMode: previousMode
+        ) == nil
+    }
+}
+
+/// A carb entry as the settings tests read it: which one it is, by its Core Data object ID, and when the carbs were
+/// eaten.
+struct SettingsTestCarbEntry: Equatable {
+    let id: String
+    let date: Date
+}
+
+/// Which carb entries spoil a running test. An entry is dated by when the carbs were eaten, and has no time it was
+/// logged, so one logged during the test with an earlier time ("15 minutes earlier", the time picker) can only be told
+/// from one that was there at Begin by the entries Begin kept (`keptAtBegin`).
+enum SettingsTestCarbRule {
+    /// How far before Begin the entries Begin keeps are dated, and so how far before it an entry logged during the test
+    /// can be dated and still end it.
+    static let lookback: TimeInterval = 24 * 3600
+
+    /// What Begin keeps: the IDs of the entries dated in the `lookback` up to it.
+    static func keptAtBegin(_ entries: [SettingsTestCarbEntry]) -> [String] {
+        entries.map(\.id).sorted()
+    }
+
+    /// Where a check reads carb entries from, for a test begun at `startedAt`: the `lookback` before it, or Begin itself
+    /// for a test that kept none (`kept` nil: saved before they were kept).
+    static func readFrom(startedAt: Date, kept: [String]?) -> Date {
+        kept == nil ? startedAt : startedAt.addingTimeInterval(-lookback)
+    }
+
+    /// Whether `entries`, read from `readFrom`, spoil a test begun at `startedAt`: any dated from Begin on, as before,
+    /// and any dated in the `lookback` before it that wasn't there at Begin (`kept`).
+    static func spoil(_ entries: [SettingsTestCarbEntry], startedAt: Date, kept: [String]?) -> Bool {
+        let there = Set(kept ?? [])
+        let earliest = startedAt.addingTimeInterval(-lookback)
+        return entries.contains { entry in
+            entry.date >= startedAt || (kept != nil && entry.date >= earliest && !there.contains(entry.id))
+        }
     }
 }
 
@@ -211,6 +277,10 @@ struct SettingsTestSession: JSON, Equatable, Identifiable {
     /// True for an ISF session begun with settling. Nil for other tests, and for an ISF session saved before settling
     /// was kept, whose bolus window starts at Start.
     var settles: Bool?
+    /// The carb entries there at Begin, dated in the day before it (`SettingsTestCarbRule.keptAtBegin`), so one logged
+    /// during the test with an earlier time ends it. Nil in a session saved before they were kept, and in one begun
+    /// without them, which reads carbs from Begin only.
+    var carbsAtBegin: [String]?
 
     /// Where the bolus window starts in effect: the end of settling once it is kept, nil while a session that settles
     /// still does, and Start for a session from before settling was kept.
@@ -236,8 +306,7 @@ enum SettingsTestEndCause: String, JSON, Equatable {
     /// The user picked another dosing mode during the test, with no low before it. The session's end put the usual mode
     /// back only if Basal Testing was on again by then (`SettingsTestEnd.modeRestored`).
     case modeChanged
-    /// The pump was suspended, gave an alarm, or had its site or reservoir changed during the test. An ISF test only for
-    /// now.
+    /// The pump was suspended, gave an alarm, or had its site or reservoir changed during the test.
     case pumpInterrupted
 }
 

@@ -857,6 +857,21 @@ import Testing
         #expect(reading([unasked, asked], askedAt: [1770]) == .suspended(at: testStart.addingTimeInterval(1800)))
     }
 
+    @Test(
+        "A zero temp only a determination from before the fast's first minute asked for is Closed Loop's, not the fast's low"
+    ) func closedLoopZeroTempAtStart() {
+        // Closed Loop decided on it 20 seconds before Start; the pump set it 3 seconds after.
+        let early = temp(0, minutes: 30, after: 3)
+        #expect(reading([early], askedAt: [-20]) == .unexplained(at: testStart.addingTimeInterval(3)))
+        // The ISF test's settle margin: a determination from a minute after Start on was made in Basal Testing.
+        #expect(ISFTest.Config.settleLoopMargin == 60)
+        let edge = temp(0, minutes: 30, after: 90)
+        #expect(reading([edge], askedAt: [60]) == .suspended(at: testStart.addingTimeInterval(90)))
+        #expect(reading([edge], askedAt: [59]) == .unexplained(at: testStart.addingTimeInterval(90)))
+        // Either one asking is enough, as long as one is from Basal Testing.
+        #expect(reading([edge], askedAt: [30, 80]) == .suspended(at: testStart.addingTimeInterval(90)))
+    }
+
     @Test("Without a zero temp in the fast there is no suspend, whatever Trio asked for") func noZeroTempNoReading() {
         #expect(reading([], askedAt: [1800]) == BasalTestEvaluator.SuspendReading.none)
         let others = [temp(0, minutes: 0, after: 1800), temp(0.4, minutes: 30, after: 1800), temp(0, minutes: 30, after: -60)]
@@ -970,6 +985,7 @@ import Testing
     ) -> [(name: String, read: () async throws -> String?)] {
         BasalTestEvaluator.interferenceChecks(
             hasCarbs: { false },
+            pumpInterruptions: { [] },
             hasManualBolus: { false },
             smbs: smbs,
             temps: temps,
@@ -1540,7 +1556,7 @@ import Testing
             modeChanges += 1
             recordWhenModeChanged = service.lastEnd()
         }
-        events.trioSuspends(at: session.startedAt)
+        events.basalTestingSuspends(at: session.startedAt, startedAt: session.startedAt)
         await service.endIfLowOrInterrupted()
         #expect(modeChanges == 1)
         #expect(recordWhenModeChanged?.sessionID == session.id)
@@ -2527,7 +2543,9 @@ import Testing
         #expect(lowService.lastEnd()?.cause == .low)
     }
 
-    @Test("A pump history that can't be read keeps an ISF test running; a basal test doesn't read it yet") func pumpHistoryUnread() async {
+    @Test(
+        "A pump history that can't be read keeps an ISF test running; the pump suspended, alarmed or changed ends a basal test too"
+    ) func pumpHistoryUnread() async {
         let events = FakeSettingsTestData()
         events.failingPumpEvents = true
         let session = runningSession()
@@ -2539,12 +2557,14 @@ import Testing
 
         let basalEvents = FakeSettingsTestData()
         let basal = runningSession(kind: .basal)
-        basalEvents.pumpEvents = [basal.startedAt.addingTimeInterval(600)]
-        let (basalService, _, basalStorage) = makeService(mode: .basalTesting, existing: basal, events: basalEvents)
+        let suspendedAt = basal.startedAt.addingTimeInterval(600)
+        basalEvents.pumpEvents = [suspendedAt]
+        let (basalService, basalSettings, basalStorage) = makeService(mode: .basalTesting, existing: basal, events: basalEvents)
         defer { cleanUp(basalStorage) }
         await basalService.endIfLowOrInterrupted()
-        #expect(basalService.activeSession?.id == basal.id)
-        #expect(basalService.lastEnd() == nil)
+        #expect(basalService.activeSession == nil)
+        #expect(basalSettings.settings.dosingMode == .closed)
+        #expect(basalService.lastEnd() == SettingsTestEnd(sessionID: basal.id, cause: .pumpInterrupted, date: suspendedAt))
     }
 
     @Test(
@@ -2562,7 +2582,8 @@ import Testing
         #expect(settings.settings.dosingMode == .basalTesting)
         #expect(service.lastEnd() == nil)
 
-        // A basal test has no settling, so for it the same zero temp is a low, as before.
+        // A basal test reads the same zero temp with the same margin (part 2, Q6): Closed Loop's, so not the fast's low.
+        // It wasn't Basal Testing's, so it stops the fast as basal stopped.
         let basalEvents = FakeSettingsTestData()
         let basal = runningSession(kind: .basal)
         basalEvents.temps = [BasalTestTempBasal(date: basal.startedAt.addingTimeInterval(10), rate: 0, minutes: 30)]
@@ -2570,7 +2591,7 @@ import Testing
         let (basalService, _, basalStorage) = makeService(mode: .basalTesting, existing: basal, events: basalEvents)
         defer { cleanUp(basalStorage) }
         await basalService.endIfLowOrInterrupted()
-        #expect(basalService.lastEnd()?.cause == .low)
+        #expect(basalService.lastEnd()?.cause == .basalStopped)
     }
 
     @Test("Without a suspend or carbs the basal test keeps running") func noSuspendLeavesSession() async {
@@ -2651,7 +2672,7 @@ import Testing
         defer { cleanUp(storage) }
 
         events.failingCarbs = true
-        events.trioSuspends(at: session.startedAt)
+        events.basalTestingSuspends(at: session.startedAt, startedAt: session.startedAt)
         await service.endIfLowOrInterrupted()
         #expect(service.lastEnd()?.cause == .low)
     }
@@ -2663,7 +2684,7 @@ import Testing
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
-        events.trioSuspends(at: session.startedAt)
+        events.basalTestingSuspends(at: session.startedAt, startedAt: session.startedAt)
         settings.settings.dosingMode = .closed
         #expect(service.noteTestModeLeft())
         await service.endIfLowOrInterrupted()
@@ -3035,6 +3056,72 @@ private final class FakeCalibrationModeService: CalibrationModeService {
 
 @Suite("Settings test events") struct SettingsTestEventsTests {
     @Test(
+        "Carb entries are read in the window with their object IDs, the same from any context; none of 0 g"
+    ) func carbEntriesWithIDs() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let writer = stack.newTaskContext()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let expected: [String] = try await writer.perform {
+            func entry(after seconds: TimeInterval, carbs: Double, fpu: Bool = false) -> CarbEntryStored {
+                let entry = CarbEntryStored(context: writer)
+                entry.id = UUID()
+                entry.date = start.addingTimeInterval(seconds)
+                entry.carbs = carbs
+                entry.isFPU = fpu
+                return entry
+            }
+            let meal = entry(after: 600, carbs: 20)
+            // Fat and protein's carb equivalents are carb entries too.
+            let equivalents = entry(after: 1200, carbs: 5, fpu: true)
+            _ = entry(after: 900, carbs: 0)
+            // Outside the window.
+            _ = entry(after: -60, carbs: 20)
+            _ = entry(after: 7200, carbs: 20)
+            try writer.save()
+            return [meal, equivalents].map { $0.objectID.uriRepresentation().absoluteString }
+        }
+
+        let end = start.addingTimeInterval(3600)
+        let entries = try await CoreDataSettingsTestEvents(context: stack.newTaskContext()).carbEntries(from: start, to: end)
+        #expect(entries.map(\.date) == [start.addingTimeInterval(600), start.addingTimeInterval(1200)])
+        #expect(entries.map(\.id) == expected)
+        // Read from another context, each is the same entry.
+        let again = try await CoreDataSettingsTestEvents(context: stack.newTaskContext()).carbEntries(from: start, to: end)
+        #expect(again == entries)
+    }
+
+    @Test(
+        "Carbs spoil a test from Begin on, and before it, back a day, only when they weren't there at Begin"
+    ) func carbRule() {
+        let begin = Date(timeIntervalSince1970: 1_000_000)
+        func entry(_ id: String, _ seconds: TimeInterval) -> SettingsTestCarbEntry {
+            SettingsTestCarbEntry(id: id, date: begin.addingTimeInterval(seconds))
+        }
+        let dinner = entry("dinner", -3 * 3600)
+        let kept = SettingsTestCarbRule.keptAtBegin([entry("lunch", -6 * 3600), dinner])
+        #expect(kept == ["dinner", "lunch"])
+        #expect(SettingsTestCarbRule.readFrom(startedAt: begin, kept: kept) == begin.addingTimeInterval(-24 * 3600))
+        func spoil(_ entries: [SettingsTestCarbEntry]) -> Bool {
+            SettingsTestCarbRule.spoil(entries, startedAt: begin, kept: kept)
+        }
+        #expect(!spoil([dinner]))
+        // Logged since Begin with the time it was eaten, before Begin.
+        #expect(spoil([dinner, entry("snack", -30 * 60)]))
+        // Dated from Begin on, as before.
+        #expect(spoil([entry("tea", 600)]))
+        #expect(spoil([entry("tea", 0)]))
+        // Dated from Begin on, it spoils the test even if it was there at Begin (fat and protein's, say).
+        #expect(SettingsTestCarbRule.spoil([entry("equivalents", 0)], startedAt: begin, kept: ["equivalents"]))
+        // More than a day before Begin.
+        #expect(!spoil([entry("yesterday", -25 * 3600)]))
+
+        // A test that kept none reads from Begin, as before.
+        #expect(SettingsTestCarbRule.readFrom(startedAt: begin, kept: nil) == begin)
+        #expect(!SettingsTestCarbRule.spoil([entry("snack", -30 * 60)], startedAt: begin, kept: nil))
+        #expect(SettingsTestCarbRule.spoil([entry("tea", 0)], startedAt: begin, kept: nil))
+    }
+
+    @Test(
         "Trio's determinations that asked for a zero temp with time on it, dated by when they were due"
     ) func zeroTempDeterminations() async throws {
         let stack = try await CoreDataStack.createForTests()
@@ -3176,6 +3263,39 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         let dates = try await CoreDataSettingsTestEvents(context: context)
             .pumpInterruptions(from: start, to: start.addingTimeInterval(3600))
         #expect(dates == [600, 900, 1200, 1500, 1800, 2100].map { start.addingTimeInterval($0) })
+    }
+
+    @Test(
+        "Manual BG entries and CGM calibrations are left out of every glucose, arrow and newest-direction read"
+    ) func manualReadingsLeftOut() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let context = stack.newTaskContext()
+        let start = Date().addingTimeInterval(-3600)
+        await context.perform {
+            func glucose(after seconds: TimeInterval, _ value: Int16, manual: Bool, direction: String? = "Flat") {
+                let stored = GlucoseStored(context: context)
+                stored.id = UUID()
+                stored.date = start.addingTimeInterval(seconds)
+                stored.glucose = value
+                stored.isManual = manual
+                stored.direction = manual ? nil : direction
+            }
+            glucose(after: 600, 112, manual: false)
+            glucose(after: 900, 113, manual: false)
+            glucose(after: 1200, 114, manual: false, direction: "SingleUp")
+            // A fingerstick entered with Home's "+", and a calibration, both stored as manual, with no arrow.
+            glucose(after: 1300, 128, manual: true)
+            glucose(after: 1320, 140, manual: true)
+            try? context.save()
+        }
+        let events = CoreDataSettingsTestEvents(context: stack.newTaskContext())
+        let cgm = [600, 900, 1200].map { start.addingTimeInterval($0) }
+        #expect(try await events.glucose(from: start, to: start.addingTimeInterval(3600)).map(\.date) == cgm)
+        #expect(try await events.recentGlucose(since: start).map(\.date) == cgm.reversed())
+        // The newest reading's arrow is the CGM's, not none from the fingerstick after it.
+        #expect(try await events.newestDirection(since: start) == .singleUp)
+        let arrow = try await events.arrowReading(atOrBefore: start.addingTimeInterval(1400), since: start)
+        #expect(arrow == ISFTestArrowReading(date: start.addingTimeInterval(1200), direction: .singleUp))
     }
 
     private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
