@@ -101,8 +101,8 @@ struct SettingsTestPageFooter<Primary: View>: View {
     }
 
     var body: some View {
-        // At accessibility sizes the page says why at the end of its content (`SettingsTestPageBlocker`): pinned here,
-        // its lines left a small phone's page almost no room.
+        // At accessibility sizes the page says why at the end of its content (`SettingsTestPageBlocker`), right above
+        // this footer, which ends the content at those sizes (`SettingsTestLayout.pinsFooter`).
         if let blocker, !dynamicTypeSize.isAccessibilitySize {
             SettingsTestPageBlocker.label(blocker)
         }
