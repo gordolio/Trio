@@ -68,8 +68,9 @@ struct ISFTestBegin: Equatable {
     var glucose: Int
     /// Insulin on board at Begin. Nil while Trio hasn't worked it out.
     var iob: Decimal?
-    /// How the test handles insulin on board over its line, as picked on the Check screen.
-    var iobChoice: ISFTestIOBHandling
+    /// How the test handles insulin on board over its line, as picked on the Check screen. Nil when the screen didn't
+    /// show the choice (its own `iobDecision` wasn't `.choice`): Begin then saves no handling, whatever it finds.
+    var iobChoice: ISFTestIOBHandling?
 }
 
 /// The tablets the Raise step counted, as the user took them.

@@ -1348,9 +1348,12 @@ private final class FakeISFScreenReads: ISFTestProvider {
     func fetchNewestDirection() async throws -> BloodGlucose.Direction? { data.trendDirection }
 }
 
-/// What the basal screen reads, as a test sets it, keeping when each week of SMBs was read from.
+/// What the basal screen reads, as a test sets it, keeping when each week of SMBs was read from. No SMBs or carbs on
+/// board samples unless a test sets them.
 private final class FakeBasalScreenReads: BasalTestProvider {
     var data: BasalTest.StateModel.ScreenData
+    var smbs: [BasalTestSMB] = []
+    var cobSamples: [BasalTestCOBSample] = []
     private let lock = NSLock()
     private var _smbReadsSince: [Date] = []
 
@@ -1373,10 +1376,10 @@ private final class FakeBasalScreenReads: BasalTestProvider {
 
     func fetchSMBs(since start: Date, until _: Date) async throws -> [BasalTestSMB] {
         lock.withLock { _smbReadsSince.append(start) }
-        return []
+        return smbs
     }
 
-    func fetchCOBSamples(since _: Date) async throws -> [BasalTestCOBSample] { [] }
+    func fetchCOBSamples(since _: Date) async throws -> [BasalTestCOBSample] { cobSamples }
 }
 
 /// Holds the first call of a read until `release`, then gives `first` for it; every later call gives `later` at once.
@@ -1719,14 +1722,15 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
         #expect(runner.begins.isEmpty)
         #expect(state.errorMessage == nil)
 
-        // From the usual mode it is, with the glucose the dose is worked out from and the choice made. Begin reads, so the
-        // screen waits for it.
+        // From the usual mode it is, with the glucose the dose is worked out from. No insulin on board page applies (no
+        // dose is worked out without the settings), so a pick kept from before isn't sent. Begin reads, so the screen
+        // waits for it.
         settings.settings.dosingMode = .closed
         state.iobChoice = .count
         #expect(state.readyToStart)
         state.confirmStart()
         #expect(await eventuallyOnMain { runner.begins.count == 1 })
-        #expect(runner.begins == [ISFTestBegin(glucose: 180, iob: 0, iobChoice: .count)])
+        #expect(runner.begins == [ISFTestBegin(glucose: 180, iob: 0, iobChoice: nil)])
         #expect(state.errorMessage == nil)
 
         // The runner's refusal is said.
@@ -1970,13 +1974,21 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
         state.selectedHours = 6
         state.nextCheckPage()
         #expect(state.shownCheckPage == .ready)
-        // The end is a clock time from now: either side of a minute boundary the summary is read across.
-        let before = Date()
-        let summary = state.readySummary
-        let ends = [before, Date()].map { $0.addingTimeInterval(6 * 3600).formatted(date: .omitted, time: .shortened) }
-        #expect(summary.map(\.title) == ["Fast for", "Ends about"])
-        #expect(summary.first?.value == "6 hours")
-        #expect(summary.last.map { ends.contains($0.value) } == true)
+        // The end is a clock time from the minute the page shows, which its timeline passes on as the clock moves, so it
+        // keeps up while the page is open; How long's "This fast" reads the same window.
+        let shown = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        func end(_ start: Date) -> String {
+            start.addingTimeInterval(6 * 3600).formatted(date: .omitted, time: .shortened)
+        }
+        #expect(state.readySummary(now: shown) == [
+            .init(title: "Fast for", value: "6 hours"),
+            .init(title: "Ends about", value: end(shown))
+        ])
+        let later = shown.addingTimeInterval(60)
+        #expect(state.readySummary(now: later).last?.value == end(later))
+        #expect(end(later) != end(shown))
+        #expect(state.plannedWindow(startingAt: later).start == later)
+        #expect(state.plannedWindow(startingAt: later).end == later.addingTimeInterval(6 * 3600))
         state.requestStart()
         #expect(state.showStartConfirmation)
         state.confirmStart()
@@ -2096,6 +2108,116 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
             .init(title: "After settling", value: "Glucose tablets, then the dose"),
             .init(title: "Dose", value: "About \(SettingsTestFormat.keepTogether("1.00", unit: "U"))")
         ])
+    }
+
+    @Test(
+        "The basal SMB row sits with the hours on How long to fast, not on the checks, and counts the hours picked"
+    ) func basalSMBRowWithTheHours() async {
+        let reads = FakeBasalScreenReads(basalData(readings(110)))
+        // An SMB at 5 hours from now's time of day, yesterday, with no carbs on board: in a 6 h fast's hours, not a 4 h one's.
+        let now = Date()
+        reads.smbs = [BasalTestSMB(date: now.addingTimeInterval(-19 * 3600), units: Decimal(string: "0.3")!)]
+        reads.cobSamples = [BasalTestCOBSample(date: now.addingTimeInterval(-3 * 24 * 3600), cob: 0)]
+        let state = BasalTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.screenReads = reads
+        await state.refresh()
+        #expect(!state.informingChecks.map(\.id).contains("smbs"))
+        #expect(state.informingChecks.count == 4)
+        #expect(state.selectedHours == 4)
+        #expect(state.smbCheck?.value == "None")
+        state.selectedHours = 6
+        #expect(state.smbCheck?.value == "1 SMB, 0.30 U")
+    }
+
+    @Test("Start is off on the basal Ready page while a check fails, with its sentence") func basalReadyBlocked() async throws {
+        let runner = RecordingBasalTestRunner()
+        let state = basalPagesScreen(runner)
+        state.nextCheckPage()
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .ready)
+        state.settingsManager.settings.dosingMode = .basalTesting
+        #expect(state.shownCheckPage == .ready)
+        #expect(!state.readyToStart)
+        #expect(state.startBlocker == "Switch to your usual dosing mode first, so Trio can return you to it")
+        state.requestStart()
+        #expect(!state.showStartConfirmation)
+        state.confirmStart()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(runner.begins.isEmpty)
+    }
+
+    @Test(
+        "Insulin on board going over the line while the ISF Ready page shows brings its page up before Begin"
+    ) func isfIOBPageComesUpBehind() async {
+        let runner = RecordingISFTestRunner()
+        let state = await isfPagesScreen(runner)
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .ready)
+        // 0.5 U comes up, over the 0.08 U line: its page shows, with Next, so Begin can't go without the choice.
+        state.show(isfData(readings(180), iob: Decimal(string: "0.5")!))
+        #expect(state.checkPages == [.checks, .iob, .ready])
+        #expect(state.shownCheckPage == .iob)
+        state.iobChoice = .count
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .ready)
+        #expect(state.readySummary.last == .init(title: "Insulin on board", value: "Count It"))
+        // Shown once, it doesn't come up again when it stops applying and applies again.
+        state.show(isfData(readings(180)))
+        state.show(isfData(readings(180), iob: Decimal(string: "0.5")!))
+        #expect(state.shownCheckPage == .ready)
+        state.requestStart()
+        state.confirmStart()
+        #expect(await eventuallyOnMain { runner.begins.count == 1 })
+        #expect(runner.begins == [ISFTestBegin(glucose: 180, iob: Decimal(string: "0.5")!, iobChoice: .count)])
+    }
+
+    @Test(
+        "Insulin on board going past the whole dose while the ISF Ready page shows turns Begin off, with its sentence"
+    ) func isfReadyBlocked() async throws {
+        let runner = RecordingISFTestRunner()
+        let state = await isfPagesScreen(runner, iob: Decimal(string: "0.5")!)
+        state.nextCheckPage()
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .ready)
+        state.show(isfData(readings(180), iob: 2))
+        #expect(state.checkPages == [.checks, .ready])
+        #expect(state.shownCheckPage == .ready)
+        #expect(!state.readyToStart)
+        let dose = SettingsTestFormat.keepTogether("1.60", unit: "U")
+        #expect(state.startBlocker == "2.00 U is more than the test's whole dose (\(dose)). Begin once it has come down.")
+        state.requestStart()
+        #expect(!state.showStartConfirmation)
+        state.confirmStart()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(runner.begins.isEmpty)
+    }
+
+    @Test(
+        "A test that goes away while the screen is open starts the next one on the checks, basal and ISF"
+    ) func goneTestResetsPages(
+    ) async {
+        let basal = basalPagesScreen()
+        basal.nextCheckPage()
+        basal.nextCheckPage()
+        #expect(basal.shownCheckPage == .ready)
+        basal.apply(runningFast())
+        #expect(basal.step == .fast)
+        // Cancelled or cleared elsewhere: the runner publishes no test.
+        basal.apply(nil)
+        #expect(basal.step == .check)
+        #expect(basal.shownCheckPage == .checks)
+
+        let isf = await isfPagesScreen(iob: Decimal(string: "0.5")!)
+        isf.nextCheckPage()
+        isf.nextCheckPage()
+        #expect(isf.shownCheckPage == .ready)
+        isf.apply(ISFTestRunnerState(test: isfTest(.settling)))
+        #expect(isf.step == .settle)
+        isf.apply(ISFTestRunnerState())
+        #expect(isf.step == .check)
+        #expect(isf.shownCheckPage == .checks)
+        #expect(isf.seenCheckPages == [.checks])
     }
 
     // MARK: The other actions

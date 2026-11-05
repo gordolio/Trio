@@ -904,6 +904,53 @@ private func scheduleChanging(
         )])
     }
 
+    @Test(
+        "Insulin on board going over the line while Ready shows brings its page up before Begin; past the dose, Begin goes off"
+    ) func iobPageComesUpBehind() {
+        let state = checkScreen()
+        state.nextCheckPage()
+        state.nextCheckPage()
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .ready)
+        // 0.5 U comes up, over the 0.36 U line: its page shows, with Next, so Begin can't go without the choice.
+        state.show(screenData(readings(110), iob: dec("0.5")))
+        #expect(state.checkPages == [.checks, .tablets, .length, .iob, .ready])
+        #expect(state.shownCheckPage == .iob)
+        state.iobChoice = .count
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .ready)
+        #expect(state.readySummary.last == .init(title: "Insulin on board", value: "Count It"))
+        // Shown once, it doesn't come up again when it stops applying and applies again.
+        state.show(screenData(readings(110)))
+        state.show(screenData(readings(110), iob: dec("0.5")))
+        #expect(state.shownCheckPage == .ready)
+
+        // Past the whole dose (4 U) while Ready shows: no insulin on board page, and Begin goes off with its sentence.
+        state.show(screenData(readings(110), iob: dec("4.1")))
+        #expect(state.shownCheckPage == .ready)
+        #expect(!state.readyToStart)
+        #expect(state.failingChecks.map(\.id) == ["iobBlock"])
+        #expect(state.startBlocker == state.failingChecks.first?.detail)
+        state.requestStart()
+        #expect(!state.showStartConfirmation)
+    }
+
+    @Test("A test that goes away while the screen is open starts the next one on the checks") func goneTestResetsPages() {
+        let state = checkScreen()
+        state.show(screenData(readings(110), iob: dec("0.5")))
+        for _ in 0 ..< 4 {
+            state.nextCheckPage()
+        }
+        #expect(state.shownCheckPage == .ready)
+        state.apply(CarbRatioTestRunnerState(test: carbRatioTest(.settling)))
+        #expect(state.step == .settle)
+        // Cancelled or cleared elsewhere: the runner publishes no test.
+        state.apply(CarbRatioTestRunnerState())
+        #expect(state.step == .check)
+        #expect(state.shownCheckPage == .checks)
+        #expect(state.seenCheckPages == [.checks])
+    }
+
     // MARK: The other actions
 
     @Test("Count It and Go On only once settling's time is up; the other actions go to the runner") func actions() async {

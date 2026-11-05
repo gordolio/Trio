@@ -79,6 +79,8 @@ extension ISFTest {
         var iobChoice: ISFTestIOBHandling = .wait
         /// The Check step's page, as the user moved to it (`shownCheckPage` is the one shown).
         var checkPage: CheckPage = .checks
+        /// The Check step's pages shown since the checks came up, as Next and Back left or reached them. Screen state.
+        private(set) var seenCheckPages: Set<CheckPage> = [.checks]
         /// Where settling is, from its last check. Nil when the test isn't settling, or before the first check.
         private(set) var settling: ISFTestSettling?
         /// The boluses given while the test settles, oldest first (`ISFTestEvaluator.settlingBoluses`).
@@ -669,9 +671,11 @@ extension ISFTest {
         }
 
         /// The page shown: the one the user moved to while it applies, otherwise the one before it that does
-        /// (`SettingsTestPageFlow.shown`), so the insulin on board page that stops applying hands over to the checks.
+        /// (`SettingsTestPageFlow.shown`), so the insulin on board page that stops applying hands over to the checks. A
+        /// page before it that starts to apply and hasn't been shown comes first: insulin on board going over the line
+        /// while Ready shows brings up its page, so Begin can't go without the choice.
         var shownCheckPage: CheckPage {
-            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases)
+            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases, seen: seenCheckPages)
         }
 
         /// "2 of 3", for the page's heading.
@@ -685,14 +689,25 @@ extension ISFTest {
 
         /// Next: the page after the one shown, while every check passes.
         func nextCheckPage() {
-            guard canGoOn, let next = SettingsTestPageFlow.page(after: shownCheckPage, in: checkPages) else { return }
+            let shown = shownCheckPage
+            guard canGoOn, let next = SettingsTestPageFlow.page(after: shown, in: checkPages) else { return }
+            seenCheckPages.formUnion([shown, next])
             checkPage = next
         }
 
         /// Back: the page before the one shown, the insulin on board page skipped when it doesn't apply.
         func previousCheckPage() {
-            guard let previous = SettingsTestPageFlow.page(before: shownCheckPage, in: checkPages) else { return }
+            let shown = shownCheckPage
+            guard let previous = SettingsTestPageFlow.page(before: shown, in: checkPages) else { return }
+            seenCheckPages.formUnion([shown, previous])
             checkPage = previous
+        }
+
+        /// Cancel, Done, or a test that goes away while the screen is open: the next start begins on the checks, with no
+        /// page shown yet.
+        private func resetCheckPages() {
+            checkPage = .checks
+            seenCheckPages = [.checks]
         }
 
         /// One line of the Ready page's summary.
@@ -1342,6 +1357,10 @@ extension ISFTest {
         /// Shows what the runner publishes: the test, settling's last check, and insulin on board for a counted dose. The
         /// only place these change.
         func apply(_ runnerState: ISFTestRunnerState) {
+            // Gone, however it went (Cancel or Done here or elsewhere): the next start begins on the checks.
+            if test != nil, runnerState.test == nil {
+                resetCheckPages()
+            }
             test = runnerState.test
             settling = runnerState.settling?.decision
             settlingBoluses = runnerState.settling?.boluses ?? []
@@ -1469,7 +1488,12 @@ extension ISFTest {
                 errorMessage = noRecentGlucoseMessage
                 return
             }
-            let begin = ISFTestBegin(glucose: glucose, iob: currentIOB, iobChoice: iobChoice)
+            // The insulin on board choice goes only when its page applies: a pick kept from an earlier pass isn't one.
+            let begin = ISFTestBegin(
+                glucose: glucose,
+                iob: currentIOB,
+                iobChoice: checkPages.contains(.iob) ? iobChoice : nil
+            )
             // Begin reads the carb entries there now before it switches the mode.
             Task { @MainActor in
                 if let error = await runner?.begin(begin) {
@@ -1658,7 +1682,7 @@ extension ISFTest {
             guard !isEnding else { return }
             runner?.discard()
             iobChoice = .wait
-            checkPage = .checks
+            resetCheckPages()
             Task { await refresh() }
         }
 
@@ -1666,7 +1690,7 @@ extension ISFTest {
         @MainActor func acknowledgeResult() {
             runner?.acknowledgeResult()
             iobChoice = .wait
-            checkPage = .checks
+            resetCheckPages()
             Task { await refresh() }
         }
 

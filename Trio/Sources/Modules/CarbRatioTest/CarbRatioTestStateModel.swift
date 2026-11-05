@@ -116,6 +116,8 @@ extension CarbRatioTest {
         var iobChoice: ISFTestIOBHandling = .wait
         /// The Check step's page, as the user moved to it (`showsCheckPage` is the one shown).
         var checkPage: CheckPage = .checks
+        /// The Check step's pages shown since the checks came up, as Next and Back left or reached them. Screen state.
+        private(set) var seenCheckPages: Set<CheckPage> = [.checks]
 
         /// Where settling is, from its last check. Nil when the test isn't settling, or before the first check.
         private(set) var settling: ISFTestSettling?
@@ -861,9 +863,11 @@ extension CarbRatioTest {
         }
 
         /// The page shown: the one the user moved to while it applies, otherwise the one before it that does
-        /// (`SettingsTestPageFlow.shown`), so the insulin on board page that stops applying hands over to How long.
+        /// (`SettingsTestPageFlow.shown`), so the insulin on board page that stops applying hands over to How long. A page
+        /// before it that starts to apply and hasn't been shown comes first: insulin on board going over the line while
+        /// Ready shows brings up its page, so Begin can't go without the choice.
         var shownCheckPage: CheckPage {
-            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases)
+            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases, seen: seenCheckPages)
         }
 
         /// "2 of 5", for the page's heading.
@@ -877,7 +881,9 @@ extension CarbRatioTest {
 
         /// Next: the page after the one shown, while every check passes.
         func nextCheckPage() {
-            guard canGoOn, let next = SettingsTestPageFlow.page(after: shownCheckPage, in: checkPages) else { return }
+            let shown = shownCheckPage
+            guard canGoOn, let next = SettingsTestPageFlow.page(after: shown, in: checkPages) else { return }
+            seenCheckPages.formUnion([shown, next])
             checkPage = next
         }
 
@@ -919,8 +925,17 @@ extension CarbRatioTest {
 
         /// Back: the page before the one shown, the insulin on board page skipped when it doesn't apply.
         func previousCheckPage() {
-            guard let previous = SettingsTestPageFlow.page(before: shownCheckPage, in: checkPages) else { return }
+            let shown = shownCheckPage
+            guard let previous = SettingsTestPageFlow.page(before: shown, in: checkPages) else { return }
+            seenCheckPages.formUnion([shown, previous])
             checkPage = previous
+        }
+
+        /// Cancel, Done, or a test that goes away while the screen is open: the next start begins on the checks, with no
+        /// page shown yet.
+        private func resetCheckPages() {
+            checkPage = .checks
+            seenCheckPages = [.checks]
         }
 
         // MARK: - Dose
@@ -1437,6 +1452,10 @@ extension CarbRatioTest {
         /// Shows what the runner publishes: the test, settling's last check, and insulin on board for a counted dose. The
         /// only place these change.
         func apply(_ runnerState: CarbRatioTestRunnerState) {
+            // Gone, however it went (Cancel or Done here or elsewhere): the next start begins on the checks.
+            if test != nil, runnerState.test == nil {
+                resetCheckPages()
+            }
             test = runnerState.test
             settling = runnerState.settling?.decision
             settlingBoluses = runnerState.settling?.boluses ?? []
@@ -1742,7 +1761,7 @@ extension CarbRatioTest {
             guard !isEnding else { return }
             runner?.discard()
             iobChoice = .wait
-            checkPage = .checks
+            resetCheckPages()
             Task { await refresh() }
         }
 
@@ -1750,7 +1769,7 @@ extension CarbRatioTest {
         @MainActor func acknowledgeResult() {
             runner?.acknowledgeResult()
             iobChoice = .wait
-            checkPage = .checks
+            resetCheckPages()
             Task { await refresh() }
         }
     }

@@ -26,7 +26,7 @@ extension BasalTest {
             [
                 .init(
                     step: .check,
-                    detail: Text("The checks, then a page for how long to fast. Start turns on once each check passes.")
+                    detail: Text("The checks, then a page for how long to fast. Next turns on once each check passes.")
                 ),
                 .init(
                     step: .fast,
@@ -142,7 +142,8 @@ extension BasalTest {
 
     // MARK: - 2. How long
 
-    /// The hours picker, the hours a fast started now covers with the rates in them, and the docs' line on times of day.
+    /// The hours picker, the hours a fast started now covers with the rates in them, the SMBs Trio gave in those hours
+    /// over the past week, and the docs' line on times of day. The hours keep up with the clock while the page is open.
     private struct LengthPage: View {
         @Bindable var state: StateModel
 
@@ -155,12 +156,19 @@ extension BasalTest {
                     position: state.checkPagePosition(.length)
                 )
 
-                SettingsTestCard {
-                    hoursPicker
-                    plannedWindowText
-                        .font(.footnote)
-                        .fixedSize(horizontal: false, vertical: true)
-                    SettingsTestDocsQuote(text: Docs.testTimesOfDaySeparately)
+                TimelineView(.everyMinute) { context in
+                    SettingsTestCard {
+                        hoursPicker
+                        plannedWindowText(startingAt: context.date)
+                            .font(.footnote)
+                            .fixedSize(horizontal: false, vertical: true)
+                        // Counted over the hours picked, so it sits with them.
+                        if let smbs = state.smbCheck {
+                            Divider()
+                            SettingsTestValueRow(title: smbs.title, value: smbs.value ?? "", info: smbs.info)
+                        }
+                        SettingsTestDocsQuote(text: Docs.testTimesOfDaySeparately)
+                    }
                 }
             } footer: {
                 NextFooter(state: state)
@@ -184,8 +192,8 @@ extension BasalTest {
 
         /// "This fast: 2:20 AM – 6:20 AM · covers 12:00 AM–6:00 AM at 0.80 U/h", with the rates in blue because they
         /// are the user's own settings.
-        private var plannedWindowText: Text {
-            let window = state.plannedWindow
+        private func plannedWindowText(startingAt start: Date) -> Text {
+            let window = state.plannedWindow(startingAt: start)
             let times =
                 "\(window.start.formatted(date: .omitted, time: .shortened)) – \(window.end.formatted(date: .omitted, time: .shortened))"
             var text = Text("This fast: \(times)")
@@ -214,9 +222,12 @@ extension BasalTest {
                     position: state.checkPagePosition(.ready)
                 )
 
-                SettingsTestCard {
-                    ForEach(state.readySummary, id: \.title) { row in
-                        SettingsTestValueRow(title: row.title, value: row.value)
+                // The end is a clock time from now, so it keeps up while the page is open.
+                TimelineView(.everyMinute) { context in
+                    SettingsTestCard {
+                        ForEach(state.readySummary(now: context.date), id: \.title) { row in
+                            SettingsTestValueRow(title: row.title, value: row.value)
+                        }
                     }
                 }
 

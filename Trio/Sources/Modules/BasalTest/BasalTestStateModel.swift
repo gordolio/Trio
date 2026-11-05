@@ -195,13 +195,10 @@ extension BasalTest {
             [otherTestCheck, devicesCheck, foodCheck, adjustmentsCheck, pumpTempBasalCheck, modeCheck]
         }
 
-        /// Readings that go with the docs' words but set no rule, so they never hold up the start.
+        /// Readings that go with the docs' words but set no rule, so they never hold up the start. The SMBs in the fast's
+        /// hours (`smbCheck`) go with the hours picked, on the How long to fast page.
         var informingChecks: [Check] {
-            var rows = [glucoseCheck, trendCheck, iobCheck, cobCheck]
-            if let smbCheck {
-                rows.append(smbCheck)
-            }
-            return rows
+            [glucoseCheck, trendCheck, iobCheck, cobCheck]
         }
 
         var readyToStart: Bool {
@@ -220,9 +217,8 @@ extension BasalTest {
             return check.detail ?? check.title
         }
 
-        /// The hours a fast started now would cover, and the basal schedule entries in them.
-        var plannedWindow: (start: Date, end: Date, covered: [SettingsTestScheduleEntry]) {
-            let start = Date()
+        /// The hours a fast started at `start` (now, by default) would cover, and the basal schedule entries in them.
+        func plannedWindow(startingAt start: Date = Date()) -> (start: Date, end: Date, covered: [SettingsTestScheduleEntry]) {
             let duration = TimeInterval(selectedHours) * 3600
             let snapshot = BasalTestEvaluator.snapshot(of: basalSchedule, startingAt: start, for: duration)
             return (start, start.addingTimeInterval(duration), snapshot.covered ?? [])
@@ -578,19 +574,25 @@ extension BasalTest {
             checkPage = previous
         }
 
+        /// Cancel, Done, or a test that goes away while the screen is open: the next start begins on the checks.
+        private func resetCheckPages() {
+            checkPage = .checks
+        }
+
         /// One line of the Ready page's summary.
         struct SummaryRow: Equatable {
             let title: String
             let value: String
         }
 
-        /// The Ready page's summary of the pick: how long the fast is, and about when a fast started now ends.
-        var readySummary: [SummaryRow] {
+        /// The Ready page's summary of the pick: how long the fast is, and about when a fast started at `now` ends. The
+        /// page passes the minute it shows, so the end keeps up while it stays open.
+        func readySummary(now: Date = Date()) -> [SummaryRow] {
             [
                 SummaryRow(title: String(localized: "Fast for"), value: String(localized: "\(selectedHours) hours")),
                 SummaryRow(
                     title: String(localized: "Ends about"),
-                    value: plannedWindow.end.formatted(date: .omitted, time: .shortened)
+                    value: plannedWindow(startingAt: now).end.formatted(date: .omitted, time: .shortened)
                 )
             ]
         }
@@ -736,6 +738,10 @@ extension BasalTest {
         /// of SMBs read, which a running fast doesn't read; a screen opened on a finished one reads it in `refresh`.
         func apply(_ test: BasalTestState?) {
             let finishes = test?.phase == .finished && self.test?.id == test?.id && self.test?.phase == .running
+            // Gone, however it went (Cancel or Done here or elsewhere): the next start begins on the checks.
+            if self.test != nil, test == nil {
+                resetCheckPages()
+            }
             self.test = test
             if finishes {
                 Task { try? await loadFastingSource() }
@@ -888,14 +894,14 @@ extension BasalTest {
         @MainActor func discard() {
             guard !isEnding else { return }
             runner?.discard()
-            checkPage = .checks
+            resetCheckPages()
             Task { await refresh() }
         }
 
         /// Clears a finished result so the user can start over, on the Check step's first page.
         @MainActor func acknowledgeResult() {
             runner?.acknowledgeResult()
-            checkPage = .checks
+            resetCheckPages()
             Task { await refresh() }
         }
     }
