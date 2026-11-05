@@ -61,6 +61,9 @@ extension BasalTest {
         var selectedHours = 4
         /// The Check step's page, as the user moved to it (`shownCheckPage` is the one shown).
         var checkPage: CheckPage = .checks
+        /// While this screen's own Start runs: a fast the runner publishes and then takes back, as a Start that fails
+        /// does, isn't one cleared elsewhere, so the pages stay where they are (`apply`). Main actor only.
+        @ObservationIgnored private var beginInFlight = false
 
         var errorMessage: String?
         var showStartConfirmation = false
@@ -738,8 +741,9 @@ extension BasalTest {
         /// of SMBs read, which a running fast doesn't read; a screen opened on a finished one reads it in `refresh`.
         func apply(_ test: BasalTestState?) {
             let finishes = test?.phase == .finished && self.test?.id == test?.id && self.test?.phase == .running
-            // Gone, however it went (Cancel or Done here or elsewhere): the next start begins on the checks.
-            if self.test != nil, test == nil {
+            // Gone, however it went (Cancel or Done here or elsewhere): the next start begins on the checks. Not a fast
+            // this screen's own Start published and took back, which failed: its pages stay.
+            if self.test != nil, test == nil, !beginInFlight {
                 resetCheckPages()
             }
             self.test = test
@@ -863,11 +867,14 @@ extension BasalTest {
                 return
             }
             let begin = BasalTestBegin(glucose: glucose, iob: currentIOB, hours: selectedHours)
+            beginInFlight = true
             // Start reads the carb entries there now before it switches the mode.
             Task { @MainActor in
                 if let error = await runner?.begin(begin) {
                     errorMessage = error.message
                 }
+                // After what the runner published during Start, which reaches `apply` through the main queue.
+                DispatchQueue.main.async { [weak self] in self?.beginInFlight = false }
             }
         }
 

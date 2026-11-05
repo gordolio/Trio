@@ -79,6 +79,8 @@ private final class RecordingCarbRatioTestRunner: CarbRatioTestRunning {
     let subject = CurrentValueSubject<CarbRatioTestRunnerState, Never>(CarbRatioTestRunnerState())
     /// What Begin answers.
     var beginError: SettingsTestBeginError?
+    /// What Begin publishes and then takes back, putting back what it held, as a Begin that fails after saving does.
+    var publishesOnBegin: CarbRatioTestRunnerState?
     private(set) var begins: [CarbRatioTestBegin] = []
     /// The other actions, by name, in the order asked.
     @MainActor private(set) var actions: [String] = []
@@ -89,6 +91,11 @@ private final class RecordingCarbRatioTestRunner: CarbRatioTestRunning {
 
     @MainActor func begin(_ begin: CarbRatioTestBegin) async -> SettingsTestBeginError? {
         begins.append(begin)
+        if let published = publishesOnBegin {
+            let prior = subject.value
+            subject.send(published)
+            subject.send(prior)
+        }
         return beginError
     }
 
@@ -97,6 +104,20 @@ private final class RecordingCarbRatioTestRunner: CarbRatioTestRunning {
     @MainActor func discard() { actions.append("discard") }
     @MainActor func acknowledgeResult() { actions.append("acknowledgeResult") }
     @MainActor func check() async { checks += 1 }
+}
+
+private extension CarbRatioTest.StateModel {
+    /// Next, as the Check step does it: the page it goes to comes up on screen (`checkPageAppeared`).
+    func goNext() {
+        nextCheckPage()
+        checkPageAppeared(shownCheckPage)
+    }
+
+    /// Back, as the Check step does it.
+    func goBack() {
+        previousCheckPage()
+        checkPageAppeared(shownCheckPage)
+    }
 }
 
 /// What the carb ratio screen reads, as a test sets it.
@@ -408,6 +429,10 @@ private func scheduleChanging(
         state.wantedTabletCount = 8
         state.selectedLength = 3 * 3600
         state.iobChoice = .count
+        for _ in 0 ..< 3 {
+            state.goNext()
+        }
+        #expect(state.shownCheckPage == .ready)
         state.requestStart()
         #expect(state.showStartConfirmation)
         state.confirmStart()
@@ -424,9 +449,12 @@ private func scheduleChanging(
         )])
         #expect(state.errorMessage == nil)
 
-        // With insulin on board over the line, the page shows the choice, and Begin sends it.
+        // With insulin on board over the line, its page comes up with the choice before Begin can go, and Begin sends it.
         state.show(screenData(readings(110), iob: dec("0.5")))
         #expect(state.checkPages.contains(.iob))
+        state.checkPageAppeared(state.shownCheckPage)
+        state.goNext()
+        #expect(state.shownCheckPage == .ready)
         state.confirmStart()
         #expect(await eventuallyOnMain { runner.begins.count == 2 })
         #expect(runner.begins.last?.iobChoice == .count)
@@ -809,35 +837,35 @@ private func scheduleChanging(
         #expect(state.checkPages == [.checks, .tablets, .length, .ready])
         #expect(state.checkPagePosition(.tablets) == "2 of 4")
         // Back on the first page stays there.
-        state.previousCheckPage()
+        state.goBack()
         #expect(state.shownCheckPage == .checks)
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .tablets)
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .length)
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
         // Next on the last page stays there; Begin is its button.
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
-        state.previousCheckPage()
+        state.goBack()
         #expect(state.shownCheckPage == .length)
 
         // 0.5 U on board, over the 0.36 U line: the Insulin on board page comes after How long.
         state.show(screenData(readings(110), iob: dec("0.5")))
         #expect(state.checkPages == [.checks, .tablets, .length, .iob, .ready])
         #expect(state.checkPagePosition(.ready) == "5 of 5")
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .iob)
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
-        state.previousCheckPage()
+        state.goBack()
         #expect(state.shownCheckPage == .iob)
 
         // Back under the line while that page shows: it hands over to How long.
         state.show(screenData(readings(110), iob: 0))
         #expect(state.shownCheckPage == .length)
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
     }
 
@@ -849,23 +877,23 @@ private func scheduleChanging(
         state.screenReads = FakeCarbRatioScreenReads(screenData(readings(110)), settings: settings())
         state.settingsManager.settings.dosingMode = .basalTesting
         #expect(!state.canGoOn)
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .checks)
         state.settingsManager.settings.dosingMode = .closed
-        state.nextCheckPage()
-        state.nextCheckPage()
+        state.goNext()
+        state.goNext()
         #expect(state.shownCheckPage == .length)
         // Another test begins meanwhile: Next goes off there, with the check's sentence.
         state.showSession(SettingsTestSession(kind: .isf, expiresAt: Date().addingTimeInterval(3600), restore: []), lastEnd: nil)
         #expect(!state.canGoOn)
         #expect(state.startBlocker == "The Insulin Sensitivity test is still running. Finish it first.")
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .length)
         state.showSession(nil, lastEnd: nil)
 
         state.discard()
         #expect(state.shownCheckPage == .checks)
-        state.nextCheckPage()
+        state.goNext()
         state.acknowledgeResult()
         #expect(state.shownCheckPage == .checks)
     }
@@ -874,14 +902,14 @@ private func scheduleChanging(
         let runner = RecordingCarbRatioTestRunner()
         let state = checkScreen(runner)
         state.show(screenData(readings(110), iob: dec("0.5")))
-        state.nextCheckPage()
+        state.goNext()
         state.selectedBrand = .trueplus
         state.wantedTabletCount = 10
-        state.nextCheckPage()
+        state.goNext()
         state.selectedLength = 3 * 3600
-        state.nextCheckPage()
+        state.goNext()
         state.iobChoice = .count
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
         let grams = SettingsTestFormat.keepTogether("37.5", unit: "g")
         // 37.5 ÷ 10 = 3.75 U.
@@ -908,17 +936,23 @@ private func scheduleChanging(
         "Insulin on board going over the line while Ready shows brings its page up before Begin; past the dose, Begin goes off"
     ) func iobPageComesUpBehind() {
         let state = checkScreen()
-        state.nextCheckPage()
-        state.nextCheckPage()
-        state.nextCheckPage()
+        state.goNext()
+        state.goNext()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
         // 0.5 U comes up, over the 0.36 U line: its page shows, with Next, so Begin can't go without the choice.
         state.show(screenData(readings(110), iob: dec("0.5")))
         #expect(state.checkPages == [.checks, .tablets, .length, .iob, .ready])
         #expect(state.shownCheckPage == .iob)
+        #expect(!state.pagesAllowBegin)
+        #expect(state.beginRequest == nil)
+        // The page comes up on screen, and stays until Next.
+        state.checkPageAppeared(state.shownCheckPage)
+        #expect(state.shownCheckPage == .iob)
         state.iobChoice = .count
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
+        #expect(state.pagesAllowBegin)
         #expect(state.readySummary.last == .init(title: "Insulin on board", value: "Count It"))
         // Shown once, it doesn't come up again when it stops applying and applies again.
         state.show(screenData(readings(110)))
@@ -938,9 +972,11 @@ private func scheduleChanging(
     @Test("A test that goes away while the screen is open starts the next one on the checks") func goneTestResetsPages() {
         let state = checkScreen()
         state.show(screenData(readings(110), iob: dec("0.5")))
-        for _ in 0 ..< 4 {
-            state.nextCheckPage()
+        for _ in 0 ..< 3 {
+            state.goNext()
         }
+        state.iobChoice = .count
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
         state.apply(CarbRatioTestRunnerState(test: carbRatioTest(.settling)))
         #expect(state.step == .settle)
@@ -949,6 +985,79 @@ private func scheduleChanging(
         #expect(state.step == .check)
         #expect(state.shownCheckPage == .checks)
         #expect(state.seenCheckPages == [.checks])
+        // On the docs' way again, as Cancel and Done start it.
+        #expect(state.iobChoice == .wait)
+    }
+
+    @Test(
+        "A Begin confirmation left open while insulin on board's page comes up doesn't begin, or come back by itself"
+    ) func confirmationAcrossHandOver() async throws {
+        let runner = RecordingCarbRatioTestRunner()
+        let state = checkScreen(runner)
+        for _ in 0 ..< 3 {
+            state.goNext()
+        }
+        #expect(state.shownCheckPage == .ready)
+
+        // Begin asks to confirm; 0.5 U on board comes up before the answer. Confirming does nothing: its question
+        // hasn't been asked, and Ready isn't what shows.
+        state.requestStart()
+        #expect(state.showStartConfirmation)
+        state.show(screenData(readings(110), iob: dec("0.5")))
+        #expect(state.shownCheckPage == .iob)
+        state.confirmStart()
+        #expect(!state.showStartConfirmation)
+        #expect(state.errorMessage == nil)
+        // Nor can it be asked for again until Ready shows.
+        state.requestStart()
+        #expect(!state.showStartConfirmation)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(runner.begins.isEmpty)
+
+        // Back under the line, Begin asks again; over it once more, the page comes up on screen, which closes the
+        // confirmation, so it doesn't open again by itself when Ready comes back.
+        state.show(screenData(readings(110)))
+        #expect(state.shownCheckPage == .ready)
+        state.requestStart()
+        #expect(state.showStartConfirmation)
+        state.show(screenData(readings(110), iob: dec("0.5")))
+        state.checkPageAppeared(state.shownCheckPage)
+        #expect(state.checkPage == .iob)
+        #expect(!state.showStartConfirmation)
+        state.goNext()
+        #expect(state.shownCheckPage == .ready)
+        #expect(!state.showStartConfirmation)
+
+        // From Ready, with the question asked: Begin goes, with the docs' way picked.
+        state.requestStart()
+        state.confirmStart()
+        #expect(await eventuallyOnMain { runner.begins.count == 1 })
+        #expect(runner.begins.first?.iobChoice == .wait)
+    }
+
+    @Test("A Begin that fails, its test published and taken back, leaves the pages as they were") func failedBeginKeepsPages(
+    ) async {
+        let runner = RecordingCarbRatioTestRunner()
+        runner.publishesOnBegin = CarbRatioTestRunnerState(test: carbRatioTest(.settling))
+        runner.beginError = .notSaved
+        let state = checkScreen(runner)
+        state.follow(runner)
+        state.show(screenData(readings(110), iob: dec("0.5")))
+        for _ in 0 ..< 3 {
+            state.goNext()
+        }
+        state.iobChoice = .count
+        state.goNext()
+        #expect(state.shownCheckPage == .ready)
+        state.requestStart()
+        state.confirmStart()
+        #expect(await eventuallyOnMain { state.errorMessage == SettingsTestBeginError.notSaved.message })
+        // What the runner published reaches the screen through the main queue: let it.
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(state.step == .check)
+        #expect(state.shownCheckPage == .ready)
+        #expect(state.iobChoice == .count)
+        #expect(state.seenCheckPages == [.checks, .tablets, .length, .iob, .ready])
     }
 
     // MARK: The other actions
@@ -1008,8 +1117,8 @@ private func scheduleChanging(
         #expect(!state.carbRatioUnderMinimum(for: 3 * 3600))
         // The checks read the shortest length's hours: Next goes on, to the page that can clear it.
         #expect(state.canGoOn)
-        state.nextCheckPage()
-        state.nextCheckPage()
+        state.goNext()
+        state.goNext()
         #expect(state.shownCheckPage == .length)
         // How long reads the length picked: Next goes off, saying how to clear it.
         #expect(!state.canGoOn)
@@ -1020,7 +1129,7 @@ private func scheduleChanging(
         )
         state.selectedLength = 3 * 3600
         #expect(state.canGoOn)
-        state.nextCheckPage()
+        state.goNext()
         #expect(state.shownCheckPage == .ready)
         #expect(state.readyToStart)
         // Back to 4 h: Begin is held up on Ready too.

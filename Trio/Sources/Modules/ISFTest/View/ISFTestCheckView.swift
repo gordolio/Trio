@@ -8,15 +8,18 @@ extension ISFTest {
         @Bindable var state: StateModel
 
         var body: some View {
+            let page = state.shownCheckPage
             Group {
-                switch state.shownCheckPage {
+                switch page {
                 case .checks: ChecksPage(state: state)
                 case .iob: IOBPage(state: state)
                 case .ready: ReadyPage(state: state)
                 }
             }
+            // On screen now, so Begin knows its question was asked. Inside the page's identity, so each page tells it.
+            .onAppear { state.checkPageAppeared(page) }
             // A page of its own, scrolled to its top.
-            .id(state.shownCheckPage)
+            .id(page)
         }
 
         // MARK: - Steps
@@ -30,7 +33,7 @@ extension ISFTest {
                 .init(
                     step: .check,
                     detail: Text(
-                        "The checks, then a page for insulin on board when it's over the test's line. Begin turns on once each check passes."
+                        "The checks, then a page for insulin on board when it's over the test's line. Next turns on once each check passes."
                     )
                 ),
                 .init(

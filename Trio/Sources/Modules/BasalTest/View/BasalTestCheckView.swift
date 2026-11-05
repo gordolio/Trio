@@ -21,9 +21,12 @@ extension BasalTest {
 
         // MARK: - Steps
 
-        /// Every step, for the steps sheet, with the fast as long as the `hours` picked on this screen.
-        static func steps(hours: Int) -> [SettingsTestStepItem<Step>] {
-            [
+        /// Every step, for the steps sheet. The sheet opens from the checks, before the hours are picked, so the fast is
+        /// the range of hours to pick from.
+        static func steps() -> [SettingsTestStepItem<Step>] {
+            let shortest = Config.durationChoices.min() ?? 4
+            let longest = Config.durationChoices.max() ?? 6
+            return [
                 .init(
                     step: .check,
                     detail: Text("The checks, then a page for how long to fast. Next turns on once each check passes.")
@@ -31,7 +34,7 @@ extension BasalTest {
                 .init(
                     step: .fast,
                     detail: Text(
-                        "\(hours) hours in Basal Testing. Don't eat or bolus until it ends, unless you need to treat a low."
+                        "\(shortest) to \(longest) hours in Basal Testing, as long as you pick. Don't eat or bolus until it ends, unless you need to treat a low."
                     )
                 ),
                 .init(
@@ -81,7 +84,7 @@ extension BasalTest {
 
                 SettingsTestStepsButton(
                     title: String(localized: "How the basal test goes"),
-                    items: CheckView.steps(hours: state.selectedHours)
+                    items: CheckView.steps()
                 )
 
                 SettingsTestCard(title: String(localized: "Ready to start?")) {
