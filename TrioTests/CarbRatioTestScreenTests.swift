@@ -1222,6 +1222,26 @@ private func scheduleChanging(
     }
 
     @Test(
+        "The carbs-logged card counts down to the dose deadline when it comes before the meal's 15 minutes"
+    ) func carbsLoggedCardDoseDeadline() throws {
+        var test = carbRatioTest(.dosing, handling: nil)
+        test.carbsAt = Date().addingTimeInterval(-3 * minute)
+        test.carbs = 40
+        // Settling ended 88 minutes ago, so the 90-minute dose deadline is 2 minutes off, before the meal's 12.
+        test.settledAt = Date().addingTimeInterval(-88 * minute)
+        let state = doseStep(test, doseIOB: nil).state
+        state.show(screenData(readings(110)))
+        let shown = try #require(state.test)
+        #expect(shown.effectiveBolusDeadline == shown.doseDeadline)
+        let time = shown.doseDeadline.formatted(date: .omitted, time: .shortened)
+        #expect(
+            state.carbsLoggedCard?.detail
+                == "2 minutes left, until \(time). Enter only the bolus in Treatments: the carbs are in. Then take the tablets."
+        )
+        #expect(state.doseDeadlineText == "The test needs your bolus by \(time).")
+    }
+
+    @Test(
         "The carbs-logged card shows only with a dose due, never the formula's dose for a counted one"
     ) func carbsLoggedCard() throws {
         func logged(_ handling: ISFTestIOBHandling?, minutesAgo: Double = 3) -> CarbRatioTestState {
