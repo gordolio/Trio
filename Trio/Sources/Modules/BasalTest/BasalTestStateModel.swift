@@ -729,7 +729,7 @@ extension BasalTest {
                 try await loadFastingSource(reloadingWeek: reloadingWeek)
             } catch {
                 await MainActor.run {
-                    guard number > newestRefreshShown else { return }
+                    guard number >= newestRefreshShown else { return }
                     errorMessage = "Couldn't read your data: \(error.localizedDescription)"
                 }
             }

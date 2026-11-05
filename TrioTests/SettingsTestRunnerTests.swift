@@ -1469,6 +1469,26 @@ private final class HeldCarbsBasalScreenReads: BasalTestProvider {
     func fetchCOBSamples(since _: Date) async throws -> [BasalTestCOBSample] { [] }
 }
 
+/// The basal screen's reads, with the SMB read (what the Check screen's fasting source reads) failing.
+private final class FailingSMBBasalScreenReads: BasalTestProvider {
+    struct SMBReadFailed: Error {}
+    let data: BasalTest.StateModel.ScreenData
+
+    init(_ data: BasalTest.StateModel.ScreenData) { self.data = data }
+
+    func basalEntries() -> [SettingsTestScheduleEntry] { [] }
+    func fetchRecentGlucose(minutes _: Int) async throws -> [BasalTestReading] { data.readings }
+    func getCurrentIOB() -> Decimal { data.iob }
+    func getCurrentCOB() async throws -> Decimal { data.cob }
+    func lastCarbEntry(withinHours _: Int) async throws -> Date? { data.lastCarb }
+    func hasActiveAdjustment() async throws -> Bool { data.hasActiveAdjustment }
+    func hasPumpSetTempBasal() -> Bool { data.hasPumpSetTempBasal }
+    func hasCgmAndPump() -> Bool { data.hasDevices }
+    func fetchNewestDirection() async throws -> BloodGlucose.Direction? { data.trendDirection }
+    func fetchSMBs(since _: Date, until _: Date) async throws -> [BasalTestSMB] { throw SMBReadFailed() }
+    func fetchCOBSamples(since _: Date) async throws -> [BasalTestCOBSample] { [] }
+}
+
 /// `.settingsTestFiles`: the tests that refresh a screen give it a settings test service (`makeTestService`), whose
 /// history the ISF screen's basal row reads.
 @Suite(
@@ -2296,6 +2316,18 @@ private final class HeldCarbsBasalScreenReads: BasalTestProvider {
         await older
         #expect(state.lastCarb == snack)
         #expect(!state.fastedLongEnough)
+    }
+
+    @Test(
+        "A basal refresh whose SMB read fails shows the error, though its own reads were just shown"
+    ) func fastingSourceErrorShows(
+    ) async {
+        let state = BasalTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.screenReads = FailingSMBBasalScreenReads(basalData(readings(110)))
+
+        await state.refresh()
+        #expect(state.errorMessage != nil)
     }
 
     @Test(
