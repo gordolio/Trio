@@ -95,8 +95,8 @@ extension SettingsTest {
             }
         }
 
-        /// A locked row dims its icon and title, and keeps its status line at full strength, because that line says
-        /// why it is locked.
+        /// A row that can't be opened (a test being rebuilt) dims its icon and title, and keeps its status line at full
+        /// strength, because that line says why. A row whose test can't start while another runs still opens, undimmed.
         private func rowContent(for kind: SettingsTestKind, locked: Bool) -> some View {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: kind.icon)

@@ -18,6 +18,11 @@ extension BasalTest {
                     )
                 )
 
+                SettingsTestStepsButton(
+                    title: String(localized: "How the basal test goes"),
+                    items: Self.steps(hours: state.selectedHours)
+                )
+
                 SettingsTestCard(title: String(localized: "Ready to start?")) {
                     // A check that fails stays in view on its own; the ones that pass fold into one line.
                     ForEach(state.failingChecks) { check in
@@ -86,6 +91,28 @@ extension BasalTest {
                     "Trio switches to Basal Testing for \(state.selectedHours) hours and then returns to \(state.currentMode.displayName). Don't eat or bolus until it ends, unless you need to treat a low."
                 )
             }
+        }
+
+        // MARK: - Steps
+
+        /// Every step, for the steps sheet, with the fast as long as the `hours` picked on this screen.
+        static func steps(hours: Int) -> [SettingsTestStepItem<Step>] {
+            [
+                .init(
+                    step: .check,
+                    detail: Text("The checks on this screen. Start turns on once each one passes.")
+                ),
+                .init(
+                    step: .fast,
+                    detail: Text(
+                        "\(hours) hours in Basal Testing. Don't eat or bolus until it ends, unless you need to treat a low."
+                    )
+                ),
+                .init(
+                    step: .result,
+                    detail: Text("Whether glucose stayed steady, or which way your basal leans for the hours it covered.")
+                )
+            ]
         }
 
         // MARK: - Pieces

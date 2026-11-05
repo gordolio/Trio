@@ -45,8 +45,19 @@ extension ISFTest {
                         .buttonStyle(.testPrimary)
                     switch state.resultAction {
                     case .openSensitivities:
-                        Button("Open Insulin Sensitivities") { state.showModal(for: .isfEditor) }
-                            .buttonStyle(.testSecondary)
+                        // The hub opens this screen while another test runs; an ISF change now would throw that test off.
+                        if let running = state.otherRunningTest {
+                            Text(
+                                "Change your ISF once the \(running.title) test ends, so that test checks one setting at a time."
+                            )
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Button("Open Insulin Sensitivities") { state.showModal(for: .isfEditor) }
+                                .buttonStyle(.testSecondary)
+                        }
                     case .reevaluateDynamicSettings:
                         // With Logarithmic Dynamic ISF the profile ISF all but cancels out, so the docs' line for it, which
                         // opens its desmos graphs.
@@ -201,8 +212,8 @@ extension ISFTest {
             case .inconclusive,
                  .invalid:
                 let text = ISFTestEvaluator.noVerdictText(noVerdict, test: test)
-                // With Basal Testing still on, it doesn't say the usual dosing came back.
-                return ISFTestEvaluator.modeWorded(text, modeBack: !state.basalTestingLeftOn) ?? text
+                // With Basal Testing on, left on or another test's, it doesn't say the usual dosing is back.
+                return ISFTestEvaluator.modeWorded(text, modeBack: state.usualModeIsOn) ?? text
             }
         }
 

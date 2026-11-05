@@ -3361,7 +3361,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(SettingsTestKind.carbRatio.availability == .beingRebuilt)
     }
 
-    @Test("While one test runs, every other row is locked and the running test's own row is not") func locking() {
+    @Test("While one test runs, every other test can't start and the running test's own can be followed") func locking() {
         let state = SettingsTest.StateModel()
         for kind in SettingsTestKind.allCases {
             #expect(!state.isLocked(kind))
@@ -3377,7 +3377,9 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(state.isLocked(.carbRatio))
     }
 
-    @Test("Only an available test opens, and only while no other test runs") func screens() {
+    @Test(
+        "An available test opens even while another runs, so its steps can be read; its own Check blocks the start"
+    ) func screens() {
         let state = SettingsTest.StateModel()
         #expect(state.screen(for: .basal) == .basalTest)
         #expect(state.screen(for: .isf) == .isfTest)
@@ -3389,11 +3391,12 @@ private final class FakeCalibrationModeService: CalibrationModeService {
             restore: []
         )
         #expect(state.screen(for: .basal) == .basalTest)
-        #expect(state.screen(for: .isf) == nil)
+        #expect(state.screen(for: .isf) == .isfTest)
+        #expect(state.screen(for: .carbRatio) == nil)
 
         state.activeSession = SettingsTestSession(kind: .isf, expiresAt: Date().addingTimeInterval(3600), restore: [])
         #expect(state.screen(for: .isf) == .isfTest)
-        #expect(state.screen(for: .basal) == nil)
+        #expect(state.screen(for: .basal) == .basalTest)
     }
 
     // MARK: Sensitivity row warning

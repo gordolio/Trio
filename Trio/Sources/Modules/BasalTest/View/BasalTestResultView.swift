@@ -41,11 +41,29 @@ extension BasalTest {
                     Button("Done") { state.acknowledgeResult() }
                         .buttonStyle(.testPrimary)
                     if outcome == .rising || outcome == .falling {
-                        Button("Open Basal Rates") { state.showModal(for: .basalProfileEditor) }
-                            .buttonStyle(.testSecondary)
+                        // The hub opens this screen while another test runs; a basal change now would throw that test off.
+                        if let running = state.otherRunningTest {
+                            changeLaterNote(
+                                Text(
+                                    "Change your basal rates once the \(running.title) test ends, so that test checks one setting at a time."
+                                )
+                            )
+                        } else {
+                            Button("Open Basal Rates") { state.showModal(for: .basalProfileEditor) }
+                                .buttonStyle(.testSecondary)
+                        }
                     }
                 }
             }
+        }
+
+        /// In place of Open Basal Rates while another test runs: when to change the setting instead.
+        private func changeLaterNote(_ text: Text) -> some View {
+            text
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         // MARK: - Header
@@ -146,8 +164,8 @@ extension BasalTest {
         }
 
         private func paragraphs(for outcome: BasalTestOutcome, test: BasalTestState) -> [String] {
-            // With Basal Testing still on, they don't say the usual dosing came back.
-            let modeBack = !state.basalTestingLeftOn
+            // With Basal Testing on, left on or another test's, they don't say the usual dosing is back.
+            let modeBack = state.usualModeIsOn
             return BasalTestEvaluator.resultParagraphs(for: outcome, test: test, evaluation: state.evaluation)
                 .map { BasalTestEvaluator.modeWorded($0, modeBack: modeBack) ?? $0 }
         }

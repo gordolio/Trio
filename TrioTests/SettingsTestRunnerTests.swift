@@ -1772,6 +1772,108 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
         #expect(runner.begins.count == 1)
     }
 
+    /// The hub opens a test while another runs, so its steps can be read; its own Check is what keeps it from starting.
+    /// The running test has Basal Testing on, so the mode check fails too, but it must not say to switch modes: that
+    /// would end the running test. The footer names the running test instead.
+    @Test("While another test runs, each Check screen says so and doesn't begin") func checkBlocksWhileAnotherRuns() {
+        let isfSettings = FakeSettingsManager()
+        isfSettings.settings.dosingMode = .closed
+        let isfRunner = RecordingISFTestRunner()
+        let isf = ISFTest.StateModel()
+        isf.settingsManager = isfSettings
+        isf.runner = isfRunner
+        isf.show(isfData(readings(180)))
+        isf.iobChoice = .count
+        #expect(isf.readyToStart)
+
+        // The basal test switched Trio to Basal Testing as it began.
+        isfSettings.settings.dosingMode = .basalTesting
+        isf.showSession(
+            SettingsTestSession(kind: .basal, expiresAt: Date().addingTimeInterval(3600), restore: []),
+            lastEnd: nil
+        )
+        #expect(!isf.readyToStart)
+        #expect(isf.startBlocker == "The Basal Rates test is still running. Finish it first.")
+        #expect(isf.failingChecks.map(\.id) == ["otherTest", "mode"])
+        #expect(isf.failingChecks.last?.detail == "The Basal Rates test has Basal Testing on. It goes off when that test ends.")
+        #expect(isf.otherRunningTest == .basal)
+        #expect(!isf.usualModeIsOn)
+        isf.confirmStart()
+
+        // The other test's check blocks on its own too, e.g. once the mode was changed and its session hasn't ended yet.
+        isfSettings.settings.dosingMode = .closed
+        #expect(!isf.readyToStart)
+        #expect(isf.failingChecks.map(\.id) == ["otherTest"])
+        #expect(isf.usualModeIsOn)
+        isf.confirmStart()
+
+        // With no test running, Basal Testing left on still asks for the usual mode, as before.
+        isfSettings.settings.dosingMode = .basalTesting
+        isf.showSession(nil, lastEnd: nil)
+        #expect(isf.otherRunningTest == nil)
+        #expect(isf.startBlocker == "Switch to your usual dosing mode first, so Trio can return you to it")
+
+        // A session of its own kind isn't another test: the mode line keeps its way back.
+        isf.showSession(
+            SettingsTestSession(kind: .isf, expiresAt: Date().addingTimeInterval(3600), restore: []),
+            lastEnd: nil
+        )
+        #expect(isf.otherRunningTest == nil)
+        #expect(
+            isf.failingChecks.first { $0.id == "mode" }?.detail
+                == "Switch to your usual dosing mode first, so Trio can return you to it"
+        )
+
+        let basalSettings = FakeSettingsManager()
+        basalSettings.settings.dosingMode = .closed
+        let basalRunner = RecordingBasalTestRunner()
+        let basal = BasalTest.StateModel()
+        basal.settingsManager = basalSettings
+        basal.runner = basalRunner
+        basal.show(basalData(readings(110)))
+        #expect(basal.readyToStart)
+
+        basalSettings.settings.dosingMode = .basalTesting
+        basal.showSession(
+            SettingsTestSession(kind: .isf, expiresAt: Date().addingTimeInterval(3600), restore: []),
+            lastEnd: nil
+        )
+        #expect(!basal.readyToStart)
+        #expect(basal.startBlocker == "The Insulin Sensitivity test is still running. Finish it first.")
+        #expect(basal.failingChecks.map(\.id) == ["otherTest", "mode"])
+        #expect(
+            basal.failingChecks.last?.detail
+                == "The Insulin Sensitivity test has Basal Testing on. It goes off when that test ends."
+        )
+        #expect(basal.otherRunningTest == .isf)
+        #expect(!basal.usualModeIsOn)
+        basal.confirmStart()
+
+        basalSettings.settings.dosingMode = .closed
+        #expect(basal.failingChecks.map(\.id) == ["otherTest"])
+        basal.confirmStart()
+
+        basalSettings.settings.dosingMode = .basalTesting
+        basal.showSession(nil, lastEnd: nil)
+        #expect(basal.otherRunningTest == nil)
+        #expect(basal.startBlocker == "Switch to your usual dosing mode first, so Trio can return you to it")
+
+        basal.showSession(
+            SettingsTestSession(kind: .basal, expiresAt: Date().addingTimeInterval(3600), restore: []),
+            lastEnd: nil
+        )
+        #expect(basal.otherRunningTest == nil)
+
+        // Begin and Start refuse at their guard, before reading anything.
+        #expect(isfRunner.begins.isEmpty)
+        #expect(basalRunner.begins.isEmpty)
+    }
+
+    @Test("Each steps sheet lists every step of its test, in order") func stepsSheets() {
+        #expect(ISFTest.CheckView.steps(aim: "150 mg/dL").map(\.step) == ISFTest.Step.allCases)
+        #expect(BasalTest.CheckView.steps(hours: 4).map(\.step) == BasalTest.Step.allCases)
+    }
+
     // MARK: The other actions
 
     @Test("The ISF screen's own guards hold an action back, and the runner gets the rest") func isfActionGuards() {

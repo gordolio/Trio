@@ -240,6 +240,111 @@ struct SettingsTestStepBar<Step: SettingsTestStep>: View where Step.AllCases: Ra
     }
 }
 
+// MARK: - Steps
+
+/// One step of a test as its steps sheet lists it: the step bar's icon and title, and a line on what happens in it.
+struct SettingsTestStepItem<Step: SettingsTestStep>: Identifiable {
+    let step: Step
+    let detail: Text
+
+    var id: Step { step }
+}
+
+/// "See the steps" on a test's Check screen: opens the sheet that lists every step, whether or not the checks pass, so
+/// the whole test can be read before it can start.
+struct SettingsTestStepsButton<Step: SettingsTestStep>: View {
+    /// The sheet's title, e.g. "How the ISF test goes".
+    let title: String
+    let items: [SettingsTestStepItem<Step>]
+
+    @State private var isShowingSteps = false
+
+    var body: some View {
+        Button {
+            isShowingSteps = true
+        } label: {
+            Label("See the steps", systemImage: "list.bullet")
+                .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.borderless)
+        .frame(maxWidth: .infinity)
+        .accessibilityHint(Text("Shows each step of the test"))
+        .sheet(isPresented: $isShowingSteps) {
+            SettingsTestStepsSheet(title: title, items: items)
+        }
+    }
+}
+
+/// Every step of a test, in order, in the info sheet's chrome: the title heads the content, Done closes it, and it
+/// opens at half height.
+struct SettingsTestStepsSheet<Step: SettingsTestStep>: View {
+    let title: String
+    let items: [SettingsTestStepItem<Step>]
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(AppState.self) private var appState
+
+    @ScaledMetric(relativeTo: .subheadline) private var circle: CGFloat = 30
+
+    var body: some View {
+        NavigationStack {
+            // The sheet paints its own background, so the screen doesn't.
+            SettingsTestScreen(paintsBackground: false) {
+                // In the content, not the navigation bar, as the info sheet's title is, so it never meets Done.
+                Text(title)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .accessibilityAddTraits(.isHeader)
+
+                SettingsTestCard {
+                    ForEach(items) { item in
+                        row(for: item)
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        // As the info sheet's: opaque, the grouped background in light mode and Trio's gradient in dark mode.
+        .presentationBackground {
+            if colorScheme == .dark {
+                appState.trioBackgroundColor(for: colorScheme)
+            } else {
+                Color(uiColor: .systemGroupedBackground)
+            }
+        }
+    }
+
+    private func row(for item: SettingsTestStepItem<Step>) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: item.step.iconName)
+                .font(.subheadline)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: circle, height: circle)
+                .background(Color.accentColor.opacity(0.15), in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.step.title)
+                    .font(.subheadline.weight(.semibold))
+                item.detail
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
 // MARK: - Check row
 
 enum SettingsTestCheckState {

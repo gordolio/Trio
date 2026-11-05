@@ -241,7 +241,8 @@ extension ISFTest {
         /// Facts about the app that have to be true before the test starts, and insulin on board when it is more than the
         /// test's whole dose.
         var blockingChecks: [Check] {
-            var checks = [devicesCheck, pumpSuspendedCheck, adjustmentsCheck, pumpTempBasalCheck, modeCheck, otherTestCheck]
+            // Another test running comes first: its Basal Testing fails the mode check too, and the footer names the test.
+            var checks = [otherTestCheck, devicesCheck, pumpSuspendedCheck, adjustmentsCheck, pumpTempBasalCheck, modeCheck]
             // Read, carbs on board are a docs rule that holds Begin up; not read yet, the row informs instead.
             if let cobCheck {
                 checks.append(cobCheck)
@@ -424,9 +425,7 @@ extension ISFTest {
             Check(
                 id: "mode",
                 title: String(localized: "Basal Testing is off"),
-                detail: modeAvailable
-                    ? String(localized: "\(currentMode.displayName) now. Trio returns to it after.")
-                    : String(localized: "Switch to your usual dosing mode first, so Trio can return you to it"),
+                detail: modeDetail,
                 state: modeAvailable ? .passed : .failed,
                 info: SettingsTestInfo(
                     title: String(localized: "Basal Testing is off"),
@@ -436,6 +435,25 @@ extension ISFTest {
                 )
             )
         }
+
+        /// Under the mode check. While another test runs, Basal Testing is that test's, so the line names it and says nothing
+        /// about switching modes: a switch would end it.
+        private var modeDetail: String {
+            if modeAvailable { return String(localized: "\(currentMode.displayName) now. Trio returns to it after.") }
+            if let running = otherRunningTest {
+                return String(localized: "The \(running.title) test has Basal Testing on. It goes off when that test ends.")
+            }
+            return String(localized: "Switch to your usual dosing mode first, so Trio can return you to it")
+        }
+
+        /// The other settings test running now, or nil. The hub opens this screen while one does, so its steps can be read.
+        var otherRunningTest: SettingsTestKind? {
+            activeSessionKind.flatMap { $0 == .isf ? nil : $0 }
+        }
+
+        /// Whether the usual dosing mode is on, so the Result can say it is back. Not while Basal Testing is on, whether
+        /// left on or another test's.
+        var usualModeIsOn: Bool { currentMode != .basalTesting }
 
         private var otherTestCheck: Check {
             Check(
