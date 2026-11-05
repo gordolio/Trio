@@ -1775,7 +1775,7 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
     /// The hub opens a test while another runs, so its steps can be read; its own Check is what keeps it from starting.
     /// The running test has Basal Testing on, so the mode check fails too, but it must not say to switch modes: that
     /// would end the running test. The footer names the running test instead.
-    @Test("While another test runs, each Check screen says so and doesn't begin") func checkBlocksWhileAnotherRuns() {
+    @Test("While another test runs, each Check screen says so and doesn't begin") func checkBlocksWhileAnotherRuns() async throws {
         let isfSettings = FakeSettingsManager()
         isfSettings.settings.dosingMode = .closed
         let isfRunner = RecordingISFTestRunner()
@@ -1864,7 +1864,8 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
         )
         #expect(basal.otherRunningTest == nil)
 
-        // Begin and Start refuse at their guard, before reading anything.
+        // Begin and Start send to the runner from a task, so give any that slipped past the guard time to arrive.
+        try await Task.sleep(for: .milliseconds(100))
         #expect(isfRunner.begins.isEmpty)
         #expect(basalRunner.begins.isEmpty)
     }
