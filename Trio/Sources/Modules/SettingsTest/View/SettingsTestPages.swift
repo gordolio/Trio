@@ -1,7 +1,7 @@
 import SwiftUI
 
 // A test's start as a short wizard: one question per page inside its Check step, each page with Next (or Begin) and
-// Back. The carb ratio test uses it first; the basal and ISF Check screens can move onto it later.
+// Back. The basal, ISF and carb ratio tests use it.
 
 // MARK: - Order
 
@@ -29,6 +29,15 @@ enum SettingsTestPageFlow {
         return order[..<index].last(where: { pages.contains($0) }) ?? pages.first ?? current
     }
 
+    /// The page to show for `current`, given the pages shown so far (`seen`): the first page before it that applies and
+    /// hasn't been shown, so a question that starts to apply behind the user (insulin on board going over the line while
+    /// Ready shows) is asked before the start can be; otherwise as `shown(_:in:order:)`.
+    static func shown<Page: Hashable>(_ current: Page, in pages: [Page], order: [Page], seen: Set<Page>) -> Page {
+        let page = shown(current, in: pages, order: order)
+        guard let index = pages.firstIndex(of: page) else { return page }
+        return pages[..<index].first(where: { !seen.contains($0) }) ?? page
+    }
+
     /// Where `page` sits among `pages`, "2 of 5". Empty when it isn't among them.
     static func position<Page: Equatable>(of page: Page, in pages: [Page]) -> String {
         guard let index = pages.firstIndex(of: page) else { return "" }
@@ -38,11 +47,14 @@ enum SettingsTestPageFlow {
 
 // MARK: - Heading
 
-/// A page's heading after the first: its question as a title, and where it sits among the pages.
+/// A page's heading after the first: its question as a title, and where it sits among the pages. VoiceOver reads them
+/// as one heading, the question first, and moves to it when the page comes up, as each page is a view of its own.
 struct SettingsTestPageHeading: View {
     let title: String
     /// "2 of 5" (`SettingsTestPageFlow.position`).
     let position: String
+
+    @AccessibilityFocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -54,11 +66,20 @@ struct SettingsTestPageHeading: View {
             Text(title)
                 .font(.title2.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 4)
         .padding(.top, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(Self.spokenLabel(title: title, position: position)))
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityFocused($isFocused)
+        .onAppear { isFocused = true }
+    }
+
+    /// "Insulin on board, 2 of 3", or the title alone without a position.
+    static func spokenLabel(title: String, position: String) -> String {
+        position.isEmpty ? title : String(localized: "\(title), \(position)")
     }
 }
 
@@ -80,8 +101,8 @@ struct SettingsTestPageFooter<Primary: View>: View {
     }
 
     var body: some View {
-        // At accessibility sizes the page says why at the end of its content (`SettingsTestPageBlocker`): pinned here,
-        // its lines left a small phone's page almost no room.
+        // At accessibility sizes the page says why at the end of its content (`SettingsTestPageBlocker`), right above
+        // this footer, which ends the content at those sizes (`SettingsTestLayout.pinsFooter`).
         if let blocker, !dynamicTypeSize.isAccessibilitySize {
             SettingsTestPageBlocker.label(blocker)
         }
