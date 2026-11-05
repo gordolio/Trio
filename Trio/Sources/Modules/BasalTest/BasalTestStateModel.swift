@@ -351,8 +351,9 @@ extension BasalTest {
             Check(
                 id: "otherTest",
                 title: String(localized: "No other test running"),
-                detail: activeSessionKind.map { String(localized: "The \($0.title) test is still running. Finish it first.") },
-                state: activeSessionKind == nil ? .passed : .failed,
+                // Not this test's own session: one open with no test of its own leaves the mode check to say the way out.
+                detail: otherRunningTest.map { String(localized: "The \($0.title) test is still running. Finish it first.") },
+                state: otherRunningTest == nil ? .passed : .failed,
                 info: SettingsTestInfo(
                     title: String(localized: "No other test running"),
                     body: String(

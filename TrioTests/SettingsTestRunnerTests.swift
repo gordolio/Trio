@@ -1819,10 +1819,8 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
             lastEnd: nil
         )
         #expect(isf.otherRunningTest == nil)
-        #expect(
-            isf.failingChecks.first { $0.id == "mode" }?.detail
-                == "Switch to your usual dosing mode first, so Trio can return you to it"
-        )
+        #expect(isf.failingChecks.map(\.id) == ["mode"])
+        #expect(isf.startBlocker == "Switch to your usual dosing mode first, so Trio can return you to it")
 
         let basalSettings = FakeSettingsManager()
         basalSettings.settings.dosingMode = .closed
@@ -1863,6 +1861,8 @@ private final class FailingSMBBasalScreenReads: BasalTestProvider {
             lastEnd: nil
         )
         #expect(basal.otherRunningTest == nil)
+        #expect(basal.failingChecks.map(\.id) == ["mode"])
+        #expect(basal.startBlocker == "Switch to your usual dosing mode first, so Trio can return you to it")
 
         // Begin and Start send to the runner from a task, so give any that slipped past the guard time to arrive.
         try await Task.sleep(for: .milliseconds(100))
