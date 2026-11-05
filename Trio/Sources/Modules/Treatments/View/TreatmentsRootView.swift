@@ -66,7 +66,7 @@ extension Treatments {
         }
 
         private var mealFormatter: NumberFormatter {
-            if let formatter = AIRequestTreatmentsSession.shared.gramFormatter { return formatter }
+            if let formatter = SettingsTestTreatmentsPrefill.sheetGramFormatter { return formatter }
             let formatter = NumberFormatter()
             formatter.numberStyle = .decimal
             formatter.maximumIntegerDigits = 3
@@ -519,6 +519,7 @@ extension Treatments {
                 Text("\(state.determinationFailureMessage)")
             }
             .aiRequestTreatments(state: state, recalculate: handleDebouncedInput)
+            .settingsTestTreatments(state: state, recalculate: handleDebouncedInput)
         }
 
         var progressText: ProgressText {

@@ -3355,10 +3355,10 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(SettingsTestKind.allCases == [.basal, .isf, .carbRatio])
     }
 
-    @Test("Basal and sensitivity can be opened; carb ratio is being rebuilt") func availability() {
+    @Test("Every test can be opened") func availability() {
         #expect(SettingsTestKind.basal.availability == .available)
         #expect(SettingsTestKind.isf.availability == .available)
-        #expect(SettingsTestKind.carbRatio.availability == .beingRebuilt)
+        #expect(SettingsTestKind.carbRatio.availability == .available)
     }
 
     @Test("While one test runs, every other test can't start and the running test's own can be followed") func locking() {
@@ -3383,7 +3383,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         let state = SettingsTest.StateModel()
         #expect(state.screen(for: .basal) == .basalTest)
         #expect(state.screen(for: .isf) == .isfTest)
-        #expect(state.screen(for: .carbRatio) == nil)
+        #expect(state.screen(for: .carbRatio) == .carbRatioTest)
 
         state.activeSession = SettingsTestSession(
             kind: .basal,
@@ -3392,7 +3392,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         )
         #expect(state.screen(for: .basal) == .basalTest)
         #expect(state.screen(for: .isf) == .isfTest)
-        #expect(state.screen(for: .carbRatio) == nil)
+        #expect(state.screen(for: .carbRatio) == .carbRatioTest)
 
         state.activeSession = SettingsTestSession(kind: .isf, expiresAt: Date().addingTimeInterval(3600), restore: [])
         #expect(state.screen(for: .isf) == .isfTest)
@@ -3502,9 +3502,11 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         return test
     }
 
-    @Test("A carb ratio test from before never opens the old wizard") func carbRatioInProgressNeverOpens() {
+    @Test(
+        "A carb ratio test from before never opens the old wizard, and its row opens nothing until it is ended"
+    ) func carbRatioInProgressNeverOpens() {
         let state = SettingsTest.StateModel()
-        #expect(state.screen(for: .carbRatio) == nil)
+        #expect(state.screen(for: .carbRatio) == .carbRatioTest)
 
         state.carbRatioInProgress = true
         #expect(state.screen(for: .carbRatio) == nil)

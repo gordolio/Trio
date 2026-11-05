@@ -138,6 +138,16 @@ final class FakeSettingsTestData: SettingsTestEvents {
     /// The basal schedule the basal test's runner reads (`BasalTestReads.basalEntries`).
     var basalSchedule: [SettingsTestScheduleEntry] = []
     var carbRatio: Decimal?
+    /// The carb ratio schedule the carb ratio test's runner keeps at Begin (`CarbRatioTestReads.carbRatioEntries`). Its
+    /// `carbRatio(at:)` is `carbRatio` above, so a test sets both.
+    var carbRatioSchedule: [SettingsTestScheduleEntry] = []
+    /// The grams of each entry in `carbs`, by its date (`logCarbs`), for the carb ratio test's reads. One logged without
+    /// any reads back with 10 g.
+    var carbGrams: [Date: Decimal] = [:]
+    /// Max Bolus and Max Carbs as the carb ratio test reads them (`CarbRatioTestReads.maxBolus`, `maxCarbs`). Nil is one
+    /// that can't be read.
+    var maxBolusSetting: Decimal? = 10
+    var maxCarbsSetting: Decimal? = 250
     /// Awaited by every read of the determinations, so a test can hold a check in the middle of its reads.
     var onFetchDeterminations: (() async -> Void)?
     var determinationReads: Int { counterLock.withLock { _determinationReads } }
@@ -182,6 +192,12 @@ final class FakeSettingsTestData: SettingsTestEvents {
     /// The ID the carb entry eaten at `date` reads back with.
     static func carbEntryID(_ date: Date) -> String {
         "carb-\(date.timeIntervalSince1970)"
+    }
+
+    /// Logs a carb entry of `grams` eaten at `date`, which every carbs read, the watchdog's among them, then finds.
+    func logCarbs(_ grams: Decimal, at date: Date) {
+        carbs.append(date)
+        carbGrams[date] = grams
     }
 
     func carbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry] {
@@ -331,6 +347,21 @@ extension FakeSettingsTestData: ISFTestReads {
     }
 }
 
+/// The same scenario as the carb ratio test's runner reads it. Its settings, glucose, insulin and carbs on board, bolus,
+/// pump and determination reads are the ISF test's above (`ISFTestReads`); its carbs are `carbs` with their grams.
+extension FakeSettingsTestData: CarbRatioTestReads {
+    func carbRatioEntries() -> [SettingsTestScheduleEntry] { carbRatioSchedule }
+
+    func fetchCarbs(from start: Date, to end: Date) async throws -> [CarbRatioTestCarbs] {
+        try await carbEntries(from: start, to: end).map {
+            CarbRatioTestCarbs(id: $0.id, date: $0.date, grams: carbGrams[$0.date] ?? 10)
+        }
+    }
+
+    func maxBolus() -> Decimal? { maxBolusSetting }
+    func maxCarbs() -> Decimal? { maxCarbsSetting }
+}
+
 /// The same scenario as the basal test's runner reads it. Its ISF, glucose, SMB, temp basal and carb reads are the ones above
 /// (`ISFTestReads`); a manual bolus is one of `boluses`, not one the history flags as an SMB.
 extension FakeSettingsTestData: BasalTestReads {
@@ -478,6 +509,10 @@ final class RecordingSettingsTestNotifier: SettingsTestNotifying {
         lock.withLock { _legacyWithdrawals += 1 }
         notifier.withdrawLegacy()
     }
+
+    func withdrawOldCarbRatioWizard() {
+        notifier.withdrawOldCarbRatioWizard()
+    }
 }
 
 // MARK: - Runner
@@ -581,7 +616,8 @@ struct SettingsTestFilesTrait: SuiteTrait, TestTrait, TestScoping {
         "trio/settings_test_history.json",
         "trio/settings_test_last_end.json",
         "trio/isf_test_state.json",
-        "trio/basal_test_state.json"
+        "trio/basal_test_state.json",
+        "trio/carb_ratio_test_state.json"
     ]
 
     static func removeFiles(from storage: FileStorage = BaseFileStorage()) {
