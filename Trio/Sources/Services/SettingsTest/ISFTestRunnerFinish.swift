@@ -263,7 +263,16 @@ extension ISFTestRunner {
             // A note that says the usual dosing came back says so only when the mode in force now is it.
             var finished = ended
             finished.interference = ISFTestEvaluator.modeWorded(ended.interference, modeBack: modeIsBack(for: ended))
-            save(finished)
+            // Read back before it is shown, archived and posted: a write that didn't last would leave the test running on
+            // disk with its ending, so a relaunch would finish, archive and post it again. It stays ending instead, as
+            // shown, and the next check finishes it again.
+            storage.save(finished, as: ISFTest.Config.statePath)
+            let saved = storage.retrieve(ISFTest.Config.statePath, as: ISFTestState.self)
+            guard saved?.id == finished.id, saved?.phase == .finished else {
+                warning(.settings, "ISFTestRunner: the finished test didn't save, so it stays ending until it does")
+                return false
+            }
+            publish { $0.test = finished }
             if let archived {
                 service?.archive(archived)
             }

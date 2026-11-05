@@ -57,6 +57,9 @@ extension BasalTest {
         var showStopOptions = false
 
         @ObservationIgnored private var dataSubscriptions = Set<AnyCancellable>()
+        /// Each refresh's number, in the order they began, and the newest one shown (`refresh`). Main actor only.
+        @ObservationIgnored private var refreshesBegun = 0
+        @ObservationIgnored private var newestRefreshShown = 0
 
         // MARK: - Units
 
@@ -345,14 +348,16 @@ extension BasalTest {
 
         // Each is one line, a label and a value; anything longer is in its info sheet.
 
+        /// The mean of the newest 3 readings the fast starts from (`startGlucose`), as the ISF test's row shows its own.
+        /// Without one, the newest reading and how old it is.
         private var glucoseCheck: Check {
             let value: String
-            if let glucose = currentGlucose, let latest = recentReadings.first?.date {
-                value = readingIsStale
-                    ? String(
-                        localized: "\(formatWithUnits(glucose)), \(SettingsTestFormat.duration(Date().timeIntervalSince(latest))) ago"
-                    )
-                    : formatWithUnits(glucose)
+            if let mean = startGlucose {
+                value = formatWithUnits(mean)
+            } else if let glucose = currentGlucose, let latest = recentReadings.first?.date {
+                value = String(
+                    localized: "\(formatWithUnits(glucose)), \(SettingsTestFormat.duration(Date().timeIntervalSince(latest))) ago"
+                )
             } else {
                 value = String(localized: "Waiting")
             }
@@ -364,7 +369,7 @@ extension BasalTest {
                 info: SettingsTestInfo(
                     title: String(localized: "Glucose now"),
                     body: String(
-                        localized: "Your latest CGM reading, where the fast starts from; it's here for you to judge and doesn't hold up the start."
+                        localized: "The average of your last 3 CGM readings, where the fast starts from. Without a recent reading, this shows your newest one and how old it is. It's here for you to judge and doesn't hold up the start."
                     )
                 )
             )
@@ -541,6 +546,12 @@ extension BasalTest {
             return Date().timeIntervalSince(latest) > 15 * 60
         }
 
+        /// The Fast step's "Now", which its "Change" is worked out from: the newest reading while it is recent, nil once it
+        /// is out of date (`readingIsStale`), so a CGM that stopped doesn't leave an old reading standing as now.
+        var glucoseNow: Int? {
+            readingIsStale ? nil : currentGlucose
+        }
+
         /// How far glucose can move from where the fast started before it is worth one docs step of the scheduled
         /// basal, as a band around the start glucose in mg/dL. Nil without an ISF and a basal to work it out from.
         var steadyBand: ClosedRange<Int>? {
@@ -680,8 +691,14 @@ extension BasalTest {
         }
 
         /// Pulls fresh data, then has the runner check whether a running fast should stop. `reloadingWeek` false keeps the
-        /// week of SMBs already read for the Check screen.
+        /// week of SMBs already read for the Check screen. Refreshes overlap (each new reading and determination starts
+        /// one) and can finish out of order, so one that finishes after a newer one has shown its reads shows nothing,
+        /// neither its reads nor its error: an older snapshot never replaces a newer one.
         func refresh(reloadingWeek: Bool = true) async {
+            let number = await MainActor.run { () -> Int in
+                refreshesBegun += 1
+                return refreshesBegun
+            }
             let reads = self.reads
             let schedule = reads.basalEntries()
             await MainActor.run { basalSchedule = schedule }
@@ -704,10 +721,17 @@ extension BasalTest {
                     hasDevices: devices,
                     trendDirection: direction
                 )
-                await MainActor.run { show(data) }
+                await MainActor.run {
+                    guard number > newestRefreshShown else { return }
+                    newestRefreshShown = number
+                    show(data)
+                }
                 try await loadFastingSource(reloadingWeek: reloadingWeek)
             } catch {
-                await MainActor.run { errorMessage = "Couldn't read your data: \(error.localizedDescription)" }
+                await MainActor.run {
+                    guard number > newestRefreshShown else { return }
+                    errorMessage = "Couldn't read your data: \(error.localizedDescription)"
+                }
             }
             await runner?.check()
         }

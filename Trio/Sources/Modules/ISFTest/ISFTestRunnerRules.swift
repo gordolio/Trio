@@ -265,8 +265,10 @@ extension ISFTestEvaluator {
     /// arrow is flat (or there is none for a recent reading, R6), insulin on board is under the line for the dose shown,
     /// and after tablets glucose hasn't started rising again; raising, once the tablets were taken, glucose has risen from
     /// them and then stopped rising (`tabletsLeveledOff`) under a level arrow, with a reading recent enough to work the
-    /// dose out from (`doseGlucose`), so the Dose step it moves on to shows a dose: a flat arrow still shows for a reading
-    /// up to 15 minutes old.
+    /// dose out from (`doseGlucose`): a flat arrow still shows for a reading up to 15 minutes old. Raising needs no dose:
+    /// the Dose step it moves on to can show none (glucose leveled off at or below a target of 150 or more, which the
+    /// schedule reached during the Raise step), and then it is a dead end the runner ends the test at with its sentence
+    /// (`doseDeadEnd`), rather than a Raise step left waiting to its deadline.
     static func canDose(of test: ISFTestState, _ inputs: ISFTestDoseInputs) -> Bool {
         if test.phase == .raising, doseGlucose(inputs) == nil { return false }
         return canDose(
@@ -386,9 +388,14 @@ extension ISFTestEvaluator {
         case .lowUnchecked:
             return String(localized: "Trio couldn't read the pump history to check for a low, so it can't judge this test.")
         case .noReadings:
-            return String(
-                localized: "No CGM readings were recorded at the bolus or at the end of the test, so there is nothing to compare."
-            )
+            // "None recorded" only when none were since the bolus: with some, too few, too old or with a gap gave no mean.
+            return test.readings.isEmpty
+                ? String(
+                    localized: "No CGM readings were recorded at the bolus or at the end of the test, so there is nothing to compare."
+                )
+                : String(
+                    localized: "Trio didn't have 3 CGM readings close together at the bolus or at the end, so there is nothing to compare."
+                )
         case .noAmount:
             return String(
                 localized: "The pump didn't record how much insulin the bolus gave, so there is no drop per unit to work out."

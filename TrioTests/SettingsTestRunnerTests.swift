@@ -1081,6 +1081,25 @@ private final class GatedRunner: SettingsTestRunner {
         #expect(opener.wasOpenedFromNotice(.isf))
         withExtendedLifetime(subscriptions) {}
     }
+
+    @Test(
+        "A tap whose screen is already showing replaces an older tap still waiting, so closing it opens nothing"
+    ) func tapOnTheShowingScreenReplacesAWaitingOne() async throws {
+        // The ISF screen is showing, opened from Settings: a basal tap waits for it to close.
+        router.mainModalScreen.send(.isfTest)
+        opener.screenAppeared(.isf)
+        #expect(!opener.open(.basal))
+        #expect(opener.pending == .basal)
+        // The newest tap is the ISF test's, whose screen is up already: nothing is left waiting.
+        #expect(!opener.open(.isf))
+        #expect(opener.pending == nil)
+        #expect(!opener.isRechecking)
+        opener.screenDisappeared(.isf)
+        router.mainModalScreen.send(nil)
+        rig.ticks.send(())
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(router.mainModalScreen.value == nil)
+    }
 }
 
 // MARK: - The delegate set at launch
@@ -1355,6 +1374,98 @@ private final class FakeBasalScreenReads: BasalTestProvider {
         return []
     }
 
+    func fetchCOBSamples(since _: Date) async throws -> [BasalTestCOBSample] { [] }
+}
+
+/// Holds the first call of a read until `release`, then gives `first` for it; every later call gives `later` at once.
+/// So a refresh that began first can finish after one that began later.
+private final class HeldRead<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+    private var held: CheckedContinuation<Void, Never>?
+    private var released = false
+    private let first: Value
+    private let later: Value
+
+    init(first: Value, later: Value) {
+        self.first = first
+        self.later = later
+    }
+
+    /// Whether the first call is waiting.
+    var isHolding: Bool { lock.withLock { held != nil } }
+
+    func read() async -> Value {
+        let call = lock.withLock { () -> Int in
+            calls += 1
+            return calls
+        }
+        guard call == 1 else { return later }
+        await withCheckedContinuation { continuation in
+            let resumeNow = lock.withLock { () -> Bool in
+                if released { return true }
+                held = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return first
+    }
+
+    func release() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            released = true
+            defer { held = nil }
+            return held
+        }
+        continuation?.resume()
+    }
+}
+
+/// The ISF screen's reads, with its carbs-on-board read held the first time (`HeldRead`).
+private final class HeldCOBISFScreenReads: ISFTestProvider {
+    let data: ISFTest.StateModel.ScreenData
+    let cob: HeldRead<Decimal?>
+
+    init(_ data: ISFTest.StateModel.ScreenData, cob: HeldRead<Decimal?>) {
+        self.data = data
+        self.cob = cob
+    }
+
+    func isfEntries() -> [SettingsTestScheduleEntry] { [] }
+    func basalEntries() -> [SettingsTestScheduleEntry] { [] }
+    func isf(at _: Date) -> Decimal? { nil }
+    func target(at _: Date) -> Decimal? { nil }
+    func fetchRecentGlucose(minutes _: Int) async throws -> [BasalTestReading] { data.readings }
+    func currentIOB() -> Decimal? { data.iob }
+    func currentCOB() async throws -> Decimal? { await cob.read() }
+    func hasActiveAdjustment() async throws -> Bool { data.hasActiveAdjustment }
+    func hasPumpSetTempBasal() -> Bool { data.hasPumpSetTempBasal }
+    func pumpDelivery() -> ISFTestPumpDelivery? { data.pumpDelivery }
+    func hasCgmAndPump() -> Bool { data.hasDevices }
+    func fetchNewestDirection() async throws -> BloodGlucose.Direction? { data.trendDirection }
+}
+
+/// The basal screen's reads, with its last-carbs read held the first time (`HeldRead`).
+private final class HeldCarbsBasalScreenReads: BasalTestProvider {
+    let data: BasalTest.StateModel.ScreenData
+    let lastCarb: HeldRead<Date?>
+
+    init(_ data: BasalTest.StateModel.ScreenData, lastCarb: HeldRead<Date?>) {
+        self.data = data
+        self.lastCarb = lastCarb
+    }
+
+    func basalEntries() -> [SettingsTestScheduleEntry] { [] }
+    func fetchRecentGlucose(minutes _: Int) async throws -> [BasalTestReading] { data.readings }
+    func getCurrentIOB() -> Decimal { data.iob }
+    func getCurrentCOB() async throws -> Decimal { data.cob }
+    func lastCarbEntry(withinHours _: Int) async throws -> Date? { await lastCarb.read() }
+    func hasActiveAdjustment() async throws -> Bool { data.hasActiveAdjustment }
+    func hasPumpSetTempBasal() -> Bool { data.hasPumpSetTempBasal }
+    func hasCgmAndPump() -> Bool { data.hasDevices }
+    func fetchNewestDirection() async throws -> BloodGlucose.Direction? { data.trendDirection }
+    func fetchSMBs(since _: Date, until _: Date) async throws -> [BasalTestSMB] { [] }
     func fetchCOBSamples(since _: Date) async throws -> [BasalTestCOBSample] { [] }
 }
 
@@ -2142,5 +2253,165 @@ private final class FakeBasalScreenReads: BasalTestProvider {
         await state.refresh()
         #expect(state.readyToStart)
         #expect(state.informingChecks.map(\.id).contains("isfChange"))
+    }
+
+    // MARK: - CodeRabbit on PR #26
+
+    @Test(
+        "An ISF refresh that finishes after a newer one has shown its reads shows nothing of its own"
+    ) func olderISFRefreshShowsNothing(
+    ) async {
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.testService = makeTestService().service
+        // The older refresh read no carbs on board, before carbs went in; the newer one reads them.
+        let cob = HeldRead<Decimal?>(first: 0, later: 30)
+        state.screenReads = HeldCOBISFScreenReads(isfData(readings(180)), cob: cob)
+
+        async let older: Void = state.refresh()
+        #expect(await eventually { cob.isHolding })
+        await state.refresh()
+        #expect(state.currentCOB == 30)
+        cob.release()
+        await older
+        #expect(state.currentCOB == 30)
+    }
+
+    @Test(
+        "A basal refresh that finishes after a newer one has shown its reads shows nothing of its own"
+    ) func olderBasalRefreshShowsNothing(
+    ) async {
+        let state = BasalTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        // The older refresh read no carbs, before a snack was logged; the newer one reads it.
+        let snack = Date().addingTimeInterval(-30 * minute)
+        let lastCarb = HeldRead<Date?>(first: nil, later: snack)
+        state.screenReads = HeldCarbsBasalScreenReads(basalData(readings(110)), lastCarb: lastCarb)
+
+        async let older: Void = state.refresh()
+        #expect(await eventually { lastCarb.isHolding })
+        await state.refresh()
+        #expect(state.lastCarb == snack)
+        lastCarb.release()
+        await older
+        #expect(state.lastCarb == snack)
+        #expect(!state.fastedLongEnough)
+    }
+
+    @Test(
+        "The Wait and Fast steps show no glucose now, nor a change from it, once the newest reading is out of date"
+    ) func staleReadingIsNotNow() {
+        let old = [16, 21, 26].map { BasalTestReading(date: Date().addingTimeInterval(-Double($0) * minute), glucose: 180) }
+
+        let isf = ISFTest.StateModel()
+        isf.show(isfData(readings(180)))
+        #expect(isf.glucoseNow == 180)
+        isf.show(isfData(old))
+        #expect(isf.readingIsStale)
+        #expect(isf.glucoseNow == nil)
+
+        let basal = BasalTest.StateModel()
+        basal.show(basalData(readings(110)))
+        #expect(basal.glucoseNow == 110)
+        basal.show(basalData(old))
+        #expect(basal.readingIsStale)
+        #expect(basal.glucoseNow == nil)
+    }
+
+    @Test(
+        "The ISF screen's arrow is the newest reading's own, read with the readings the dose comes from"
+    ) func isfArrowFromTheDoseReadings(
+    ) async {
+        let state = ISFTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.testService = makeTestService().service
+        // The newest reading the dose reads came with a rising arrow; the newest-direction read, a moment later, found a
+        // newer reading's flat arrow.
+        var data = isfData(readings(180))
+        data.readings[0] = BasalTestReading(date: data.readings[0].date, glucose: 180, direction: .singleUp)
+        data.trendDirection = .flat
+        state.screenReads = FakeISFScreenReads(data)
+        state.apply(ISFTestRunnerState(test: isfTest(.dosing)))
+
+        await state.refresh()
+        #expect(state.doseInputs.direction == .singleUp)
+        #expect(!state.glucoseIsLevel)
+        #expect(!state.canDose)
+    }
+
+    // MARK: - CodeRabbit on PR #26, round 2
+
+    @Test(
+        "The basal Check's glucose row shows the mean the fast starts from, and without one the newest reading and its age"
+    ) func basalGlucoseRowIsTheMean() throws {
+        let state = BasalTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        func readings(_ ages: [(minutes: Double, glucose: Int)]) -> [BasalTestReading] {
+            ages.map { BasalTestReading(date: Date().addingTimeInterval(-$0.minutes * minute), glucose: $0.glucose) }
+        }
+
+        state.show(basalData(readings([(1, 112), (6, 108), (11, 104)])))
+        #expect(state.startGlucose == 108)
+        let row = try #require(state.informingChecks.first { $0.id == "glucose" })
+        #expect(row.value == state.formatWithUnits(108))
+        #expect(
+            row.info.body
+                ==
+                "The average of your last 3 CGM readings, where the fast starts from. Without a recent reading, this shows your newest one and how old it is. It's here for you to judge and doesn't hold up the start."
+        )
+
+        // The newest 13 minutes old: no mean to start from, so the newest reading and how old it is.
+        state.show(basalData(readings([(13, 112), (18, 108), (23, 104)])))
+        #expect(state.startGlucose == nil)
+        let old = try #require(state.informingChecks.first { $0.id == "glucose" })
+        #expect(old.value?.hasPrefix(state.formatWithUnits(112) + ", ") == true)
+        #expect(old.value?.hasSuffix(" ago") == true)
+    }
+
+    @Test(
+        "Trio's suggestion too small for the test to judge says to enter the formula's dose, in the note and its sheet"
+    ) func suggestionTooSmallSaysEnterTheDose() throws {
+        let settings = FakeSettingsManager()
+        settings.settings.overrideFactor = Decimal(string: "0.57")!
+        let state = ISFTest.StateModel()
+        state.settingsManager = settings
+        var test = isfTest(.dosing)
+        test.target = 140
+        state.apply(ISFTestRunnerState(test: test))
+        func shown(_ units: Decimal) -> String { SettingsTestFormat.keepTogether(state.formatUnits(units), unit: "U") }
+
+        // 155 on target 140 and ISF 50: 0.30 U, a 15 mg/dL drop. 57% of it is 0.17 U, 8.5 mg/dL: no whole reading lies
+        // within a docs step of where that takes glucose, so it would end as too small to judge.
+        state.show(isfData(readings(155)))
+        let dose = try #require(state.docsDose)
+        let suggestion = try #require(state.trioSuggestion)
+        #expect(dose == Decimal(string: "0.3"))
+        #expect(suggestion == Decimal(string: "0.17"))
+        #expect(ISFTestEvaluator.suggestionTooSmall(suggestion: suggestion, dose: dose, glucose: 155, isf: 50, iob: 0))
+        let small = state.suggestionNote(suggestion: suggestion, dose: dose)
+        #expect(
+            small.note
+                ==
+                "Trio will suggest about \(shown(suggestion)). That's 57% of the formula's \(shown(dose)). Enter the formula's \(shown(dose)) instead of tapping Trio's suggestion."
+        )
+        #expect(
+            small.info
+                ==
+                "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (57%). That's too small for this test to tell your ISF apart from CGM noise, so enter the formula's \(shown(dose))."
+        )
+
+        // At 210 it's 1.40 U and 0.80 U: either is fine, as before.
+        state.show(isfData(readings(210)))
+        let bigger = try #require(state.docsDose)
+        let biggerSuggestion = try #require(state.trioSuggestion)
+        #expect(!ISFTestEvaluator.suggestionTooSmall(suggestion: biggerSuggestion, dose: bigger, glucose: 210, isf: 50, iob: 0))
+        let fine = state.suggestionNote(suggestion: biggerSuggestion, dose: bigger)
+        #expect(fine.note.hasSuffix("Either is fine: the result is worked out from what you give."))
+        #expect(
+            fine.info
+                .hasSuffix(
+                    "Tap Trio's suggestion or enter the formula's dose: the test judges your ISF per unit you actually give."
+                )
+        )
     }
 }

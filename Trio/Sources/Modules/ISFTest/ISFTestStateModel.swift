@@ -84,6 +84,9 @@ extension ISFTest {
         var showStopOptions = false
 
         @ObservationIgnored private var dataSubscriptions = Set<AnyCancellable>()
+        /// Each refresh's number, in the order they began, and the newest one shown (`refresh`). Main actor only.
+        @ObservationIgnored private var refreshesBegun = 0
+        @ObservationIgnored private var newestRefreshShown = 0
 
         // MARK: - Units
 
@@ -174,6 +177,12 @@ extension ISFTest {
         var readingIsStale: Bool {
             guard let latest = recentReadings.first?.date else { return true }
             return Date().timeIntervalSince(latest) > ISFTestEvaluator.arrowMaxAge
+        }
+
+        /// The Wait step's "Now", which its "Change" is worked out from: the newest reading while it is recent, nil once it
+        /// is out of date (`readingIsStale`), so a CGM that stopped doesn't leave an old reading standing as now.
+        var glucoseNow: Int? {
+            readingIsStale ? nil : currentGlucose
         }
 
         /// What the Dose step reads to work out whether the dose can be given, as one value, at this moment: the rules
@@ -893,6 +902,68 @@ extension ISFTest {
             NSDecimalNumber(decimal: rounded(recommendedBolusFraction * 100, scale: 0, roundingMode: .plain)).intValue
         }
 
+        /// What the Dose step's yellow note and its info sheet say about Trio's `suggestion` beside the formula's `dose`,
+        /// by whether the Recommended Bolus Percentage makes it less than, the same as, or more than the dose. A suggestion
+        /// less than the dose that would be too small for the test to judge while the dose isn't
+        /// (`ISFTestEvaluator.suggestionTooSmall`, from the glucose and ISF the dose is worked out with) says to enter the
+        /// dose, as one more than it does. Each amount stays on one line with its "U" (`SettingsTestFormat.keepTogether`),
+        /// so a large text size doesn't leave "1.79" at the end of one line and "U." at the start of the next.
+        func suggestionNote(suggestion: Decimal, dose: Decimal) -> (note: String, info: String) {
+            let suggested = SettingsTestFormat.keepTogether(formatUnits(suggestion), unit: "U")
+            let docs = SettingsTestFormat.keepTogether(formatUnits(dose), unit: "U")
+            let percent = bolusPercent
+            let perUnit = String(
+                localized: "Tap Trio's suggestion or enter the formula's dose: the test judges your ISF per unit you actually give."
+            )
+            let comparison = ISFTestEvaluator.suggestionComparison(percent: percent)
+            if comparison == .less, let glucose = doseGlucose, let isf = doseSettings?.isf,
+               ISFTestEvaluator.suggestionTooSmall(
+                   suggestion: suggestion,
+                   dose: dose,
+                   glucose: glucose,
+                   isf: isf,
+                   iob: currentIOB ?? 0
+               )
+            {
+                return (
+                    String(
+                        localized: "Trio will suggest about \(suggested). That's \(percent)% of the formula's \(docs). Enter the formula's \(docs) instead of tapping Trio's suggestion."
+                    ),
+                    String(
+                        localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%). That's too small for this test to tell your ISF apart from CGM noise, so enter the formula's \(docs)."
+                    )
+                )
+            }
+            switch comparison {
+            case .less:
+                return (
+                    String(
+                        localized: "Trio will suggest about \(suggested). That's \(percent)% of the formula's \(docs). Either is fine: the result is worked out from what you give."
+                    ),
+                    String(
+                        localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%). SMBs normally give the rest, but they're off during the test."
+                    ) + " " + perUnit
+                )
+            case .same:
+                return (
+                    String(localized: "Trio will suggest about the formula's \(docs)."),
+                    String(
+                        localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%), so the two match."
+                    ) + " " + perUnit
+                )
+            case .more:
+                // More than the docs' dose can bring on a low the ISF doesn't explain, so the docs' dose is the one to give.
+                return (
+                    String(
+                        localized: "Trio will suggest about \(suggested). That's \(percent)% of the formula's \(docs). Enter the formula's \(docs) instead of tapping Trio's suggestion."
+                    ),
+                    String(
+                        localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%), so its suggestion is more than the formula's dose."
+                    ) + " " + String(localized: "Enter the formula's \(docs) instead of tapping Trio's suggestion.")
+                )
+            }
+        }
+
         /// Whether the dose can be worked out now (`ISFTestEvaluator.canDose`): dosing, when the docs' formula gives one,
         /// the CGM's arrow is flat (or there is none for a recent reading, R6) and insulin on board is under the line for
         /// the dose shown; raising, once the tablets were taken, glucose has risen from them and then leveled off.
@@ -1200,8 +1271,14 @@ extension ISFTest {
         }
 
         /// Pulls fresh data for the screen, then has the runner check a running test: for its bolus, whether it should
-        /// stop, and insulin on board for a counted dose.
+        /// stop, and insulin on board for a counted dose. Refreshes overlap (each new reading, determination and pump event
+        /// starts one) and can finish out of order, so one that finishes after a newer one has shown its reads shows
+        /// nothing, neither its reads nor its error: an older snapshot never replaces a newer one.
         func refresh() async {
+            let number = await MainActor.run { () -> Int in
+                refreshesBegun += 1
+                return refreshesBegun
+            }
             let reads = self.reads
             let now = Date()
             let schedule = reads.isfEntries()
@@ -1223,7 +1300,9 @@ extension ISFTest {
                 let pumpTempBasal = reads.hasPumpSetTempBasal()
                 let delivery = reads.pumpDelivery()
                 let devices = reads.hasCgmAndPump()
-                let direction = try await reads.fetchNewestDirection()
+                // The CGM's arrow on the newest of these readings, from the same row: a separate read could find a
+                // reading saved since, with an arrow newer than the readings the dose comes from.
+                let direction = readings.first?.direction
                 let data = ScreenData(
                     readings: readings,
                     iob: iob,
@@ -1234,9 +1313,16 @@ extension ISFTest {
                     hasDevices: devices,
                     trendDirection: direction
                 )
-                await MainActor.run { show(data) }
+                await MainActor.run {
+                    guard number > newestRefreshShown else { return }
+                    newestRefreshShown = number
+                    show(data)
+                }
             } catch {
-                await MainActor.run { errorMessage = "Couldn't read your data: \(error.localizedDescription)" }
+                await MainActor.run {
+                    guard number > newestRefreshShown else { return }
+                    errorMessage = "Couldn't read your data: \(error.localizedDescription)"
+                }
             }
             await runner?.check()
         }

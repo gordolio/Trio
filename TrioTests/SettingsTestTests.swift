@@ -1142,14 +1142,14 @@ import Testing
 
     @Test("A record of no bolus, which a basal session never gets, reads as an interrupted fast") func runningServiceEndNoBolus() {
         // The service brought the usual mode back, so the fast didn't run to its end.
-        #expect(check(ended: serviceEnd(.noBolus, after: 2400), now: 3600, mode: .closed) == .modeChanged)
+        #expect(check(ended: serviceEnd(.noBolus, after: 2400), now: 3600, mode: .closed) == .modeChanged(at: nil))
     }
 
     @Test(
         "A record of another session, from after the planned end, or with no session to match isn't this fast's"
     ) func runningServiceEndOtherSession() {
         let other = serviceEnd(.low, after: 1800, session: UUID())
-        #expect(check(ended: other, now: 3600, mode: .closed) == .modeChanged)
+        #expect(check(ended: other, now: 3600, mode: .closed) == .modeChanged(at: nil))
         #expect(check(ended: other, suspend: 1800, now: 3600) == .low(at: at(seconds: 1800)))
 
         // A state saved before the session was kept can't be matched to a record.
@@ -1161,7 +1161,7 @@ import Testing
             plannedEnd: testEnd,
             mode: .closed
         )
-        #expect(unmatched == .modeChanged)
+        #expect(unmatched == .modeChanged(at: nil))
 
         // Ended after the fast was over: the fast itself ran its course.
         #expect(check(ended: serviceEnd(.low, after: 4 * hour + 60), now: 5 * hour, mode: .closed) == .completed)
@@ -1169,12 +1169,12 @@ import Testing
     }
 
     @Test("A mode changed before the planned end interrupts the fast, even with a zero temp in it") func runningModeChanged() {
-        #expect(check(now: 3600, mode: .closed) == .modeChanged)
-        #expect(check(now: 3600, mode: .open) == .modeChanged)
-        #expect(check(now: 3600, mode: .lowGlucoseSuspend) == .modeChanged)
+        #expect(check(now: 3600, mode: .closed) == .modeChanged(at: nil))
+        #expect(check(now: 3600, mode: .open) == .modeChanged(at: nil))
+        #expect(check(now: 3600, mode: .lowGlucoseSuspend) == .modeChanged(at: nil))
         // A zero temp the new mode set is not a low.
-        #expect(check(suspend: 1800, now: 3600, mode: .closed) == .modeChanged)
-        #expect(check(suspend: 1800, now: 3600, mode: .lowGlucoseSuspend) == .modeChanged)
+        #expect(check(suspend: 1800, now: 3600, mode: .closed) == .modeChanged(at: nil))
+        #expect(check(suspend: 1800, now: 3600, mode: .lowGlucoseSuspend) == .modeChanged(at: nil))
     }
 
     @Test("Only while Basal Testing is still on is a zero temp in the fast a low") func runningLowInBasalTesting() {
@@ -1190,7 +1190,7 @@ import Testing
         #expect(check(unexplained: 1800, now: 5 * hour) == .unexplainedSuspend(at: at(seconds: 1800)))
         #expect(check(unexplained: 1800, now: 5 * hour, mode: .closed) == .unexplainedSuspend(at: at(seconds: 1800)))
         // A mode changed before the planned end still reads as that.
-        #expect(check(unexplained: 1800, now: 3600, mode: .closed) == .modeChanged)
+        #expect(check(unexplained: 1800, now: 3600, mode: .closed) == .modeChanged(at: nil))
     }
 
     @Test("The service's record of carbs it couldn't read interrupts the fast at it") func runningServiceEndCarbsUnreadable() {
@@ -1220,7 +1220,7 @@ import Testing
         #expect(check(unreadable: true, now: 5 * hour, mode: .closed) == .completedUnchecked)
         // Before then nothing is decided, so a low isn't missed; a changed mode needs no history.
         #expect(check(unreadable: true, now: 3600) == nil)
-        #expect(check(unreadable: true, now: 3600, mode: .closed) == .modeChanged)
+        #expect(check(unreadable: true, now: 3600, mode: .closed) == .modeChanged(at: nil))
     }
 
     // MARK: How a running check ends the fast
@@ -1234,11 +1234,19 @@ import Testing
             (.bolusGiven(at: date), .interrupted, date, "A bolus was given during the fast."),
             (.completed, .completed, nil, nil),
             (.completedUnchecked, .unchecked, nil, nil),
-            (.modeChanged, .interrupted, nil, "The dosing mode changed during the fast."),
+            (.modeChanged(at: nil), .interrupted, nil, "The dosing mode changed during the fast."),
             (
-                .modeChangedRestored,
+                .modeChangedRestored(at: nil),
                 .interrupted,
                 nil,
+                "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
+            ),
+            // With the service's record of the change: when another mode was first picked.
+            (.modeChanged(at: date), .interrupted, date, "The dosing mode changed during the fast."),
+            (
+                .modeChangedRestored(at: date),
+                .interrupted,
+                date,
                 "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
             ),
             (
@@ -2723,7 +2731,7 @@ import Testing
             now: Date(),
             plannedEnd: Date().addingTimeInterval(3600),
             mode: .closed
-        ) == .modeChanged)
+        ) == .modeChanged(at: service.lastEnd()?.date))
     }
 
     @Test("Only the first change away from Basal Testing is noted") func modeLeftOnce() async {
@@ -3296,6 +3304,47 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(try await events.newestDirection(since: start) == .singleUp)
         let arrow = try await events.arrowReading(atOrBefore: start.addingTimeInterval(1400), since: start)
         #expect(arrow == ISFTestArrowReading(date: start.addingTimeInterval(1200), direction: .singleUp))
+    }
+
+    @Test(
+        "Alarms, site and pod changes, suspends and resumes the pump driver reports are stored as the rows the interruption read finds"
+    ) func pumpInterruptionsFromThePumpDriver() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let context = stack.newTaskContext()
+        let resolver = Assembler([
+            StorageAssembly(),
+            ServiceAssembly(),
+            APSAssembly(),
+            NetworkAssembly(),
+            UIAssembly(),
+            SecurityAssembly(),
+            TestAssembly(testContext: context)
+        ]).resolver
+        let storage = try #require(resolver.resolve(PumpHistoryStorage.self))
+        let start = Date().addingTimeInterval(-3600)
+        func event(_ type: PumpEventType, after seconds: TimeInterval) -> NewPumpEvent {
+            NewPumpEvent(
+                date: start.addingTimeInterval(seconds),
+                dose: nil,
+                raw: Data("interruption-\(seconds)".utf8),
+                title: "\(type)",
+                type: type
+            )
+        }
+        // Stored through upstream's own mapping (`PumpEventType.storedEventType`), not as raw rows.
+        try await storage.storePumpEvents([
+            event(.alarm, after: 600),
+            event(.replaceComponent(componentType: .infusionSet), after: 1200),
+            event(.replaceComponent(componentType: .pump), after: 1800),
+            event(.suspend, after: 2400),
+            event(.resume, after: 2700),
+            event(.rewind, after: 3000),
+            event(.prime, after: 3060),
+            // Not one: an alarm cleared, which upstream doesn't store.
+            event(.alarmClear, after: 900)
+        ], replacePendingEvents: false)
+        let dates = try await CoreDataSettingsTestEvents(context: context).pumpInterruptions(from: start, to: Date())
+        #expect(dates == [600, 1200, 1800, 2400, 2700, 3000, 3060].map { start.addingTimeInterval($0) })
     }
 
     private func dec(_ string: String) -> Decimal { Decimal(string: string)! }

@@ -132,9 +132,18 @@ extension SettingsTestKind {
 
     /// Opens the kind's screen if nothing else is shown, and returns whether it sent it. Another sheet being open, or
     /// still closing, keeps the kind pending instead. Either way the kind stays pending until its screen appears. No
-    /// second copy of a screen that is showing is opened, and a kind with no screen opens nothing.
+    /// second copy of a screen that is showing is opened, and a kind with no screen opens nothing. A tap whose screen is
+    /// showing is still the latest tap: an older one waiting for another kind is dropped, so closing this screen doesn't
+    /// bring that one up.
     @discardableResult func open(_ kind: SettingsTestKind) -> Bool {
-        guard kind.testScreen != nil, !isShowing(kind) else { return false }
+        guard kind.testScreen != nil else { return false }
+        guard !isShowing(kind) else {
+            if let waiting = pending, waiting != kind {
+                debug(.settings, "SettingsTest: a newer tap's screen is showing, so the \(waiting.rawValue) tap no longer waits")
+                stopWaiting()
+            }
+            return false
+        }
         // At a launch from closed the router may not be there yet: the kind waits for it, on the 1 s timer.
         guard let router = router() else {
             keepPending(kind, router: nil)

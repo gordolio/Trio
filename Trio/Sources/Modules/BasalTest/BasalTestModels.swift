@@ -383,11 +383,14 @@ enum BasalTestEvaluator {
         case completed
         /// The planned time is up, but the pump history couldn't be read, so a low can't be ruled out.
         case completedUnchecked
-        /// The dosing mode was changed before the planned end, so the rest of the fast didn't run in Basal Testing.
-        case modeChanged
+        /// The dosing mode was changed before the planned end, so the rest of the fast didn't run in Basal Testing. `at` is
+        /// when another mode was first picked, from the service's record of ending the session for it, so the fast ends
+        /// there and not at a check that came later (Trio closed in between, say); nil without that record, and the fast
+        /// ends at the check.
+        case modeChanged(at: Date?)
         /// The same, and the service's end of the session put the usual mode back, because Basal Testing was on again by
         /// then (`SettingsTestEnd.modeRestored`).
-        case modeChangedRestored
+        case modeChangedRestored(at: Date?)
         /// Basal was stopped inside the fast at this time, and it can't be told that was Basal Testing's suspend for a
         /// low: none of Trio's determinations asked for it, or Basal Testing was off by the time of the check and the
         /// service didn't end the test for it.
@@ -425,14 +428,18 @@ enum BasalTestEvaluator {
             case .extraBolus: return .bolusGiven(at: serviceEnd.date)
             // A basal session never gets this cause. If one did, the service brought the usual mode back, so the fast
             // didn't run to its end.
-            case .noBolus: return .modeChanged
-            // Another mode was picked during the fast, so the rest of it didn't run in Basal Testing.
-            case .modeChanged: return serviceEnd.modeRestored == true ? .modeChangedRestored : .modeChanged
+            case .noBolus: return .modeChanged(at: nil)
+            // Another mode was picked during the fast, so the rest of it didn't run in Basal Testing. It ends when that
+            // mode was first picked.
+            case .modeChanged:
+                return serviceEnd.modeRestored == true
+                    ? .modeChangedRestored(at: serviceEnd.date)
+                    : .modeChanged(at: serviceEnd.date)
             case .pumpInterrupted: return .pumpInterrupted(at: serviceEnd.date)
             }
         }
         let timeUp = now >= plannedEnd
-        if !timeUp, mode != .basalTesting { return .modeChanged }
+        if !timeUp, mode != .basalTesting { return .modeChanged(at: nil) }
         switch suspend {
         case let .suspended(at):
             // Only after the planned end can the mode be other than Basal Testing here.
@@ -614,12 +621,12 @@ enum BasalTestEvaluator {
             return (.completed, nil, nil)
         case .completedUnchecked:
             return (.unchecked, nil, nil)
-        case .modeChanged:
-            return (.interrupted, nil, String(localized: "The dosing mode changed during the fast."))
-        case .modeChangedRestored:
+        case let .modeChanged(changedAt):
+            return (.interrupted, changedAt, String(localized: "The dosing mode changed during the fast."))
+        case let .modeChangedRestored(changedAt):
             return (
                 .interrupted,
-                nil,
+                changedAt,
                 String(
                     localized: "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
                 )
@@ -656,7 +663,7 @@ enum BasalTestEvaluator {
     static func modeWorded(_ note: String?, modeBack: Bool) -> String? {
         guard !modeBack, let note else { return note }
         if note == carbsUnreadableNote { return unreadNote }
-        if note == ending(for: .modeChangedRestored).note { return ending(for: .modeChanged).note }
+        if note == ending(for: .modeChangedRestored(at: nil)).note { return ending(for: .modeChanged(at: nil)).note }
         return note
     }
 
@@ -700,9 +707,12 @@ enum BasalTestEvaluator {
     /// verdict. `evaluation` is the finished test's result worked out again (`evaluation(of:)`).
     static func resultParagraphs(for outcome: BasalTestOutcome, test: BasalTestState, evaluation: Evaluation?) -> [String] {
         let elapsed = (test.endedAt ?? test.plannedEnd).timeIntervalSince(test.startedAt)
-        let noReadings = String(
-            localized: "No CGM readings were recorded during the fast, so there is no end glucose to compare."
-        )
+        // "None recorded" only when none were: with some, too few, too old or with a gap at the end gave no mean.
+        let noReadings = test.readings.isEmpty
+            ? String(localized: "No CGM readings were recorded during the fast, so there is no end glucose to compare.")
+            : String(
+                localized: "Trio didn't have 3 CGM readings close together at the end of the fast, so there is no end glucose to compare."
+            )
         // With readings but no ISF or basal, so there is no rate or share to work out.
         let noWorking = String(
             localized: "Trio couldn't read your ISF or basal schedule for these hours, so there is no working to show."

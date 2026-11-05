@@ -185,6 +185,14 @@ enum SettingsTestBeginError: Error, Equatable {
     case dataUnreadable(String)
     /// The test or its session didn't save, so a relaunch would find no way back from Basal Testing.
     case notSaved
+    /// A basal fast: carbs Begin read are dated under the docs' 2 hours before it (`BasalTest.Config.fastBeforeStart`),
+    /// logged after the Check screen last read them. `readyAt` is 2 hours after the newest.
+    case recentCarbs(readyAt: Date)
+    /// An ISF test that starts by raising glucose with tablets, with no carb ratio to count them from.
+    case carbRatioUnreadable
+    /// An override or a temp target is running, started after the Check screen last read them: both change basal and
+    /// sensitivity, so the test wouldn't show what the settings do on their own.
+    case adjustmentActive
 
     var message: String {
         switch self {
@@ -201,6 +209,15 @@ enum SettingsTestBeginError: Error, Equatable {
         case .notSaved:
             // Trio's own words for a change it couldn't save (`AdjustmentManager`).
             return String(localized: "Could not save the change.")
+        case let .recentCarbs(readyAt):
+            // The Check screen's food row says the same.
+            let ready = readyAt.formatted(date: .omitted, time: .shortened)
+            return String(localized: "Ready at \(ready) (2 h after your last carbs)")
+        case .carbRatioUnreadable:
+            // The Raise step's words for it.
+            return String(localized: "Trio couldn't read your carb ratio, so it can't count the tablets.")
+        case .adjustmentActive:
+            return String(localized: "An override or temp target is running. End it first, then try again.")
         }
     }
 }

@@ -277,9 +277,10 @@ extension ISFTest {
     }
 
     /// The yellow note: Trio's own suggestion beside the docs' dose. Yellow, not red: nothing is wrong, and either
-    /// amount tests the ISF because the result is worked out per unit given. The tint stays light behind primary text,
-    /// so it reads in light and dark mode. Its info button explains the Recommended Bolus Percentage. What it says
-    /// depends on whether that percentage makes Trio's suggestion less than, the same as, or more than the docs' dose.
+    /// amount tests the ISF because the result is worked out per unit given, unless the suggestion is too small to judge.
+    /// The tint stays light behind primary text, so it reads in light and dark mode. Its info button explains the
+    /// Recommended Bolus Percentage. What it says depends on whether that percentage makes Trio's suggestion less than,
+    /// the same as, or more than the docs' dose (`StateModel.suggestionNote`).
     private struct SuggestionNote: View {
         let state: StateModel
         let suggestion: Decimal
@@ -287,51 +288,9 @@ extension ISFTest {
 
         @State private var isShowingInfo = false
 
-        private var comparison: ISFTestSuggestion {
-            ISFTestEvaluator.suggestionComparison(percent: state.bolusPercent)
-        }
-
-        /// Each amount stays on one line with its "U" (`SettingsTestFormat.keepTogether`), so a large text size doesn't
-        /// leave "1.79" at the end of one line and "U." at the start of the next.
-        private var noteText: String {
-            let suggested = SettingsTestFormat.keepTogether(state.formatUnits(suggestion), unit: "U")
-            let docs = SettingsTestFormat.keepTogether(state.formatUnits(dose), unit: "U")
-            let percent = state.bolusPercent
-            switch comparison {
-            case .less:
-                return String(
-                    localized: "Trio will suggest about \(suggested). That's \(percent)% of the formula's \(docs). Either is fine: the result is worked out from what you give."
-                )
-            case .same:
-                return String(localized: "Trio will suggest about the formula's \(docs).")
-            case .more:
-                return String(
-                    localized: "Trio will suggest about \(suggested). That's \(percent)% of the formula's \(docs). Enter the formula's \(docs) instead of tapping Trio's suggestion."
-                )
-            }
-        }
-
-        private var infoBody: String {
-            let percent = state.bolusPercent
-            let perUnit = String(
-                localized: "Tap Trio's suggestion or enter the formula's dose: the test judges your ISF per unit you actually give."
-            )
-            switch comparison {
-            case .less:
-                return String(
-                    localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%). SMBs normally give the rest, but they're off during the test."
-                ) + " " + perUnit
-            case .same:
-                return String(
-                    localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%), so the two match."
-                ) + " " + perUnit
-            case .more:
-                // More than the docs' dose can bring on a low the ISF doesn't explain, so the docs' dose is the one to give.
-                let docs = SettingsTestFormat.keepTogether(state.formatUnits(dose), unit: "U")
-                return String(
-                    localized: "Trio's bolus calculator suggests the formula's dose times your Recommended Bolus Percentage (\(percent)%), so its suggestion is more than the formula's dose."
-                ) + " " + String(localized: "Enter the formula's \(docs) instead of tapping Trio's suggestion.")
-            }
+        /// What the note and its info sheet say (`StateModel.suggestionNote`).
+        private var texts: (note: String, info: String) {
+            state.suggestionNote(suggestion: suggestion, dose: dose)
         }
 
         var body: some View {
@@ -343,7 +302,7 @@ extension ISFTest {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Color.orange)
                         .accessibilityHidden(true)
-                    Text(noteText)
+                    Text(texts.note)
                         .font(.subheadline)
                         .foregroundStyle(Color.primary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -371,7 +330,7 @@ extension ISFTest {
         private var info: SettingsTestInfo {
             SettingsTestInfo(
                 title: String(localized: "Trio's suggested bolus"),
-                body: infoBody,
+                body: texts.info,
                 links: [Docs.recommendedBolusPercentageLink]
             )
         }

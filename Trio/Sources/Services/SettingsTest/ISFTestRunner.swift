@@ -86,8 +86,10 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
 
     /// Saves the test from the settings in force now, with the carb entries there now (`SettingsTestCarbRule`), starts its
     /// session and switches to Basal Testing. Refused, changing nothing, for `beginRefusal`, without an ISF and a target to
-    /// work from, when those entries can't be read, and when the test or its session didn't save: read back before the
-    /// mode changes, so a relaunch always finds the way back. A new test withdraws the last one's ended notice.
+    /// work from, on the way through tablets without a carb ratio to count them from, when those entries can't be read,
+    /// when an override or a temp target is running or that can't be read (one started after the Check screen last read
+    /// it), and when the test or its session didn't save: read back before the mode changes, so a relaunch always finds
+    /// the way back. A new test withdraws the last one's ended notice.
     @MainActor func begin(_ begin: ISFTestBegin) async -> SettingsTestBeginError? {
         if let refusal = beginRefusal() { return refusal }
         let now = Date()
@@ -100,7 +102,17 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
             warning(.settings, "ISFTestRunner: couldn't read the carb entries there at Begin", error: error)
             return .dataUnreadable(error.localizedDescription)
         }
-        // The read took time.
+        // One started after the Check screen last read it would run through the test.
+        do {
+            if try await reads.hasActiveAdjustment() {
+                warning(.settings, "ISFTestRunner: an override or temp target is running, so the test doesn't begin")
+                return .adjustmentActive
+            }
+        } catch {
+            warning(.settings, "ISFTestRunner: couldn't read whether an override or temp target is running", error: error)
+            return .dataUnreadable(error.localizedDescription)
+        }
+        // The reads took time.
         if let refusal = beginRefusal() { return refusal }
         // What the dose and the result use, kept so neither depends on what the settings say by then.
         guard let isf = reads.isf(at: now), isf > 0, let target = reads.target(at: now) else { return .settingsUnreadable }
@@ -124,6 +136,9 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
             chosen: begin.iobChoice
         )
         test.plannedPhase = ISFTestEvaluator.startPhase(glucose: begin.glucose, target: target)
+        // On the way through tablets, the Raise step counts them with the carb ratio: without one it can't, and the test
+        // could only wait out the time for the dose.
+        if test.plannedPhase == .raising, test.carbRatio == nil { return .carbRatioUnreadable }
         // The schedule as it is at Begin, over every hour settling, a bolus in the time allowed and its 4 hours could
         // reach, so an ISF edited before the bolus is found doesn't become what the test ran on.
         test.coveredEntries = ISFTestEvaluator.coveredAtBegin(reads.isfEntries(), startedAt: now)
@@ -506,15 +521,14 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
         }
     }
 
-    /// What the Dose step reads, as the screen reads it: the recent readings and the CGM's arrow on the newest, insulin
-    /// and carbs on board, and insulin on board for a counted dose (`refreshDoseIOB`). Nil when the readings or the arrow
-    /// couldn't be read, so nothing is decided on them this time.
+    /// What the Dose step reads, as the screen reads it: the recent readings and the CGM's arrow on the newest, from the
+    /// same row (a separate read could find a reading saved since, with an arrow newer than the readings the dose comes
+    /// from), insulin and carbs on board, and insulin on board for a counted dose (`refreshDoseIOB`). Nil when the
+    /// readings couldn't be read, so nothing is decided on them this time.
     private func readDoseInputs() async -> ISFTestDoseInputs? {
         let readings: [BasalTestReading]
-        let direction: BloodGlucose.Direction?
         do {
             readings = try await reads.fetchRecentGlucose(minutes: Self.recentReadingsMinutes)
-            direction = try await reads.fetchNewestDirection()
         } catch {
             warning(.settings, "ISFTestRunner: couldn't read glucose to see what the Dose step offers", error: error)
             return nil
@@ -525,7 +539,7 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
         return await MainActor.run {
             ISFTestDoseInputs(
                 readings: readings,
-                direction: direction,
+                direction: readings.first?.direction,
                 iob: iob,
                 doseIOB: state.doseIOB,
                 cob: cob,
@@ -955,10 +969,8 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
     private func moveOnIfTabletsActed(of testID: UUID) async {
         guard let test = state.test, test.id == testID, test.phase == .raising, test.tabletsTakenAt != nil else { return }
         let readings: [BasalTestReading]
-        let direction: BloodGlucose.Direction?
         do {
             readings = try await reads.fetchRecentGlucose(minutes: Self.recentReadingsMinutes)
-            direction = try await reads.fetchNewestDirection()
         } catch {
             warning(.settings, "ISFTestRunner: couldn't read glucose to see whether the tablets acted", error: error)
             return
@@ -970,9 +982,10 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
             guard var latest = state.test, latest.id == testID, latest.phase == .raising, !isFinishing,
                   sessionIsLive(for: latest)
             else { return }
+            // The arrow on the newest of the readings, from the same row, as the Dose step reads it (`readDoseInputs`).
             let inputs = ISFTestDoseInputs(
                 readings: readings,
-                direction: direction,
+                direction: readings.first?.direction,
                 iob: iob,
                 doseIOB: state.doseIOB,
                 cob: cob,

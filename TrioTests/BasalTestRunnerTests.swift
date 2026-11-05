@@ -47,6 +47,10 @@ private final class GatedBasalReads: BasalTestReads {
         try await base.fetchPumpInterruptions(from: start, to: end)
     }
 
+    func hasActiveAdjustment() async throws -> Bool {
+        try await base.hasActiveAdjustment()
+    }
+
     func hasManualBolus(from start: Date, to end: Date) async throws -> Bool {
         lock.withLock { _manualBolusReads += 1 }
         await gate.pass()
@@ -1134,5 +1138,148 @@ private final class GatedBasalReads: BasalTestReads {
         #expect(finished.outcome == .invalid)
         #expect(finished.interference == BasalTestEvaluator.basalStoppedNote)
         #expect(rig.service.history(for: .basal).isEmpty)
+    }
+
+    // MARK: - CodeRabbit on PR #26
+
+    @Test(
+        "Start is refused, with nothing changed, when carbs it reads are under 2 hours old, in the Check screen's words"
+    ) func beginRefusedAfterRecentCarbs() async throws {
+        let data = basalData()
+        // Logged after the Check screen last read the carbs, so its food row still passed.
+        let snack = Date().addingTimeInterval(-30 * minute)
+        data.carbs = [snack, Date().addingTimeInterval(-3 * hour)]
+        let rig = try makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+
+        let readyAt = snack.addingTimeInterval(BasalTest.Config.fastBeforeStart)
+        let refusal = await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4))
+        #expect(refusal == .recentCarbs(readyAt: readyAt))
+        #expect(refusal?.message == "Ready at \(readyAt.formatted(date: .omitted, time: .shortened)) (2 h after your last carbs)")
+        #expect(rig.settings.settings.dosingMode == .closed)
+        #expect(rig.service.activeSession == nil)
+        #expect(rig.runner.state == nil)
+
+        // Carbs 2 hours old or more don't hold it up.
+        data.carbs = [Date().addingTimeInterval(-2 * hour - minute)]
+        #expect(await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4)) == nil)
+        await rig.runner.discard()
+    }
+
+    @Test(
+        "A finished fast whose save didn't hold archives and posts nothing and stays ending, then finishes once it holds"
+    ) func finishNotSavedIsRetried() async throws {
+        let (data, test) = completedFast()
+        // From launch on, so the service's first check can't finish it before the write fails.
+        let storage = FailingSaveFileStorage(failingSaves: [Self.statePath])
+        let rig = try makeRig(test: nil, session: session(of: test), data: data, storage: storage, beforeStart: { _ in
+            BaseFileStorage().save(test, as: Self.statePath)
+        })
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.service.history(for: .basal).isEmpty)
+        #expect(rig.notifier.posted.filter { $0.slot == .ended }.isEmpty)
+        #expect(rig.runner.state?.phase == .running)
+        #expect(rig.runner.state?.pendingEnd?.reason == .completed)
+        // The usual mode is back all the same.
+        #expect(rig.settings.settings.dosingMode == .closed)
+
+        storage.failingSaves = []
+        await rig.runner.check()
+        #expect(rig.runner.state?.phase == .finished)
+        #expect(rig.storage.retrieve(Self.statePath, as: BasalTestState.self)?.phase == .finished)
+        #expect(rig.service.history(for: .basal).count == 1)
+        #expect(rig.notifier.posted.filter { $0.slot == .ended }.count == 1)
+        await rig.runner.check()
+        #expect(rig.service.history(for: .basal).count == 1)
+    }
+
+    @Test(
+        "A fast the service ended for a mode change ends when the mode changed, not when its runner next checks",
+        arguments: [false, true]
+    ) func modeChangeEndsAtTheChange(_ restored: Bool) async throws {
+        let test = runningFast(startedAgo: 3 * hour)
+        let sessionID = try #require(test.sessionID)
+        let changedAt = test.startedAt.addingTimeInterval(hour)
+        let data = basalData()
+        data.readings = readings(110, for: test)
+        let kept = SettingsTestEnd(sessionID: sessionID, cause: .modeChanged, date: changedAt, modeRestored: restored)
+        // The service ended the session at the change, and Trio closed before the runner finished the fast.
+        let rig = try makeRig(test: test, session: nil, mode: .closed, data: data, beforeStart: { storage in
+            storage.save(kept, as: "trio/settings_test_last_end.json")
+        })
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        let finished = try #require(rig.runner.state)
+        #expect(finished.phase == .finished)
+        // The record was saved and read back, to the precision a saved date keeps.
+        let endedAt = try #require(finished.endedAt)
+        #expect(abs(endedAt.timeIntervalSince(changedAt)) < 1)
+        #expect(!finished.readings.isEmpty)
+        #expect(finished.readings.allSatisfy { $0.date <= changedAt })
+        #expect(finished.outcome == .invalid)
+        #expect(finished.interference == (
+            restored
+                ? "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
+                : "The dosing mode changed during the fast."
+        ))
+    }
+
+    // MARK: - CodeRabbit on PR #26, round 2
+
+    @Test(
+        "Start is refused, with nothing changed, when an override or temp target is running, or that can't be read"
+    ) func beginRefusedWithAnAdjustment() async throws {
+        let data = basalData()
+        // Started after the Check screen last read it, so its row still passed.
+        data.activeAdjustment = true
+        let rig = try makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+
+        let refusal = await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4))
+        #expect(refusal == .adjustmentActive)
+        #expect(refusal?.message == "An override or temp target is running. End it first, then try again.")
+        #expect(rig.settings.settings.dosingMode == .closed)
+        #expect(rig.service.activeSession == nil)
+        #expect(rig.runner.state == nil)
+
+        // A read that fails refuses too, as the carb read's does.
+        data.activeAdjustment = false
+        data.failingAdjustment = true
+        let unread = await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4))
+        #expect(unread == .dataUnreadable(FakeSettingsTestData.Failure().localizedDescription))
+        #expect(rig.runner.state == nil)
+        data.failingAdjustment = false
+        #expect(await rig.runner.begin(BasalTestBegin(glucose: 110, iob: 0, hours: 4)) == nil)
+        await rig.runner.discard()
+    }
+
+    @Test(
+        "A fast with no end glucose says no readings were recorded only when none were, on its Result and in its notice",
+        arguments: [false, true]
+    ) func noEndGlucoseSentence(_ hasReadings: Bool) async throws {
+        let (data, test) = completedFast()
+        // With readings, the newest is an hour before the end, so there is no end glucose to compare.
+        data.readings = hasReadings ? data.readings.filter { $0.date <= test.startedAt.addingTimeInterval(3 * hour) } : []
+        let rig = try makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        let finished = try #require(rig.runner.state)
+        #expect(finished.phase == .finished)
+        #expect(finished.endGlucose == nil)
+        #expect(finished.readings.isEmpty == !hasReadings)
+        let sentence = hasReadings
+            ? "Trio didn't have 3 CGM readings close together at the end of the fast, so there is no end glucose to compare."
+            : "No CGM readings were recorded during the fast, so there is no end glucose to compare."
+        let paragraphs = BasalTestEvaluator.resultParagraphs(
+            for: try #require(finished.outcome),
+            test: finished,
+            evaluation: BasalTestEvaluator.evaluation(of: finished)
+        )
+        #expect(paragraphs == [sentence])
+        #expect(rig.notifier.posted.last == .ended(.basal, sentence: sentence, modeBack: true))
     }
 }

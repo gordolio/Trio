@@ -29,6 +29,8 @@ protocol ISFTestReads: AnyObject {
     func fetchSuspendReading(startedAt: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading
     func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date]
     func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry]
+    /// Whether an override or a temp target is running, as the Check screen reads it.
+    func hasActiveAdjustment() async throws -> Bool
     /// Insulin on board for a counted dose, from Trio's newest determination of the 12 minutes up to `now`. Nil when there
     /// is none.
     func fetchDoseIOB(at now: Date) async throws -> Decimal?

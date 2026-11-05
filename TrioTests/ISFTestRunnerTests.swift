@@ -2239,4 +2239,134 @@ private final class Seen<Value> {
         #expect(rig.notifier.withdrawn.contains(Withdrawal(kind: .isf, slot: .step)))
         #expect(rig.notifier.posted == [.isfStep(.timeUp)])
     }
+
+    // MARK: - CodeRabbit on PR #26
+
+    @Test(
+        "Begin is refused, with nothing changed, on the way through tablets with no carb ratio to count them from"
+    ) func beginRefusedWithoutACarbRatio() async {
+        let data = isfData()
+        data.carbRatio = nil
+        let rig = makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+
+        // 120 mg/dL on target 100: the test raises glucose with tablets first, counted with the carb ratio.
+        let refusal = await rig.runner.begin(ISFTestBegin(glucose: 120, iob: 0, iobChoice: .wait))
+        #expect(refusal == .carbRatioUnreadable)
+        #expect(refusal?.message == "Trio couldn't read your carb ratio, so it can't count the tablets.")
+        #expect(rig.settings.settings.dosingMode == .closed)
+        #expect(rig.service.activeSession == nil)
+        #expect(rig.runner.state.test == nil)
+
+        // Straight to the dose, it needs none.
+        #expect(await rig.runner.begin(ISFTestBegin(glucose: 210, iob: 0, iobChoice: .wait)) == nil)
+        await rig.runner.discard()
+    }
+
+    @Test(
+        "A finished test whose save didn't hold archives and posts nothing and stays ending, then finishes once it holds"
+    ) func finishNotSavedIsRetried() async throws {
+        let (data, test) = completedData()
+        // From launch on, so the service's first check can't finish it before the write fails.
+        let storage = FailingSaveFileStorage(failingSaves: [Self.statePath])
+        let rig = makeRig(test: nil, session: session(of: test), data: data, storage: storage, beforeStart: { _ in
+            BaseFileStorage().save(test, as: Self.statePath)
+        })
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.service.history(for: .isf).isEmpty)
+        #expect(rig.notifier.posted.filter { $0.slot == .ended }.isEmpty)
+        #expect(rig.runner.state.test?.phase == .waiting)
+        #expect(rig.runner.state.test?.pendingEnd?.reason == .completed)
+        // The usual mode is back all the same.
+        #expect(rig.settings.settings.dosingMode == .closed)
+
+        storage.failingSaves = []
+        await rig.runner.check()
+        #expect(rig.runner.state.test?.phase == .finished)
+        #expect(rig.storage.retrieve(Self.statePath, as: ISFTestState.self)?.phase == .finished)
+        #expect(rig.service.history(for: .isf).count == 1)
+        #expect(rig.notifier.posted.filter { $0.slot == .ended }.count == 1)
+        await rig.runner.check()
+        #expect(rig.service.history(for: .isf).count == 1)
+    }
+
+    @Test(
+        "The Dose step's arrow is the newest reading's own, not one a later read found on a newer reading"
+    ) func doseArrowFromTheDoseReadings() async {
+        var test = dosingTest(settledAgo: 5 * minute)
+        test.doseNoticeDue = .settled
+        let data = isfData()
+        data.determinations = [ISFTestDetermination(date: Date().addingTimeInterval(-2 * minute), iob: 0, cob: 0)]
+        // The readings the dose comes from end rising; the newest-direction read, a moment later, found a newer reading's
+        // flat arrow.
+        let now = Date()
+        data.readings = readings(210, before: now)
+        data.arrows = [ISFTestArrowReading(date: now.addingTimeInterval(-minute), direction: .singleUp)]
+        data.newestDirectionRead = .flat
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.runner.state.test?.phase == .dosing)
+        // Open Treatments would be off, so "ISF Dose Ready" stays owed.
+        #expect(rig.notifier.posted.isEmpty)
+        #expect(rig.runner.state.test?.doseNoticeDue == .settled)
+        #expect(rig.runner.state.test?.doseOfferedAt == nil)
+    }
+
+    // MARK: - CodeRabbit on PR #26, round 2
+
+    @Test(
+        "Begin is refused, with nothing changed, when an override or temp target is running, or that can't be read"
+    ) func beginRefusedWithAnAdjustment() async {
+        let data = isfData()
+        // Started after the Check screen last read it, so its row still passed.
+        data.activeAdjustment = true
+        let rig = makeRig(test: nil, session: nil, mode: .closed, data: data)
+        defer { cleanUp(rig.storage) }
+
+        let refusal = await rig.runner.begin(ISFTestBegin(glucose: 210, iob: 0, iobChoice: .wait))
+        #expect(refusal == .adjustmentActive)
+        #expect(refusal?.message == "An override or temp target is running. End it first, then try again.")
+        #expect(rig.settings.settings.dosingMode == .closed)
+        #expect(rig.service.activeSession == nil)
+        #expect(rig.runner.state.test == nil)
+
+        // A read that fails refuses too, as the carb read's does.
+        data.activeAdjustment = false
+        data.failingAdjustment = true
+        let unread = await rig.runner.begin(ISFTestBegin(glucose: 210, iob: 0, iobChoice: .wait))
+        #expect(unread == .dataUnreadable(FakeSettingsTestData.Failure().localizedDescription))
+        #expect(rig.runner.state.test == nil)
+        data.failingAdjustment = false
+        #expect(await rig.runner.begin(ISFTestBegin(glucose: 210, iob: 0, iobChoice: .wait)) == nil)
+        await rig.runner.discard()
+    }
+
+    @Test(
+        "A test with no start or end glucose says no readings were recorded only when none were, on its Result and in its notice",
+        arguments: [false, true]
+    ) func noReadingsSentence(_ hasReadings: Bool) async throws {
+        let (data, test) = completedData()
+        let bolusAt = try #require(test.bolusAt)
+        // The start glucose was read at the bolus. Since it, one reading 2 hours in, or none: no end glucose either way.
+        data.readings = readings(212, before: bolusAt)
+            + (hasReadings ? [BasalTestReading(date: bolusAt.addingTimeInterval(2 * hour), glucose: 150)] : [])
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        let finished = try #require(rig.runner.state.test)
+        #expect(finished.phase == .finished)
+        #expect(finished.endGlucose == nil)
+        #expect(finished.readings.isEmpty == !hasReadings)
+        #expect(ISFTestEvaluator.noVerdict(for: finished) == .noReadings)
+        let sentence = hasReadings
+            ? "Trio didn't have 3 CGM readings close together at the bolus or at the end, so there is nothing to compare."
+            : "No CGM readings were recorded at the bolus or at the end of the test, so there is nothing to compare."
+        #expect(ISFTestEvaluator.noVerdictText(.noReadings, test: finished) == sentence)
+        #expect(rig.notifier.posted.last == .ended(.isf, sentence: sentence, modeBack: true))
+    }
 }

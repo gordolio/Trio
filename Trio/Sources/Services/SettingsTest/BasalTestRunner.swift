@@ -12,6 +12,8 @@ protocol BasalTestReads: AnyObject {
     func fetchGlucose(from start: Date, to end: Date) async throws -> [BasalTestReading]
     func fetchSuspendReading(from start: Date, to end: Date) async throws -> BasalTestEvaluator.SuspendReading
     func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry]
+    /// Whether an override or a temp target is running, as the Check screen reads it.
+    func hasActiveAdjustment() async throws -> Bool
     func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date]
     func hasManualBolus(from start: Date, to end: Date) async throws -> Bool
     func fetchSMBs(since start: Date, until end: Date) async throws -> [BasalTestSMB]
@@ -113,21 +115,37 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
 
     /// Saves the fast from the settings in force now, with the carb entries there now (`SettingsTestCarbRule`), starts
     /// its session and switches to Basal Testing. Refused, changing nothing, for `beginRefusal`, when those entries can't
-    /// be read, and when the fast or its session didn't save: read back before the mode changes, so a relaunch always
-    /// finds the way back. A new fast withdraws the last one's ended notice.
+    /// be read, when one of them is dated under the docs' 2 hours before now (`fastBeforeStart`: one logged after the
+    /// Check screen last read the carbs, whose food row then still passed, would be kept as there at Begin and never spoil
+    /// the fast), when an override or a temp target is running or that can't be read (one started after the Check screen
+    /// last read it), and when the fast or its session didn't save: read back before the mode changes, so a relaunch
+    /// always finds the way back. A new fast withdraws the last one's ended notice.
     @MainActor func begin(_ begin: BasalTestBegin) async -> SettingsTestBeginError? {
         if let refusal = beginRefusal() { return refusal }
         let now = Date()
-        let carbsAtBegin: [String]
+        let entries: [SettingsTestCarbEntry]
         do {
-            carbsAtBegin = SettingsTestCarbRule.keptAtBegin(
-                try await reads.fetchCarbEntries(from: now.addingTimeInterval(-SettingsTestCarbRule.lookback), to: now)
-            )
+            entries = try await reads.fetchCarbEntries(from: now.addingTimeInterval(-SettingsTestCarbRule.lookback), to: now)
         } catch {
             warning(.settings, "BasalTestRunner: couldn't read the carb entries there at Start", error: error)
             return .dataUnreadable(error.localizedDescription)
         }
-        // The read took time.
+        if let newest = entries.map(\.date).max(), now.timeIntervalSince(newest) < BasalTest.Config.fastBeforeStart {
+            warning(.settings, "BasalTestRunner: carbs were logged under 2 hours before Start, so the fast doesn't begin")
+            return .recentCarbs(readyAt: newest.addingTimeInterval(BasalTest.Config.fastBeforeStart))
+        }
+        let carbsAtBegin = SettingsTestCarbRule.keptAtBegin(entries)
+        // One started after the Check screen last read it would run through the fast.
+        do {
+            if try await reads.hasActiveAdjustment() {
+                warning(.settings, "BasalTestRunner: an override or temp target is running, so the fast doesn't begin")
+                return .adjustmentActive
+            }
+        } catch {
+            warning(.settings, "BasalTestRunner: couldn't read whether an override or temp target is running", error: error)
+            return .dataUnreadable(error.localizedDescription)
+        }
+        // The reads took time.
         if let refusal = beginRefusal() { return refusal }
         let duration = TimeInterval(begin.hours) * 3600
         let previous = settingsManager.settings.dosingMode
@@ -437,7 +455,16 @@ final class BasalTestRunner: SettingsTestRunner, BasalTestRunning {
             // A note that says the usual dosing came back says so only when the mode in force now is it.
             var finished = ended
             finished.interference = BasalTestEvaluator.modeWorded(ended.interference, modeBack: modeIsBack(for: ended))
-            save(finished)
+            // Read back before it is shown, archived and posted: a write that didn't last would leave the fast running on
+            // disk with its ending, so a relaunch would finish, archive and post it again. It stays ending instead, as
+            // shown, and the next check finishes it again.
+            storage.save(finished, as: BasalTest.Config.statePath)
+            let saved = storage.retrieve(BasalTest.Config.statePath, as: BasalTestState.self)
+            guard saved?.id == finished.id, saved?.phase == .finished else {
+                warning(.settings, "BasalTestRunner: the finished fast didn't save, so it stays ending until it does")
+                return false
+            }
+            subject.send(finished)
             if let archived {
                 service?.archive(archived)
             }

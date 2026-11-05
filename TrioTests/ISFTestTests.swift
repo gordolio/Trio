@@ -3696,7 +3696,7 @@ import UIKit
             now: at(960),
             plannedEnd: at(4 * hour),
             mode: .closed
-        ) == .modeChangedRestored)
+        ) == .modeChangedRestored(at: at(900)))
         #expect(BasalTestEvaluator.runningCheck(
             sessionID: testSession,
             serviceEnd: record(false, after: 900),
@@ -3704,7 +3704,7 @@ import UIKit
             now: at(960),
             plannedEnd: at(4 * hour),
             mode: .closed
-        ) == .modeChanged)
+        ) == .modeChanged(at: at(900)))
     }
 
     @Test("Every end path puts the usual mode back while Basal Testing is on, and leaves any other mode") func modeRule() {
@@ -4095,7 +4095,7 @@ import UIKit
 
         // The basal fast's.
         let basalCarbs = BasalTestEvaluator.ending(for: .carbsUnreadable(at: doseNow)).note
-        let basalRestored = BasalTestEvaluator.ending(for: .modeChangedRestored).note
+        let basalRestored = BasalTestEvaluator.ending(for: .modeChangedRestored(at: nil)).note
         #expect(BasalTestEvaluator.modeWorded(basalCarbs, modeBack: true) == basalCarbs)
         #expect(BasalTestEvaluator.modeWorded(basalCarbs, modeBack: false) == BasalTestEvaluator.unreadNote)
         #expect(BasalTestEvaluator.modeWorded(basalRestored, modeBack: false) == "The dosing mode changed during the fast.")

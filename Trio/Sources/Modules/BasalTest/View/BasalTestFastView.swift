@@ -59,7 +59,8 @@ extension BasalTest {
         private var glucoseCard: some View {
             SettingsTestCard(title: String(localized: "Glucose")) {
                 if let test = state.test {
-                    let now = state.currentGlucose
+                    // "--" once the newest reading is out of date: the warning under the chart says why.
+                    let now = state.glucoseNow
                     SettingsTestMetricRow(metrics: [
                         SettingsTestMetric(title: String(localized: "Start"), value: state.format(test.startGlucose)),
                         SettingsTestMetric(title: String(localized: "Now"), value: now.map(state.format) ?? "--"),

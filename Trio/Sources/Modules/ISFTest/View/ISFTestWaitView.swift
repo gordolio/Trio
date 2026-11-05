@@ -106,7 +106,8 @@ extension ISFTest {
         private var glucoseCard: some View {
             SettingsTestCard(title: String(localized: "Glucose since the bolus")) {
                 if let test = state.test {
-                    let now = state.currentGlucose
+                    // "--" once the newest reading is out of date: the warning under the chart says why.
+                    let now = state.glucoseNow
                     let start = test.startGlucose
                     SettingsTestMetricRow(metrics: [
                         SettingsTestMetric(title: String(localized: "Start"), value: start.map(state.format) ?? "--"),

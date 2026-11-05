@@ -1809,6 +1809,22 @@ enum ISFTestEvaluator {
         rounded(dose * percentage, scale: 2, roundingMode: .plain)
     }
 
+    /// Whether Trio's `suggestion` would be too small for the test to judge while the formula's `dose` isn't: given at
+    /// `glucose`, no whole end reading would lie within a docs step of where it takes glucose (`accurateEnds`, as the
+    /// result is judged, `noVerdict`'s `doseTooSmall`), and one would for the dose. Each is read as given, the bolus plus
+    /// the insulin on board now (`iob`), as `givenUnits` counts the insulin on board at the bolus; what is left at the end
+    /// isn't known yet.
+    static func suggestionTooSmall(
+        suggestion: Decimal,
+        dose: Decimal,
+        glucose: Int,
+        isf: Decimal,
+        iob: Decimal
+    ) -> Bool {
+        accurateEnds(startGlucose: glucose, units: suggestion + iob, isf: isf) == nil
+            && accurateEnds(startGlucose: glucose, units: dose + iob, isf: isf) != nil
+    }
+
     /// How Trio's suggestion compares with the docs' dose at a Recommended Bolus Percentage of `percent` (80 for 80%),
     /// the whole percent the note shows.
     static func suggestionComparison(percent: Int) -> ISFTestSuggestion {

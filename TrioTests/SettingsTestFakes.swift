@@ -53,6 +53,9 @@ final class FakeSettingsTestData: SettingsTestEvents {
     /// Fails only the bolus read, so the temps and carbs before it are still read.
     var failingBoluses = false
     var failingPumpEvents = false
+    /// Whether an override or a temp target is running (`hasActiveAdjustment`).
+    var activeAdjustment = false
+    var failingAdjustment = false
 
     /// The counters a launch check and a test's own calls can change at the same time.
     private let counterLock = NSLock()
@@ -119,6 +122,9 @@ final class FakeSettingsTestData: SettingsTestEvents {
     var readings: [BasalTestReading] = []
     /// The CGM's arrows, each dated at the reading in `readings` it came with; a reading with none has no arrow.
     var arrows: [ISFTestArrowReading] = []
+    /// What the newest-direction read gives instead of the newest reading's own arrow: the arrow of a reading saved after
+    /// the readings were read and before it. Nil to read the newest reading's.
+    var newestDirectionRead: BloodGlucose.Direction?
     /// Trio's determinations, with the insulin and carbs on board each held.
     var determinations: [ISFTestDetermination] = []
     /// The rows the pump history flags as SMBs.
@@ -248,6 +254,7 @@ extension FakeSettingsTestData: ISFTestReads {
     /// The newest reading's arrow, nil when it came with none, as the provider reads it.
     func fetchNewestDirection() async throws -> BloodGlucose.Direction? {
         if failing { throw Failure() }
+        if let newestDirectionRead { return newestDirectionRead }
         guard let newest = readings.max(by: { $0.date < $1.date }) else { return nil }
         return newest.direction ?? arrow(at: newest.date)
     }
@@ -309,6 +316,12 @@ extension FakeSettingsTestData: ISFTestReads {
         try await carbEntries(from: start, to: end)
     }
 
+    /// Read by both runners' Begin (`ISFTestReads`, `BasalTestReads`).
+    func hasActiveAdjustment() async throws -> Bool {
+        if failing || failingAdjustment { throw Failure() }
+        return activeAdjustment
+    }
+
     func fetchDoseIOB(at now: Date) async throws -> Decimal? {
         let recent = try await fetchDeterminations(
             from: now.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - ISFTest.Config.savedDateTolerance),
@@ -336,13 +349,20 @@ extension FakeSettingsTestData: BasalTestReads {
 // MARK: - Storage
 
 /// The app's file storage, except that a save to one of `failingSaves` is dropped, as `BaseFileStorage` drops one whose
-/// write throws (a full disk, say): logged, and nothing written.
+/// write throws (a full disk, say): logged, and nothing written. A test can change them as it goes, so a write fails only
+/// from some point on, or works again.
 final class FailingSaveFileStorage: FileStorage {
     private let base = BaseFileStorage()
-    let failingSaves: Set<String>
+    private let lock = NSLock()
+    private var _failingSaves: Set<String>
+
+    var failingSaves: Set<String> {
+        get { lock.withLock { _failingSaves } }
+        set { lock.withLock { _failingSaves = newValue } }
+    }
 
     init(failingSaves: Set<String>) {
-        self.failingSaves = failingSaves
+        _failingSaves = failingSaves
     }
 
     func save<Value: JSON>(_ value: Value, as name: String) {
