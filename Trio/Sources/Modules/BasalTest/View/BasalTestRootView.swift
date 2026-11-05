@@ -17,6 +17,7 @@ extension BasalTest {
                     Text(state.errorMessage ?? "")
                 }
                 .onAppear(perform: configureView)
+                .settingsTestScreen(.basal)
         }
     }
 

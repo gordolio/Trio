@@ -19,6 +19,7 @@ class AppDelegate: NSObject, UIApplicationDelegate, ObservableObject, UNUserNoti
         let crashReportingEnabled: Bool = PropertyPersistentFlags.shared.crashlyticsSharingEnabled ?? true
         CrashReportingGate.configureAtLaunch(enabled: crashReportingEnabled)
 
+        SettingsTestHooks.installLaunchDelegate()
         return true
     }
 

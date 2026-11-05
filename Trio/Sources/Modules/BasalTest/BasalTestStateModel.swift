@@ -3,17 +3,22 @@ import CoreData
 import Foundation
 import Observation
 import SwiftUI
-import UserNotifications
 
 extension BasalTest {
     @Observable final class StateModel: BaseStateModel<Provider> {
         @ObservationIgnored @Injected() var testService: SettingsTestService!
         @ObservationIgnored @Injected() var glucoseStorage: GlucoseStorage!
+        /// What runs the fast, in the service: the screen shows its state (`apply`) and passes the user's actions on. The
+        /// service's (`subscribe`), or one a test sets.
+        @ObservationIgnored var runner: BasalTestRunning?
+        /// What `refresh` reads: the provider, or what a test sets.
+        @ObservationIgnored var screenReads: BasalTestProvider?
+        private var reads: BasalTestProvider { screenReads ?? provider }
 
         // MARK: - State
 
-        /// The test in progress or just finished. `nil` while the user is still getting ready.
-        var test: BasalTestState?
+        /// The test in progress or just finished, as the runner saved it. `nil` while the user is still getting ready.
+        private(set) var test: BasalTestState?
 
         /// Newest first, for the readiness checks.
         private(set) var recentReadings: [BasalTestReading] = []
@@ -27,6 +32,9 @@ extension BasalTest {
         private(set) var trendDirection: BloodGlucose.Direction?
         /// The kind of settings test running, if any. Only one can run at a time.
         private(set) var activeSessionKind: SettingsTestKind?
+        /// The session running and the one the service last ended on its own, as the service last said (`showSession`).
+        /// Nil until the screen has read them.
+        private(set) var serviceSession: (activeID: UUID?, lastEndID: UUID?)?
         /// What the SMB row reads. Nil until the first read.
         private(set) var fastingSource: FastingSource?
         /// The basal schedule now, for the hours the Check screen says the fast will cover.
@@ -49,7 +57,9 @@ extension BasalTest {
         var showStopOptions = false
 
         @ObservationIgnored private var dataSubscriptions = Set<AnyCancellable>()
-        @ObservationIgnored private var isFinishing = false
+        /// Each refresh's number, in the order they began, and the newest one shown (`refresh`). Main actor only.
+        @ObservationIgnored private var refreshesBegun = 0
+        @ObservationIgnored private var newestRefreshShown = 0
 
         // MARK: - Units
 
@@ -117,6 +127,13 @@ extension BasalTest {
         // MARK: - Readiness
 
         var currentGlucose: Int? { recentReadings.first?.glucose }
+
+        /// The glucose the fast starts from: the mean of the newest 3 readings, the same mean its end is read by
+        /// (`BasalTestEvaluator.endGlucose`). Nil without a reading 12 minutes old or newer, or with a CGM gap among them,
+        /// which holds Start up: a CGM that isn't reading can't watch the fast.
+        var startGlucose: Int? {
+            BasalTestEvaluator.endGlucose(from: Array(recentReadings.prefix(3)), endingAt: Date())
+        }
 
         var fastedLongEnough: Bool {
             guard let lastCarb else { return true }
@@ -331,14 +348,16 @@ extension BasalTest {
 
         // Each is one line, a label and a value; anything longer is in its info sheet.
 
+        /// The mean of the newest 3 readings the fast starts from (`startGlucose`), as the ISF test's row shows its own.
+        /// Without one, the newest reading and how old it is.
         private var glucoseCheck: Check {
             let value: String
-            if let glucose = currentGlucose, let latest = recentReadings.first?.date {
-                value = readingIsStale
-                    ? String(
-                        localized: "\(formatWithUnits(glucose)), \(SettingsTestFormat.duration(Date().timeIntervalSince(latest))) ago"
-                    )
-                    : formatWithUnits(glucose)
+            if let mean = startGlucose {
+                value = formatWithUnits(mean)
+            } else if let glucose = currentGlucose, let latest = recentReadings.first?.date {
+                value = String(
+                    localized: "\(formatWithUnits(glucose)), \(SettingsTestFormat.duration(Date().timeIntervalSince(latest))) ago"
+                )
             } else {
                 value = String(localized: "Waiting")
             }
@@ -350,7 +369,7 @@ extension BasalTest {
                 info: SettingsTestInfo(
                     title: String(localized: "Glucose now"),
                     body: String(
-                        localized: "Your latest CGM reading, where the fast starts from; it's here for you to judge and doesn't hold up the start."
+                        localized: "The average of your last 3 CGM readings, where the fast starts from. Without a recent reading, this shows your newest one and how old it is. It's here for you to judge and doesn't hold up the start."
                     )
                 )
             )
@@ -527,6 +546,12 @@ extension BasalTest {
             return Date().timeIntervalSince(latest) > 15 * 60
         }
 
+        /// The Fast step's "Now", which its "Change" is worked out from: the newest reading while it is recent, nil once it
+        /// is out of date (`readingIsStale`), so a CGM that stopped doesn't leave an old reading standing as now.
+        var glucoseNow: Int? {
+            readingIsStale ? nil : currentGlucose
+        }
+
         /// How far glucose can move from where the fast started before it is worth one docs step of the scheduled
         /// basal, as a band around the start glucose in mg/dL. Nil without an ISF and a basal to work it out from.
         var steadyBand: ClosedRange<Int>? {
@@ -571,7 +596,11 @@ extension BasalTest {
         // MARK: - Subscription
 
         override func subscribe() {
-            test = provider.storage.retrieve(Config.statePath, as: BasalTestState.self)
+            if let runner = runner ?? testService.basalRunner {
+                follow(runner)
+            } else {
+                warning(.settings, "BasalTest: the settings test service has no basal runner, so the screen can't run a test")
+            }
 
             // A new reading changes nothing in the week of SMBs, so only a new determination reads it again.
             glucoseStorage.updatePublisher
@@ -586,44 +615,125 @@ extension BasalTest {
                 .store(in: &dataSubscriptions)
 
             // Right away, so the first frame doesn't show "No other test running" as passed.
-            activeSessionKind = testService.activeSession?.kind
+            showSession(testService.activeSession, lastEnd: testService.lastEnd())
             testService.sessionPublisher
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] session in self?.activeSessionKind = session?.kind }
+                .sink { [weak self] session in self?.showSession(session, lastEnd: self?.testService.lastEnd()) }
                 .store(in: &dataSubscriptions)
 
             Task { await refresh() }
         }
 
-        /// Pulls fresh data, then checks whether a running fast should stop. `reloadingWeek` false keeps the week of SMBs
-        /// already read for the Check screen.
+        /// Shows the service's session: the one running, and the one it last ended on its own (`lastEnd`), kept before it
+        /// sent its end, so a fast whose session ended shows as ending (`isEnding`).
+        func showSession(_ session: SettingsTestSession?, lastEnd: SettingsTestEnd?) {
+            activeSessionKind = session?.kind
+            serviceSession = (activeID: session?.id, lastEndID: lastEnd?.sessionID)
+        }
+
+        /// Whether the fast is ending, so its step takes neither End Now nor Discard (`SettingsTestModeRule.isEnding`): its
+        /// ending is saved, or its session no longer runs while its runner's finish is to come.
+        var isEnding: Bool {
+            guard let test else { return false }
+            return SettingsTestModeRule.isEnding(
+                hasPendingEnd: test.pendingEnd != nil,
+                isRunning: test.phase == .running,
+                testSessionID: test.sessionID,
+                session: serviceSession,
+                mode: currentMode,
+                previousMode: test.previousMode
+            )
+        }
+
+        /// Shows the runner's fast now, so the first frame is its step, and each change it publishes, on the main queue.
+        func follow(_ runner: BasalTestRunning) {
+            self.runner = runner
+            apply(runner.state)
+            runner.statePublisher
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] test in self?.apply(test) }
+                .store(in: &dataSubscriptions)
+        }
+
+        /// Shows the fast the runner publishes. The only place it changes. The fast on screen finishing has its Result's week
+        /// of SMBs read, which a running fast doesn't read; a screen opened on a finished one reads it in `refresh`.
+        func apply(_ test: BasalTestState?) {
+            let finishes = test?.phase == .finished && self.test?.id == test?.id && self.test?.phase == .running
+            self.test = test
+            if finishes {
+                Task { try? await loadFastingSource() }
+            }
+        }
+
+        /// What `refresh` reads for the Check and Fast steps, shown in one step on the main actor (`show`).
+        struct ScreenData {
+            /// Newest first.
+            var readings: [BasalTestReading]
+            var iob: Decimal
+            var cob: Decimal
+            var lastCarb: Date?
+            var hasActiveAdjustment: Bool
+            var hasPumpSetTempBasal: Bool
+            var hasDevices: Bool
+            var trendDirection: BloodGlucose.Direction?
+        }
+
+        /// Shows what `refresh` read.
+        func show(_ data: ScreenData) {
+            recentReadings = data.readings
+            currentIOB = data.iob
+            currentCOB = data.cob
+            lastCarb = data.lastCarb
+            hasActiveAdjustment = data.hasActiveAdjustment
+            hasPumpSetTempBasal = data.hasPumpSetTempBasal
+            hasDevices = data.hasDevices
+            trendDirection = data.trendDirection
+        }
+
+        /// Pulls fresh data, then has the runner check whether a running fast should stop. `reloadingWeek` false keeps the
+        /// week of SMBs already read for the Check screen. Refreshes overlap (each new reading and determination starts
+        /// one) and can finish out of order, so one that finishes after a newer one has shown its reads shows nothing,
+        /// neither its reads nor its error: an older snapshot never replaces a newer one.
         func refresh(reloadingWeek: Bool = true) async {
-            let schedule = provider.basalEntries()
+            let number = await MainActor.run { () -> Int in
+                refreshesBegun += 1
+                return refreshesBegun
+            }
+            let reads = self.reads
+            let schedule = reads.basalEntries()
             await MainActor.run { basalSchedule = schedule }
             do {
-                let readings = try await provider.fetchRecentGlucose(minutes: 24 * 60)
-                let iob = provider.getCurrentIOB()
-                let cob = try await provider.getCurrentCOB()
-                let carb = try await provider.lastCarbEntry(withinHours: 6)
-                let adjustment = try await provider.hasActiveAdjustment()
-                let pumpTempBasal = provider.hasPumpSetTempBasal()
-                let devices = provider.hasCgmAndPump()
-                let direction = try await provider.fetchNewestDirection()
+                let readings = try await reads.fetchRecentGlucose(minutes: 24 * 60)
+                let iob = reads.getCurrentIOB()
+                let cob = try await reads.getCurrentCOB()
+                let carb = try await reads.lastCarbEntry(withinHours: 6)
+                let adjustment = try await reads.hasActiveAdjustment()
+                let pumpTempBasal = reads.hasPumpSetTempBasal()
+                let devices = reads.hasCgmAndPump()
+                let direction = try await reads.fetchNewestDirection()
+                let data = ScreenData(
+                    readings: readings,
+                    iob: iob,
+                    cob: cob,
+                    lastCarb: carb,
+                    hasActiveAdjustment: adjustment,
+                    hasPumpSetTempBasal: pumpTempBasal,
+                    hasDevices: devices,
+                    trendDirection: direction
+                )
                 await MainActor.run {
-                    recentReadings = readings
-                    currentIOB = iob
-                    currentCOB = cob
-                    lastCarb = carb
-                    hasActiveAdjustment = adjustment
-                    hasPumpSetTempBasal = pumpTempBasal
-                    hasDevices = devices
-                    trendDirection = direction
+                    guard number > newestRefreshShown else { return }
+                    newestRefreshShown = number
+                    show(data)
                 }
                 try await loadFastingSource(reloadingWeek: reloadingWeek)
             } catch {
-                await MainActor.run { errorMessage = "Couldn't read your data: \(error.localizedDescription)" }
+                await MainActor.run {
+                    guard number >= newestRefreshShown else { return }
+                    errorMessage = "Couldn't read your data: \(error.localizedDescription)"
+                }
             }
-            await checkRunningTest()
+            await runner?.check()
         }
 
         /// Reads what the SMB row counts and keeps it. A running fast shows no such row, so it reads nothing then.
@@ -634,329 +744,80 @@ extension BasalTest {
             if fastingSource != nil, fastingSource?.testID == current?.id, current != nil || !reloadingWeek { return }
             // The week before the test, or before now on the Check screen.
             let since = (current?.startedAt ?? Date()).addingTimeInterval(-Config.smbLookback)
-            let smbs = try await provider.fetchSMBs(since: since)
+            let smbs = try await reads.fetchSMBs(since: since, until: .distantFuture)
             // From an hour earlier, so the first SMBs have a sample before them.
-            let cob = try await provider.fetchCOBSamples(since: since.addingTimeInterval(-3600))
+            let cob = try await reads.fetchCOBSamples(since: since.addingTimeInterval(-3600))
             let source = FastingSource(testID: current?.id, smbs: smbs, cob: cob)
             await MainActor.run { fastingSource = source }
         }
 
         // MARK: - Start
 
+        /// What Start says without a recent glucose to start from: the ISF test's words for the same thing.
+        private var noRecentGlucoseMessage: String {
+            String(localized: "Trio has no recent glucose reading. Wait for your CGM's next reading, then try again.")
+        }
+
         func requestStart() {
             guard readyToStart else { return }
-            // The fast needs a glucose to start from, and no row blocks on it.
-            guard currentGlucose != nil else {
-                errorMessage =
-                    String(localized: "Trio has no glucose reading yet. Wait for your CGM's next reading, then try again.")
+            // The fast needs a recent glucose to start from (an app fact, as the devices are), and no row blocks on it.
+            guard startGlucose != nil else {
+                errorMessage = noRecentGlucoseMessage
                 return
             }
             showStartConfirmation = true
         }
 
-        func confirmStart() {
+        /// Start: the runner saves the fast, starts its session and switches to Basal Testing. Only when every check
+        /// passes, Basal Testing being off among them, so the runner never records it as the usual mode, and with a
+        /// recent glucose to start from (`startGlucose`), none made up.
+        @MainActor func confirmStart() {
             showStartConfirmation = false
-            guard readyToStart, let glucose = currentGlucose else { return }
-
-            let now = Date()
-            let duration = TimeInterval(selectedHours) * 3600
-            let previous = currentMode
-            // What the test runs on, kept so the result and a later check of the schedule don't depend on
-            // what the settings say by then.
-            let snapshot = BasalTestEvaluator.snapshot(of: provider.basalEntries(), startingAt: now, for: duration)
-            var state = BasalTestState(
-                startedAt: now,
-                plannedDuration: duration,
-                startGlucose: glucose,
-                startIOB: currentIOB,
-                previousMode: previous,
-                timeBlock: BasalTestEvaluator.timeBlock(for: now),
-                isf: provider.isf(at: now),
-                scheduledBasal: snapshot.scheduledBasal,
-                coveredEntries: snapshot.covered
-            )
-
-            // Saved first, so a crash from here on leaves a fast this screen can finish: one that never reached Basal
-            // Testing ends as interrupted.
-            provider.storage.save(state, as: Config.statePath)
-            // Register the way back before changing anything, so an interruption can't leave the user
-            // in Basal Testing with nobody watching it.
-            guard let session = testService.begin(
-                kind: .basal,
-                expiresIn: duration + Config.expiryGrace,
-                restoring: [.dosingMode(testMode: .basalTesting, previous: previous)]
-            ) else {
-                provider.storage.remove(Config.statePath)
-                errorMessage = String(localized: "Another settings test is running. Finish it first.")
+            guard readyToStart else { return }
+            // The reading may have grown too old while the confirmation was up.
+            guard let glucose = startGlucose else {
+                errorMessage = noRecentGlucoseMessage
                 return
             }
-            // Saved again with its session, before the mode changes, so the service's record of ending it for a low
-            // or for carbs can be matched to this test.
-            state.sessionID = session.id
-            provider.storage.save(state, as: Config.statePath)
-            settingsManager.settings.dosingMode = .basalTesting
-            test = state
-            scheduleFinishedNotification(at: state.plannedEnd)
+            let begin = BasalTestBegin(glucose: glucose, iob: currentIOB, hours: selectedHours)
+            // Start reads the carb entries there now before it switches the mode.
+            Task { @MainActor in
+                if let error = await runner?.begin(begin) {
+                    errorMessage = error.message
+                }
+            }
         }
 
         // MARK: - Finish
 
-        /// Ends the fast if the service ended it for a low or for carbs, Trio suspended insulin for a low, its time is up,
-        /// the dosing mode was changed, or something spoiled it.
+        /// Has the runner check the fast now: the Fast step's timer.
         func checkRunningTest() async {
-            guard let test, test.phase == .running, !isFinishing else { return }
-            // What the check finishes below is this fast, and only this one: the reads in between give the user time to
-            // discard it and start another, which this check knows nothing about.
-            let testID = test.id
-
-            let now = Date()
-            // Only the fast itself: a zero temp after the planned end isn't this test's low.
-            let end = min(now, test.plannedEnd)
-            let suspend: BasalTestEvaluator.SuspendReading
-            do {
-                suspend = try await provider.fetchSuspendReading(from: test.startedAt, to: end)
-            } catch {
-                // Without them a low can't be told from a fast that ran its course. Before the planned end nothing is
-                // decided on them this time; at it, the fast still ends, without a verdict.
-                warning(.settings, "BasalTest: couldn't read temp basals to check for a low", error: error)
-                suspend = .unreadable
-            }
-
-            // Read together on the main actor, where the service keeps its record before it brings the usual mode
-            // back, so a mode changed by the service is never seen without the reason.
-            let (mode, serviceEnd) = await MainActor.run { (currentMode, testService.lastEnd()) }
-            switch BasalTestEvaluator.runningCheck(
-                sessionID: test.sessionID,
-                serviceEnd: serviceEnd,
-                suspend: suspend,
-                now: now,
-                plannedEnd: test.plannedEnd,
-                mode: mode
-            ) {
-            case let .low(suspendedAt):
-                await finish(for: testID, reason: .low, at: suspendedAt)
-            case let .carbsLogged(endedAt):
-                await finish(
-                    for: testID,
-                    reason: .interrupted,
-                    at: endedAt,
-                    note: String(localized: "Carbs were logged during the fast.")
-                )
-            case .completed:
-                await finish(for: testID, reason: .completed)
-            case .completedUnchecked:
-                await finish(for: testID, reason: .unchecked)
-            case .modeChanged:
-                await finish(
-                    for: testID,
-                    reason: .interrupted,
-                    note: String(localized: "The dosing mode changed during the fast.")
-                )
-            case let .unexplainedSuspend(stoppedAt):
-                await finish(
-                    for: testID,
-                    reason: .interrupted,
-                    at: stoppedAt,
-                    note: BasalTestEvaluator.basalStoppedNote
-                )
-            case let .carbsUnreadable(endedAt):
-                await finish(
-                    for: testID,
-                    reason: .interrupted,
-                    at: endedAt,
-                    note: String(
-                        localized: "Trio couldn't read your carbs to check the fast, so it brought your usual dosing back."
-                    )
-                )
-            case nil:
-                if case .found = await wasInterrupted(test, until: now) {
-                    await finish(for: testID, reason: .interrupted)
-                }
-            }
+            await runner?.check()
         }
 
+        /// End Now and See Result.
         func endEarly() async {
-            await finish(reason: .endedEarly)
+            guard await MainActor.run(body: { !isEnding }) else { return }
+            await runner?.endEarly()
+        }
+
+        /// Whether Basal Testing is still on with no test running it, so the Result says so rather than that the usual
+        /// dosing came back (`SettingsTestModeRule.basalTestingLeftOn`).
+        var basalTestingLeftOn: Bool {
+            SettingsTestModeRule.basalTestingLeftOn(mode: currentMode, activeSessionID: testService.activeSession?.id)
         }
 
         /// Stops without keeping a result.
-        func discard() {
-            testService.end(kind: .basal)
-            clearTest()
-            cancelFinishedNotification()
-        }
-
-        /// `endedAt` is when a low ended the fast, when basal was stopped in a way Trio can't put down to a low, or when the
-        /// service ended it for carbs; without it the fast ends now, or at the planned end if that came first. `note`
-        /// says what interrupted it when the records don't. `reason` is what the caller saw; the history up to the end
-        /// can still make it a low or an interruption (`settle`). With `testID`, it finishes only that fast: a check that
-        /// read the history for one fast must not end another that was started while it waited.
-        func finish(
-            for testID: UUID? = nil,
-            reason: BasalTestEndReason,
-            at endedAt: Date? = nil,
-            note: String? = nil
-        ) async {
-            // Claimed on the main actor, where Discard and Start run, so the claim and the save below are ordered with
-            // them.
-            let claimed: BasalTestState? = await MainActor.run {
-                guard let current = test, current.phase == .running, !isFinishing,
-                      testID == nil || current.id == testID
-                else { return nil }
-                isFinishing = true
-                return current
-            }
-            guard var current = claimed else { return }
-
-            // Fixed before normal dosing comes back, so nothing the usual mode does next falls inside the fast. A test
-            // that ran out while the app was closed covers only its planned window, and a low only up to the suspend.
-            let endedBy = min(endedAt ?? Date(), current.plannedEnd)
-
-            // Normal dosing comes back first; the rest is bookkeeping.
-            testService.end(kind: .basal)
-            cancelFinishedNotification()
-
-            // The history up to the end decides how the fast ended, so a low the periodic checks hadn't seen yet isn't
-            // lost. Read once normal dosing is back, so the read never holds it up.
-            let (reason, end, stopped) = await settle(current, reason: reason, at: endedBy)
-            let note = note ?? stopped
-
-            let readings: [BasalTestReading]
-            do {
-                readings = try await provider.fetchGlucose(from: current.startedAt, to: end)
-            } catch {
-                warning(.settings, "BasalTest: couldn't read the fast's glucose", error: error)
-                readings = []
-            }
-            let endGlucose = BasalTestEvaluator.endGlucose(from: readings, endingAt: end)
-            let checked = await wasInterrupted(current, until: end)
-            let interference: String?
-            if case let .found(message) = checked {
-                interference = message
-            } else {
-                interference = note
-            }
-            let interferenceUnread = checked == .unreadable
-
-            let evaluation = BasalTestEvaluator.evaluate(
-                startGlucose: current.startGlucose,
-                endGlucose: endGlucose,
-                elapsed: end.timeIntervalSince(current.startedAt),
-                reason: reason,
-                interference: interference,
-                interferenceUnread: interferenceUnread,
-                isf: current.isf,
-                scheduledBasal: BasalTestEvaluator.scheduledBasal(for: current, endingAt: end)
-            )
-
-            current.phase = .finished
-            current.endedAt = end
-            current.endReason = reason
-            current.endGlucose = endGlucose
-            current.readings = readings
-            current.outcome = evaluation.outcome
-            current.interference = interference
-            current.interferenceUnread = interferenceUnread
-
-            var record: SettingsTestRecord?
-            if evaluation.outcome.isConclusive, let direction = evaluation.direction {
-                record = SettingsTestRecord(
-                    kind: .basal,
-                    startedAt: current.startedAt,
-                    completedAt: end,
-                    timeBlock: current.timeBlock,
-                    startGlucose: current.startGlucose,
-                    // Only a low can get here without one: it says falling whatever the readings were.
-                    endGlucose: endGlucose ?? current.startGlucose,
-                    direction: direction,
-                    summary: BasalTestEvaluator.summary(for: evaluation.outcome, reason: reason),
-                    // Only what the hours it ran covered, so a fast ended early doesn't vouch for the rest.
-                    coveredEntries: BasalTestEvaluator.coveredEntries(for: current, endingAt: end)
-                )
-            }
-
-            // Kept only if it is still the fast on screen: a Discard or a new Start while the history was read owns the
-            // screen and the saved state now. One step on the main actor, so neither can come in between.
-            let finished = current
-            let archived = record
-            let kept = await MainActor.run { () -> Bool in
-                isFinishing = false
-                guard let shown = test, shown.id == finished.id, shown.phase == .running else { return false }
-                provider.storage.save(finished, as: Config.statePath)
-                if let archived {
-                    testService.archive(archived)
-                }
-                test = finished
-                return true
-            }
-            guard kept else { return }
-            try? await loadFastingSource()
-        }
-
-        /// How the fast ends, from what the pump history and Trio's determinations up to `end` say: see
-        /// `BasalTestEvaluator.finishing`. A low or an interruption already decided needs no read.
-        private func settle(
-            _ test: BasalTestState,
-            reason: BasalTestEndReason,
-            at end: Date
-        ) async -> (reason: BasalTestEndReason, end: Date, note: String?) {
-            guard reason != .low, reason != .interrupted else { return (reason, end, nil) }
-            let suspend: BasalTestEvaluator.SuspendReading
-            do {
-                suspend = try await provider.fetchSuspendReading(from: test.startedAt, to: end)
-            } catch {
-                warning(.settings, "BasalTest: couldn't read temp basals to check the finished fast for a low", error: error)
-                suspend = .unreadable
-            }
-            return BasalTestEvaluator.finishing(reason: reason, at: end, suspend: suspend)
-        }
-
-        /// What spoiled the fast, if anything: carbs, a bolus, or Trio dosing, which it doesn't in Basal Testing. Each
-        /// record is read on its own, so one that can't be read is logged without hiding what the others show; with
-        /// nothing found, the fast is left unchecked.
-        private func wasInterrupted(_ test: BasalTestState, until end: Date) async -> BasalTestEvaluator.Interference {
-            let start = test.startedAt
-            let provider: Provider = self.provider
-            return await BasalTestEvaluator.firstInterference(BasalTestEvaluator.interferenceChecks(
-                hasCarbs: { try await provider.hasCarbEntries(from: start, to: end) },
-                hasManualBolus: { try await provider.hasManualBolus(from: start, to: end) },
-                smbs: { try await provider.fetchSMBs(since: start, until: end) },
-                temps: { try await provider.fetchTempBasals(from: start, to: end) },
-                since: start,
-                until: end
-            ))
-        }
-
-        /// Clears a finished result so the user can start over.
-        func acknowledgeResult() {
-            clearTest()
-        }
-
-        private func clearTest() {
-            provider.storage.remove(Config.statePath)
-            test = nil
+        @MainActor func discard() {
+            guard !isEnding else { return }
+            runner?.discard()
             Task { await refresh() }
         }
 
-        // MARK: - Notifications
-
-        private func scheduleFinishedNotification(at date: Date) {
-            let content = UNMutableNotificationContent()
-            content.title = String(localized: "Basal test finished")
-            content.body = String(localized: "Open Trio to see how your basal held up.")
-            content.sound = .default
-            let request = UNNotificationRequest(
-                identifier: "Trio.basalTestFinished",
-                content: content,
-                trigger: UNTimeIntervalNotificationTrigger(timeInterval: max(1, date.timeIntervalSinceNow), repeats: false)
-            )
-            UNUserNotificationCenter.current().add(request)
-        }
-
-        private func cancelFinishedNotification() {
-            let center = UNUserNotificationCenter.current()
-            center.removePendingNotificationRequests(withIdentifiers: ["Trio.basalTestFinished"])
-            center.removeDeliveredNotifications(withIdentifiers: ["Trio.basalTestFinished"])
+        /// Clears a finished result so the user can start over.
+        @MainActor func acknowledgeResult() {
+            runner?.acknowledgeResult()
+            Task { await refresh() }
         }
     }
 }

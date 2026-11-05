@@ -143,7 +143,7 @@ extension BasalTest {
                 "\(window.start.formatted(date: .omitted, time: .shortened)) – \(window.end.formatted(date: .omitted, time: .shortened))"
             var text = Text("This fast: \(times)")
             for (index, entry) in window.covered.enumerated() {
-                let span = SettingsTestSchedule.spanText(of: entry)
+                let span = SettingsTestSchedule.spanText(of: entry, inSentence: true)
                 let rate = entry.value.formatted(.number.precision(.fractionLength(2)))
                 text = text
                     + Text(verbatim: index == 0 ? " · " : ", ")

@@ -42,6 +42,15 @@ struct SettingsTestInfoSheet: View {
         NavigationStack {
             // The sheet paints its own background, so the screen doesn't.
             SettingsTestScreen(paintsBackground: false) {
+                // The title heads the content, not the navigation bar, where a long one slid off-centre beside the wide
+                // Done button on a narrow phone. Here it never meets Done, at any width or text size.
+                Text(info.title)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                    .accessibilityAddTraits(.isHeader)
+
                 SettingsTestCard {
                     if let quote = info.quote {
                         SettingsTestDocsQuote(text: quote)
@@ -63,7 +72,6 @@ struct SettingsTestInfoSheet: View {
                     }
                 }
             }
-            .navigationTitle(info.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -122,15 +130,28 @@ enum SettingsTestFormulaPart {
     case op(String)
 }
 
+/// One term of a formula on a line of its own, as the card stacks a formula at accessibility text sizes: the operators
+/// before it (e.g. "(" or "÷"), the term, and the closing brackets after it.
+struct SettingsTestFormulaStackedLine {
+    let leading: String
+    let term: SettingsTestFormulaTerm
+    let trailing: String
+}
+
 /// Formulas laid out like the Bolus Calculator Details sheet: labels above, values in the middle, units below.
 /// `result[i]` is the answer to `rows[i]`, shown after the "=" (or "≈" when it is rounded). Only the rows that have a
-/// result are shown.
+/// result are shown. At accessibility text sizes, and for a row that doesn't fit across the card with its labels at full
+/// size, each term goes on a line of its own, with its operator leading, and the "=" and the result on the last line.
 /// `conclusion` is a line under the formulas that says what the answer means.
 struct SettingsTestFormulaCard: View {
     let title: String
     let rows: [[SettingsTestFormulaPart]]
     let result: [SettingsTestFormulaTerm]
     var conclusion: Text?
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// The operator column of a stacked formula, wide enough for "÷" at the size the text is shown at.
+    @ScaledMetric(relativeTo: .body) private var operatorColumn: CGFloat = 16
 
     private var lineCount: Int {
         min(rows.count, result.count)
@@ -152,7 +173,7 @@ struct SettingsTestFormulaCard: View {
             SettingsTestCard(title: title) {
                 VStack(spacing: 16) {
                     ForEach(0 ..< lineCount, id: \.self) { index in
-                        line(rows[index], result: result[index])
+                        formula(rows[index], result: result[index])
                             // One spoken sentence per line, in reading order, instead of its cells column by column.
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel(Text(Self.spokenLabel(rows[index], result: result[index])))
@@ -230,6 +251,99 @@ struct SettingsTestFormulaCard: View {
         return (formula + [relation, spoken(result)]).joined(separator: ", ")
     }
 
+    /// A formula's terms one to a line, for the stacked layout. The operators before a term lead its line, so "(212 −
+    /// 100) ÷ 50" reads "( Current", "− Target )", "÷ ISF"; a closing bracket ends the line of the term it closes.
+    /// Operators after the last term, which no formula has, end its line too.
+    static func stackedLines(_ parts: [SettingsTestFormulaPart]) -> [SettingsTestFormulaStackedLine] {
+        var lines: [(leading: String, term: SettingsTestFormulaTerm, trailing: [String])] = []
+        var pending: [String] = []
+        for part in parts {
+            switch part {
+            case let .op(symbol):
+                if symbol == ")", pending.isEmpty, !lines.isEmpty {
+                    lines[lines.count - 1].trailing.append(symbol)
+                } else {
+                    pending.append(symbol)
+                }
+            case let .term(term):
+                lines.append((leading: pending.joined(separator: " "), term: term, trailing: []))
+                pending = []
+            }
+        }
+        if !pending.isEmpty, !lines.isEmpty {
+            lines[lines.count - 1].trailing += pending
+        }
+        return lines.map {
+            SettingsTestFormulaStackedLine(leading: $0.leading, term: $0.term, trailing: $0.trailing.joined(separator: " "))
+        }
+    }
+
+    /// Across the card when the row fits at the size its text is drawn at, which a label never shrinks from: when it
+    /// doesn't (`ViewThatFits` asks the row for its full width), or at accessibility sizes, one term to a line.
+    @ViewBuilder private func formula(_ parts: [SettingsTestFormulaPart], result: SettingsTestFormulaTerm) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            stacked(parts, result: result)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                line(parts, result: result)
+                stacked(parts, result: result)
+            }
+        }
+    }
+
+    /// One term to a line, the operators in a column at the leading edge, then the "=" (or "≈") and the result. Each
+    /// line wraps rather than shrinks, and a value keeps its unit beside it.
+    private func stacked(_ parts: [SettingsTestFormulaPart], result: SettingsTestFormulaTerm) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(Self.stackedLines(parts).enumerated()), id: \.offset) { _, line in
+                stackedRow(leading: line.leading, text: stackedTerm(line.term, isResult: false, trailing: line.trailing))
+            }
+            stackedRow(leading: Self.relation(for: result), text: stackedTerm(result, isResult: true, trailing: ""))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func stackedRow(leading: String, text: Text) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(verbatim: leading)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .frame(minWidth: operatorColumn, alignment: .leading)
+            text
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// "Current 212 mg/dL": the label, the value and its unit, in the grid's fonts and colours, so a value from the
+    /// settings stays blue and a result neutral bold. The unit never breaks away from its value.
+    private func stackedTerm(_ term: SettingsTestFormulaTerm, isResult: Bool, trailing: String) -> Text {
+        let highlighted = !isResult && term.fromSettings
+        let label = Text(term.label)
+            .font(.footnote)
+            .foregroundStyle(highlighted ? Color.accentColor : Color.secondary)
+        let value = Text(term.value)
+            .font(isResult ? .system(.headline, weight: .bold) : .headline)
+            .foregroundStyle(highlighted ? Color.accentColor : Color.primary)
+        var text = label + Text(verbatim: " ") + value
+        if !term.unit.isEmpty {
+            // No-break spaces, and a word joiner after each slash, as `SettingsTestFormat.keepTogether` joins them.
+            let unit = term.unit
+                .replacingOccurrences(of: " ", with: "\u{00A0}")
+                .replacingOccurrences(of: "/", with: "/\u{2060}")
+            text = text + Text(verbatim: "\u{00A0}" + unit)
+                .font(.caption)
+                .foregroundStyle(Color.secondary)
+        }
+        if !trailing.isEmpty {
+            text = text + Text(verbatim: "\u{00A0}" + trailing)
+                .font(.body)
+                .foregroundStyle(Color.secondary)
+        }
+        return text
+    }
+
     /// Every part adds one cell to each of the three rows, so the columns line up. A flexible spacer column before
     /// the "=" pushes the formula to the left and the answer to the right, and gives way first when space runs out,
     /// so the "=" itself is never squeezed out.
@@ -300,16 +414,17 @@ struct SettingsTestFormulaCard: View {
     }
 }
 
-// The styles of the Bolus Calculator Details formulas, which are private to `PopupView.swift`. Labels and units stay
-// on one line and shrink rather than break mid-word at large text sizes.
+// The styles of the Bolus Calculator Details formulas, which are private to `PopupView.swift`. Values and units stay
+// on one line and shrink rather than break mid-word at large text sizes; a label stays at its size (a row that has no
+// room for it goes to the stacked layout).
 private extension View {
-    /// A label above a value; the accent colour marks a value that comes from the user's settings.
+    /// A label above a value; the accent colour marks a value that comes from the user's settings. Never shrunk, so every
+    /// label in a formula reads at the same size.
     func formulaLabelStyle(highlighted: Bool) -> some View {
         font(.footnote)
             .foregroundStyle(highlighted ? Color.accentColor : Color.secondary)
-            .allowsTightening(true)
-            .minimumScaleFactor(0.5)
             .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .layoutPriority(1)
     }
 

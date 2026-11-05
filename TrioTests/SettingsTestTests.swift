@@ -857,6 +857,21 @@ import Testing
         #expect(reading([unasked, asked], askedAt: [1770]) == .suspended(at: testStart.addingTimeInterval(1800)))
     }
 
+    @Test(
+        "A zero temp only a determination from before the fast's first minute asked for is Closed Loop's, not the fast's low"
+    ) func closedLoopZeroTempAtStart() {
+        // Closed Loop decided on it 20 seconds before Start; the pump set it 3 seconds after.
+        let early = temp(0, minutes: 30, after: 3)
+        #expect(reading([early], askedAt: [-20]) == .unexplained(at: testStart.addingTimeInterval(3)))
+        // The ISF test's settle margin: a determination from a minute after Start on was made in Basal Testing.
+        #expect(ISFTest.Config.settleLoopMargin == 60)
+        let edge = temp(0, minutes: 30, after: 90)
+        #expect(reading([edge], askedAt: [60]) == .suspended(at: testStart.addingTimeInterval(90)))
+        #expect(reading([edge], askedAt: [59]) == .unexplained(at: testStart.addingTimeInterval(90)))
+        // Either one asking is enough, as long as one is from Basal Testing.
+        #expect(reading([edge], askedAt: [30, 80]) == .suspended(at: testStart.addingTimeInterval(90)))
+    }
+
     @Test("Without a zero temp in the fast there is no suspend, whatever Trio asked for") func noZeroTempNoReading() {
         #expect(reading([], askedAt: [1800]) == BasalTestEvaluator.SuspendReading.none)
         let others = [temp(0, minutes: 0, after: 1800), temp(0.4, minutes: 30, after: 1800), temp(0, minutes: 30, after: -60)]
@@ -970,6 +985,7 @@ import Testing
     ) -> [(name: String, read: () async throws -> String?)] {
         BasalTestEvaluator.interferenceChecks(
             hasCarbs: { false },
+            pumpInterruptions: { [] },
             hasManualBolus: { false },
             smbs: smbs,
             temps: temps,
@@ -1115,11 +1131,25 @@ import Testing
         #expect(check(ended: serviceEnd(.low, after: 4 * hour), now: 5 * hour, mode: .closed) == .low(at: testEnd))
     }
 
+    @Test("A bolus the service found ends the fast at the time it recorded") func runningServiceEndExtraBolus() {
+        #expect(
+            check(ended: serviceEnd(.extraBolus, after: 2400), now: 3600, mode: .closed)
+                == .bolusGiven(at: at(seconds: 2400))
+        )
+        // After the planned end the fast had run its course.
+        #expect(check(ended: serviceEnd(.extraBolus, after: 4 * hour + 60), now: 5 * hour, mode: .closed) == .completed)
+    }
+
+    @Test("A record of no bolus, which a basal session never gets, reads as an interrupted fast") func runningServiceEndNoBolus() {
+        // The service brought the usual mode back, so the fast didn't run to its end.
+        #expect(check(ended: serviceEnd(.noBolus, after: 2400), now: 3600, mode: .closed) == .modeChanged(at: nil))
+    }
+
     @Test(
         "A record of another session, from after the planned end, or with no session to match isn't this fast's"
     ) func runningServiceEndOtherSession() {
         let other = serviceEnd(.low, after: 1800, session: UUID())
-        #expect(check(ended: other, now: 3600, mode: .closed) == .modeChanged)
+        #expect(check(ended: other, now: 3600, mode: .closed) == .modeChanged(at: nil))
         #expect(check(ended: other, suspend: 1800, now: 3600) == .low(at: at(seconds: 1800)))
 
         // A state saved before the session was kept can't be matched to a record.
@@ -1131,7 +1161,7 @@ import Testing
             plannedEnd: testEnd,
             mode: .closed
         )
-        #expect(unmatched == .modeChanged)
+        #expect(unmatched == .modeChanged(at: nil))
 
         // Ended after the fast was over: the fast itself ran its course.
         #expect(check(ended: serviceEnd(.low, after: 4 * hour + 60), now: 5 * hour, mode: .closed) == .completed)
@@ -1139,12 +1169,12 @@ import Testing
     }
 
     @Test("A mode changed before the planned end interrupts the fast, even with a zero temp in it") func runningModeChanged() {
-        #expect(check(now: 3600, mode: .closed) == .modeChanged)
-        #expect(check(now: 3600, mode: .open) == .modeChanged)
-        #expect(check(now: 3600, mode: .lowGlucoseSuspend) == .modeChanged)
+        #expect(check(now: 3600, mode: .closed) == .modeChanged(at: nil))
+        #expect(check(now: 3600, mode: .open) == .modeChanged(at: nil))
+        #expect(check(now: 3600, mode: .lowGlucoseSuspend) == .modeChanged(at: nil))
         // A zero temp the new mode set is not a low.
-        #expect(check(suspend: 1800, now: 3600, mode: .closed) == .modeChanged)
-        #expect(check(suspend: 1800, now: 3600, mode: .lowGlucoseSuspend) == .modeChanged)
+        #expect(check(suspend: 1800, now: 3600, mode: .closed) == .modeChanged(at: nil))
+        #expect(check(suspend: 1800, now: 3600, mode: .lowGlucoseSuspend) == .modeChanged(at: nil))
     }
 
     @Test("Only while Basal Testing is still on is a zero temp in the fast a low") func runningLowInBasalTesting() {
@@ -1160,7 +1190,7 @@ import Testing
         #expect(check(unexplained: 1800, now: 5 * hour) == .unexplainedSuspend(at: at(seconds: 1800)))
         #expect(check(unexplained: 1800, now: 5 * hour, mode: .closed) == .unexplainedSuspend(at: at(seconds: 1800)))
         // A mode changed before the planned end still reads as that.
-        #expect(check(unexplained: 1800, now: 3600, mode: .closed) == .modeChanged)
+        #expect(check(unexplained: 1800, now: 3600, mode: .closed) == .modeChanged(at: nil))
     }
 
     @Test("The service's record of carbs it couldn't read interrupts the fast at it") func runningServiceEndCarbsUnreadable() {
@@ -1190,7 +1220,182 @@ import Testing
         #expect(check(unreadable: true, now: 5 * hour, mode: .closed) == .completedUnchecked)
         // Before then nothing is decided, so a low isn't missed; a changed mode needs no history.
         #expect(check(unreadable: true, now: 3600) == nil)
-        #expect(check(unreadable: true, now: 3600, mode: .closed) == .modeChanged)
+        #expect(check(unreadable: true, now: 3600, mode: .closed) == .modeChanged(at: nil))
+    }
+
+    // MARK: How a running check ends the fast
+
+    @Test("Each running check ends the fast with the reason, time and note the screen gave it") func endingForEachRunningCheck() {
+        let date = Date(timeIntervalSince1970: 1_000_000)
+        typealias Expected = (check: BasalTestEvaluator.RunningCheck, reason: BasalTestEndReason, at: Date?, note: String?)
+        let expected: [Expected] = [
+            (.low(at: date), .low, date, nil),
+            (.carbsLogged(at: date), .interrupted, date, "Carbs were logged during the fast."),
+            (.bolusGiven(at: date), .interrupted, date, "A bolus was given during the fast."),
+            (.completed, .completed, nil, nil),
+            (.completedUnchecked, .unchecked, nil, nil),
+            (.modeChanged(at: nil), .interrupted, nil, "The dosing mode changed during the fast."),
+            (
+                .modeChangedRestored(at: nil),
+                .interrupted,
+                nil,
+                "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
+            ),
+            // With the service's record of the change: when another mode was first picked.
+            (.modeChanged(at: date), .interrupted, date, "The dosing mode changed during the fast."),
+            (
+                .modeChangedRestored(at: date),
+                .interrupted,
+                date,
+                "The dosing mode changed during the fast, so it has no result. Your usual dosing mode is back."
+            ),
+            (
+                .unexplainedSuspend(at: date),
+                .interrupted,
+                date,
+                "Basal was stopped during the fast, and Trio can't tell whether it was for a low."
+            ),
+            (
+                .carbsUnreadable(at: date),
+                .interrupted,
+                date,
+                "Trio couldn't read your carbs to check the fast, so it brought your usual dosing back."
+            )
+        ]
+        for item in expected {
+            let ending = BasalTestEvaluator.ending(for: item.check)
+            #expect(ending.reason == item.reason, "\(item.check)")
+            #expect(ending.at == item.at, "\(item.check)")
+            #expect(ending.note == item.note, "\(item.check)")
+        }
+    }
+
+    // MARK: The Result's paragraphs
+
+    /// A finished fast started at 04:00 that planned four hours, with the fields a finish fills in.
+    private func finished(
+        outcome: BasalTestOutcome,
+        reason: BasalTestEndReason,
+        ranFor: TimeInterval = 4 * 3600,
+        endGlucose: Int? = 110,
+        interference: String? = nil,
+        interferenceUnread: Bool? = nil
+    ) -> BasalTestState {
+        var state = runningTest(covered: [scheduleEntry(0, 1440, 1)], scheduledBasal: 1)
+        state.isf = 50
+        state.phase = .finished
+        state.endedAt = state.startedAt.addingTimeInterval(ranFor)
+        state.endReason = reason
+        state.endGlucose = endGlucose
+        state.outcome = outcome
+        state.interference = interference
+        state.interferenceUnread = interferenceUnread
+        return state
+    }
+
+    private func paragraphs(of test: BasalTestState) -> [String] {
+        guard let outcome = test.outcome else { return [] }
+        return BasalTestEvaluator.resultParagraphs(for: outcome, test: test, evaluation: BasalTestEvaluator.evaluation(of: test))
+    }
+
+    @Test("The Result's paragraphs are the words the screen showed for each outcome") func resultParagraphsPerOutcome() {
+        #expect(
+            paragraphs(of: finished(outcome: .steady, reason: .completed))
+                == ["Glucose moved less than the smallest basal change in Trio docs would explain."]
+        )
+        #expect(
+            paragraphs(of: finished(outcome: .rising, reason: .completed, endGlucose: 150))
+                == ["A higher basal number gives more insulin."]
+        )
+        #expect(
+            paragraphs(of: finished(outcome: .falling, reason: .completed, endGlucose: 70))
+                == ["A lower basal number gives less insulin."]
+        )
+        // A fall with no readings at all says so under its line.
+        #expect(
+            paragraphs(of: finished(outcome: .falling, reason: .low, endGlucose: nil))
+                == [
+                    "A lower basal number gives less insulin.",
+                    "No CGM readings were recorded during the fast, so there is no end glucose to compare."
+                ]
+        )
+        #expect(
+            paragraphs(of: finished(outcome: .invalid, reason: .interrupted, interference: "A bolus was given during the fast."))
+                == ["A bolus was given during the fast."]
+        )
+        // With no note to say what happened, the Result's own sentence.
+        #expect(
+            paragraphs(of: finished(outcome: .invalid, reason: .interrupted))
+                == ["Something changed during the fast, so the result can't be trusted. Try again."]
+        )
+    }
+
+    @Test("A fast that couldn't be judged says why, and the readings it lacked") func resultParagraphsInconclusive() {
+        let unread =
+            "Trio couldn't read all its records of carbs, boluses and its own dosing, so it can't tell whether something interrupted this fast."
+        let noReadings = "No CGM readings were recorded during the fast, so there is no end glucose to compare."
+        #expect(
+            paragraphs(of: finished(outcome: .inconclusive, reason: .completed, interferenceUnread: true)) == [unread]
+        )
+        #expect(
+            paragraphs(of: finished(outcome: .inconclusive, reason: .completed, endGlucose: nil, interferenceUnread: true))
+                == [unread, noReadings]
+        )
+        #expect(
+            paragraphs(of: finished(outcome: .inconclusive, reason: .unchecked, endGlucose: nil))
+                == ["Trio couldn't read the pump history to check for a low, so it can't judge this fast.", noReadings]
+        )
+        #expect(paragraphs(of: finished(outcome: .inconclusive, reason: .completed, endGlucose: nil)) == [noReadings])
+        #expect(
+            paragraphs(of: finished(outcome: .inconclusive, reason: .endedEarly, ranFor: 2 * 3600))
+                == ["The docs say to fast 4–6 hours, and this one ended after 2 h 00 m. That's too soon to trust."]
+        )
+        // Ran its hours, but without an ISF there is no working to show.
+        var noISF = finished(outcome: .inconclusive, reason: .completed)
+        noISF.isf = nil
+        #expect(
+            paragraphs(of: noISF)
+                == ["Trio couldn't read your ISF or basal schedule for these hours, so it can't tell what your basal did."]
+        )
+    }
+
+    @Test("A fast without an ISF says there is no working to show: rising, falling and too soon") func resultParagraphsNoWorking() {
+        let noWorking = "Trio couldn't read your ISF or basal schedule for these hours, so there is no working to show."
+        var rising = finished(outcome: .rising, reason: .completed, endGlucose: 150)
+        rising.isf = nil
+        #expect(paragraphs(of: rising) == ["A higher basal number gives more insulin.", noWorking])
+
+        var falling = finished(outcome: .falling, reason: .completed, endGlucose: 70)
+        falling.isf = nil
+        #expect(paragraphs(of: falling) == ["A lower basal number gives less insulin.", noWorking])
+
+        // Ended after 2 hours: too soon, and with no ISF there is no working either.
+        var tooSoon = finished(outcome: .inconclusive, reason: .endedEarly, ranFor: 2 * 3600)
+        tooSoon.isf = nil
+        #expect(
+            paragraphs(of: tooSoon)
+                == ["The docs say to fast 4–6 hours, and this one ended after 2 h 00 m. That's too soon to trust.", noWorking]
+        )
+    }
+
+    @Test("A fast with an ending decided keeps it through JSON, and one saved without decodes with none") func pendingEndRoundTrip() throws {
+        var state = runningTest(covered: nil, scheduledBasal: nil)
+        #expect(state.pendingEnd == nil)
+        state.pendingEnd = BasalTestPendingEnd(
+            reason: .interrupted,
+            at: Date(timeIntervalSince1970: 1_000_000),
+            note: "Carbs were logged during the fast.",
+            byUser: false
+        )
+        let decoded = try JSONCoding.decoder.decode(BasalTestState.self, from: JSONCoding.encoder.encode(state))
+        #expect(decoded == state)
+        #expect(decoded.pendingEnd?.reason == .interrupted)
+
+        // Written without the key, as the screen saved it.
+        let plain = try JSONCoding.encoder.encode(runningTest(covered: nil, scheduledBasal: nil))
+        let text = try #require(String(data: plain, encoding: .utf8))
+        #expect(!text.contains("pendingEnd"))
+        #expect(try JSONCoding.decoder.decode(BasalTestState.self, from: plain).pendingEnd == nil)
     }
 
     // MARK: Numbers as shown
@@ -1214,68 +1419,7 @@ import Testing
 
 // MARK: - Settings test service
 
-/// A settings manager that keeps everything in memory.
-private final class FakeSettingsManager: SettingsManager {
-    var settings = TrioSettings() {
-        didSet { onSettingsChange?() }
-    }
-
-    /// Called each time the settings change, so a test can look at what else was true at that moment.
-    var onSettingsChange: (() -> Void)?
-    var preferences = Preferences()
-    var pumpSettings = PumpSettings(insulinActionCurve: 10, maxBolus: 10, maxBasal: 2)
-    func updateInsulinCurve(_: InsulinType?) {}
-}
-
-/// Tells no one: a test calls the service's observer itself.
-private final class SilentBroadcaster: Broadcaster {
-    func register<T>(_: T.Type, observer _: T) {}
-    func unregister<T>(_: T.Type, observer _: T) {}
-    func unregister<T>(_: T.Type) {}
-    func notify<T>(_: T.Type, on _: DispatchQueue, block _: @escaping (T) -> Void) {}
-}
-
-/// Pump history, Trio's determinations and carbs as a test sets them, with how often the service asked.
-private final class FakeSettingsTestEvents: SettingsTestEvents {
-    var temps: [BasalTestTempBasal] = []
-    /// When Trio's determinations asked for a zero temp.
-    var zeroTempDeterminations: [Date] = []
-    var carbs: [Date] = []
-    var failing = false
-    /// Fail only one read each.
-    var failingTemps = false
-    var failingDeterminations = false
-    var failingCarbs = false
-    private(set) var reads = 0
-
-    struct Failure: Error {}
-
-    /// Trio's suspend for a low at `date`: the zero temp the pump started, and the determination just before it.
-    func trioSuspends(at date: Date) {
-        temps.append(BasalTestTempBasal(date: date, rate: 0, minutes: 30))
-        zeroTempDeterminations.append(date.addingTimeInterval(-30))
-    }
-
-    func tempBasals(from start: Date, to end: Date) async throws -> [BasalTestTempBasal] {
-        reads += 1
-        if failing || failingTemps { throw Failure() }
-        return temps.filter { $0.date >= start && $0.date <= end }
-    }
-
-    func zeroTempDeterminations(from start: Date, to end: Date) async throws -> [Date] {
-        reads += 1
-        if failing || failingDeterminations { throw Failure() }
-        return zeroTempDeterminations.filter { $0 >= start && $0 <= end }
-    }
-
-    func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
-        reads += 1
-        if failing || failingCarbs { throw Failure() }
-        return carbs.contains { $0 >= start && $0 <= end }
-    }
-}
-
-@Suite("Settings test service", .serialized) struct SettingsTestServiceTests {
+@Suite("Settings test service", .serialized, .settingsTestFiles) struct SettingsTestServiceTests {
     private let sessionPath = "trio/settings_test_session.json"
     private let historyPath = "trio/settings_test_history.json"
     private let lastEndPath = "trio/settings_test_last_end.json"
@@ -1283,7 +1427,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     private func makeService(
         mode: DosingMode,
         existing: SettingsTestSession? = nil,
-        events: FakeSettingsTestEvents = FakeSettingsTestEvents(),
+        events: FakeSettingsTestData = FakeSettingsTestData(),
         keepingFiles: Bool = false
     ) -> (BaseSettingsTestService, FakeSettingsManager, FileStorage) {
         let storage = BaseFileStorage()
@@ -1302,16 +1446,17 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         container.register(SettingsManager.self) { _ in settings }
         // The app's broadcaster is shared, so another suite's settings change would reach this service.
         container.register(Broadcaster.self) { _ in SilentBroadcaster() }
-        return (BaseSettingsTestService(resolver: container, events: events), settings, storage)
+        return (BaseSettingsTestService(resolver: container, events: events, runtime: .inert), settings, storage)
     }
 
-    /// A basal test running in Basal Testing, from Closed Loop.
+    /// A test of `kind` (a basal test unless said) running in Basal Testing, from Closed Loop, begun just now.
     private func startBasalTest(
-        events: FakeSettingsTestEvents
+        events: FakeSettingsTestData,
+        kind: SettingsTestKind = .basal
     ) -> (BaseSettingsTestService, FakeSettingsManager, FileStorage, SettingsTestSession) {
         let (service, settings, storage) = makeService(mode: .closed, events: events)
         let session = service.begin(
-            kind: .basal,
+            kind: kind,
             expiresIn: 3600,
             restoring: [.dosingMode(testMode: .basalTesting, previous: .closed)]
         )!
@@ -1337,7 +1482,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("Trio's suspend for a low ends a basal test with nobody on its screen") func suspendEndsSession() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         // Started an hour ago, on a whole second, so the suspend is in the past and the kept record reads back exactly.
         let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 3600).rounded(.down))
         let session = SettingsTestSession(
@@ -1352,7 +1497,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
         defer { cleanUp(storage) }
 
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession == nil)
         #expect(settings.settings.dosingMode == .closed)
         // Why and when, for the basal screen to finish the result from.
@@ -1366,7 +1511,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     @Test(
         "Basal stopped without Trio asking ends a basal test, and isn't kept as a low"
     ) func unaskedZeroTempEndsSession() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         // On a whole second, so the kept record reads back exactly.
         let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 3600).rounded(.down))
         let session = SettingsTestSession(
@@ -1382,20 +1527,20 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
         defer { cleanUp(storage) }
 
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession == nil)
         #expect(settings.settings.dosingMode == .closed)
         #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt))
     }
 
     @Test("Carbs logged during a basal test end it with nobody on its screen") func carbsEndSession() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
         events.carbs = [session.startedAt]
         let before = Date()
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         let after = Date()
         #expect(service.activeSession == nil)
         #expect(settings.settings.dosingMode == .closed)
@@ -1409,7 +1554,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("The reason is kept before the usual mode comes back, so the two are never seen apart") func endRecordBeforeRestore() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
@@ -1419,30 +1564,266 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
             modeChanges += 1
             recordWhenModeChanged = service.lastEnd()
         }
-        events.trioSuspends(at: session.startedAt)
-        await service.endIfLowOrCarbsLogged()
+        events.basalTestingSuspends(at: session.startedAt, startedAt: session.startedAt)
+        await service.endIfLowOrInterrupted()
         #expect(modeChanges == 1)
         #expect(recordWhenModeChanged?.sessionID == session.id)
         #expect(recordWhenModeChanged?.cause == .low)
     }
 
     @Test("Carbs end a basal test even when the temp basals can't be read") func carbsEndWhenTempsUnreadable() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
         events.failingTemps = true
         events.carbs = [session.startedAt]
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession == nil)
         #expect(settings.settings.dosingMode == .closed)
         #expect(service.lastEnd()?.cause == .carbsLogged)
     }
 
-    @Test("Carbs end only a basal test; another kind in Basal Testing keeps running") func carbsEndOnlyBasal() async {
-        let events = FakeSettingsTestEvents()
+    @Test("Carbs end a basal or ISF test; another kind in Basal Testing keeps running") func carbsEndOnlyBasalAndISF() async {
+        let events = FakeSettingsTestData()
         let (service, settings, storage) = makeService(mode: .closed, events: events)
         defer { cleanUp(storage) }
+
+        let session = service.begin(
+            kind: .carbRatio,
+            expiresIn: 3600,
+            restoring: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )!
+        settings.settings.dosingMode = .basalTesting
+        events.carbs = [session.startedAt]
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    /// A test of `kind` (an ISF test unless said) that began `age` ago (an hour unless said), on a whole second so that
+    /// what the service keeps reads back exactly, and is in Basal Testing. An ISF test settled `settledAfter` its start,
+    /// at once unless said, so its bolus window runs from Start as before settling was kept; nil for one still settling.
+    /// Set the events from its start before making the service with it: a session found at launch is checked at once,
+    /// so they can't change after that.
+    private func runningSession(
+        kind: SettingsTestKind = .isf,
+        age: TimeInterval = 3600,
+        settledAfter: TimeInterval? = 0
+    ) -> SettingsTestSession {
+        let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - age).rounded(.down))
+        return SettingsTestSession(
+            kind: kind,
+            startedAt: startedAt,
+            expiresAt: Date().addingTimeInterval(3600),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .closed)],
+            bolusWindowStart: kind == .isf ? settledAfter.map { startedAt.addingTimeInterval($0) } : nil,
+            // Begun with settling, as an ISF test now is.
+            settles: kind == .isf ? true : nil
+        )
+    }
+
+    @Test(
+        "An ISF session saved before settling was kept has its bolus window from Start, as it had then"
+    ) func oldISFSessionWindowFromStart() async throws {
+        let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 7200).rounded(.down))
+        let iso = ISO8601DateFormatter()
+        // A session file as the build before settling wrote it: no bolus window start, no mark that it settles.
+        let json = """
+        {
+          "id": "8B1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
+          "kind": "isf",
+          "startedAt": "\(iso.string(from: startedAt))",
+          "expiresAt": "\(iso.string(from: startedAt.addingTimeInterval(6 * 3600)))",
+          "restore": [{"dosingMode": {"testMode": "basalTesting", "previous": "closed"}}]
+        }
+        """
+        let old = try JSONCoding.decoder.decode(SettingsTestSession.self, from: Data(json.utf8))
+        #expect(old.settles == nil)
+        #expect(old.bolusWindowStart == nil)
+        #expect(old.bolusWindowStartInEffect == startedAt)
+
+        // Two hours in with no bolus: ended for no bolus at its 90 minutes, as it was then, not left settling to 150.
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: old, events: FakeSettingsTestData())
+        defer { cleanUp(storage) }
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(
+            service.lastEnd() == SettingsTestEnd(
+                sessionID: old.id,
+                cause: .noBolus,
+                date: startedAt.addingTimeInterval(ISFTest.Config.doseAllowance)
+            )
+        )
+    }
+
+    @Test("A session marked as one that settles has no bolus window until settling ends") func settlingSessionWindow() {
+        var session = runningSession(settledAfter: nil)
+        #expect(session.settles == true)
+        #expect(session.bolusWindowStartInEffect == nil)
+        session.bolusWindowStart = session.startedAt.addingTimeInterval(600)
+        #expect(session.bolusWindowStartInEffect == session.startedAt.addingTimeInterval(600))
+        // Begin marks an ISF session that settles; a basal one isn't marked.
+        let (service, _, storage) = makeService(mode: .closed)
+        defer { cleanUp(storage) }
+        let begun = service.begin(
+            kind: .isf,
+            expiresIn: 3600,
+            restoring: [.dosingMode(testMode: .basalTesting, previous: .closed)],
+            settles: true
+        )
+        #expect(begun?.settles == true)
+        #expect(storage.retrieve(sessionPath, as: SettingsTestSession.self)?.settles == true)
+        service.end(kind: .isf)
+        #expect(service.begin(kind: .basal, expiresIn: 3600, restoring: [])?.settles == nil)
+    }
+
+    @Test(
+        "A check acts on what it found only if its session is still running with the same bolus window start"
+    ) func checkActsOnlyOnAnUnchangedSession() {
+        let copy = runningSession(settledAfter: nil)
+        #expect(BaseSettingsTestService.isUnchanged(copy, live: copy))
+        // Ended while the check read the history.
+        #expect(!BaseSettingsTestService.isUnchanged(copy, live: nil))
+        // Another session began.
+        #expect(!BaseSettingsTestService.isUnchanged(copy, live: runningSession(settledAfter: nil)))
+        // Settling ended while it read, so no bolus while settling no longer holds.
+        var settled = copy
+        settled.bolusWindowStart = copy.startedAt.addingTimeInterval(600)
+        #expect(!BaseSettingsTestService.isUnchanged(copy, live: settled))
+        // A later expiry alone changes nothing the check decided on.
+        var extended = copy
+        extended.expiresAt = copy.expiresAt.addingTimeInterval(3600)
+        #expect(BaseSettingsTestService.isUnchanged(copy, live: extended))
+    }
+
+    // MARK: ISF settling
+
+    @Test(
+        "While an ISF test settles, a second bolus doesn't end it, and no bolus doesn't before the time for settling and the dose"
+    ) func settlingKeepsISF() async {
+        let events = FakeSettingsTestData()
+        // Two hours in, past the 90 minutes a settled test would have for its bolus, with an SMB at Begin and a bolus.
+        let session = runningSession(age: 7200, settledAfter: nil)
+        events.smbFlaggedBoluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(5), units: dec("0.3"))]
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1800), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A minute short of the time for settling and the dose, an ISF test still settling keeps running") func settlingNotOver() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(
+            age: ISFTest.Config.settleAllowance + ISFTest.Config.doseAllowance - 60,
+            settledAfter: nil
+        )
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test(
+        "An ISF test still settling once the time for settling and the dose is up ends for no bolus, dated then"
+    ) func settlingOverEndsISF() async {
+        let events = FakeSettingsTestData()
+        let wait = ISFTest.Config.settleAllowance + ISFTest.Config.doseAllowance
+        let session = runningSession(age: wait + 60, settledAfter: nil)
+        // A bolus given while it settled isn't the test's.
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(
+            service.lastEnd() == SettingsTestEnd(
+                sessionID: session.id,
+                cause: .noBolus,
+                date: session.startedAt.addingTimeInterval(wait)
+            )
+        )
+    }
+
+    @Test(
+        "Once an ISF test has settled, an SMB from before its bolus window and the user's bolus aren't two boluses"
+    ) func straySMBBeforeWindowKeepsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 3600, settledAfter: 600)
+        events.smbFlaggedBoluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(5), units: dec("0.3"))]
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test(
+        "Once an ISF test has settled, a second bolus in its window ends it, dated at that bolus"
+    ) func secondBolusAfterWindowEndsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 3600, settledAfter: 600)
+        let second = session.startedAt.addingTimeInterval(2400)
+        events.smbFlaggedBoluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(5), units: dec("0.3"))]
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2),
+            ISFTestBolus(date: second, units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .extraBolus, date: second))
+    }
+
+    @Test(
+        "Once an ISF test has settled, its 90 minutes for the bolus run from the end of settling"
+    ) func doseDeadlineFromWindowStart() async {
+        let settled: TimeInterval = 1800
+        // A minute short of the deadline from the end of settling, which is well past 90 minutes from Start.
+        let early = runningSession(age: settled + ISFTest.Config.doseAllowance - 60, settledAfter: settled)
+        var (service, settings, storage) = makeService(mode: .basalTesting, existing: early, events: FakeSettingsTestData())
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == early.id)
+        #expect(service.lastEnd() == nil)
+        cleanUp(storage)
+
+        let late = runningSession(age: settled + ISFTest.Config.doseAllowance + 60, settledAfter: settled)
+        (service, settings, storage) = makeService(mode: .basalTesting, existing: late, events: FakeSettingsTestData())
+        defer { cleanUp(storage) }
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        let deadline = late.startedAt.addingTimeInterval(settled + ISFTest.Config.doseAllowance)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: late.id, cause: .noBolus, date: deadline))
+    }
+
+    @Test(
+        "The bolus window start is kept only for the running session of that kind, and survives a relaunch"
+    ) func setBolusWindowStart() {
+        let (service, settings, storage) = makeService(mode: .closed)
+        defer { cleanUp(storage) }
+        let at = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 60).rounded(.down))
+
+        // No session: nothing to keep it on.
+        service.setBolusWindowStart(kind: .isf, at: at)
+        #expect(service.activeSession == nil)
 
         let session = service.begin(
             kind: .isf,
@@ -1450,15 +1831,779 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
             restoring: [.dosingMode(testMode: .basalTesting, previous: .closed)]
         )!
         settings.settings.dosingMode = .basalTesting
+        #expect(session.bolusWindowStart == nil)
+
+        // Another kind's is not this one's.
+        service.setBolusWindowStart(kind: .basal, at: at)
+        #expect(service.activeSession?.bolusWindowStart == nil)
+
+        service.setBolusWindowStart(kind: .isf, at: at)
+        #expect(service.activeSession?.bolusWindowStart == at)
+        #expect(storage.retrieve(sessionPath, as: SettingsTestSession.self)?.bolusWindowStart == at)
+
+        let (relaunched, _, _) = makeService(mode: .basalTesting, keepingFiles: true)
+        #expect(relaunched.activeSession?.id == session.id)
+        #expect(relaunched.activeSession?.bolusWindowStart == at)
+    }
+
+    @Test(
+        "The bolus window start makes an ISF session last until its test's latest end from there, and never shortens it"
+    ) func bolusWindowStartExtendsExpiry() {
+        let (service, settings, storage) = makeService(mode: .closed)
+        defer { cleanUp(storage) }
+        let session = service.begin(
+            kind: .isf,
+            expiresIn: 3600,
+            restoring: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )!
+        settings.settings.dosingMode = .basalTesting
+        let fromWindow = ISFTest.Config.doseAllowance + ISFTest.Config.docsWait + ISFTest.Config.expiryGrace
+
+        // Settled two hours after Begin, with the expiry an hour from Begin: the session now lasts the bolus window, the
+        // 4 hours and the grace after them.
+        let late = session.startedAt.addingTimeInterval(2 * 3600)
+        service.setBolusWindowStart(kind: .isf, at: late)
+        #expect(service.activeSession?.expiresAt == late.addingTimeInterval(fromWindow))
+        // Saved with it, to the millisecond a date keeps on disk.
+        let saved = storage.retrieve(sessionPath, as: SettingsTestSession.self)?.expiresAt
+        #expect(saved.map { abs($0.timeIntervalSince(late.addingTimeInterval(fromWindow))) < 0.001 } == true)
+
+        // An earlier window start doesn't bring the expiry back.
+        let early = session.startedAt.addingTimeInterval(60)
+        service.setBolusWindowStart(kind: .isf, at: early)
+        #expect(service.activeSession?.bolusWindowStart == early)
+        #expect(service.activeSession?.expiresAt == late.addingTimeInterval(fromWindow))
+    }
+
+    @Test("A session already lasting past its test's latest end keeps its expiry") func bolusWindowStartKeepsLongerExpiry() {
+        let (service, settings, storage) = makeService(mode: .closed)
+        defer { cleanUp(storage) }
+        let session = service.begin(
+            kind: .isf,
+            expiresIn: 10 * 3600,
+            restoring: [.dosingMode(testMode: .basalTesting, previous: .closed)]
+        )!
+        settings.settings.dosingMode = .basalTesting
+        service.setBolusWindowStart(kind: .isf, at: session.startedAt.addingTimeInterval(600))
+        #expect(service.activeSession?.expiresAt == session.expiresAt)
+    }
+
+    @Test("Carbs logged during an ISF test end it with nobody on its screen") func carbsEndISF() async {
+        let events = FakeSettingsTestData()
+        let (service, settings, storage, session) = startBasalTest(events: events, kind: .isf)
+        defer { cleanUp(storage) }
+
         events.carbs = [session.startedAt]
-        await service.endIfLowOrCarbsLogged()
+        let before = Date()
+        await service.endIfLowOrInterrupted()
+        let after = Date()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        let ended = service.lastEnd()
+        #expect(ended?.sessionID == session.id)
+        #expect(ended?.cause == .carbsLogged)
+        // When it found them, within what a date keeps on disk (milliseconds).
+        if let date = ended?.date {
+            #expect(date >= before.addingTimeInterval(-0.01) && date <= after.addingTimeInterval(0.01))
+        }
+    }
+
+    @Test("A second manual bolus ends an ISF test, dated at that bolus, and the usual mode comes back") func secondBolusEndsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        let second = session.startedAt.addingTimeInterval(1800)
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2),
+            ISFTestBolus(date: second, units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        // Dated at the second bolus, not at the time found, so the screen can tell it from one after the planned end.
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .extraBolus, date: second))
+        #expect(storage.retrieve(sessionPath, as: SettingsTestSession.self) == nil)
+    }
+
+    @Test("The second of three manual boluses is the one the end is dated at") func extraBolusDatedAtTheSecond() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        let second = session.startedAt.addingTimeInterval(1200)
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(2400), units: 1),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2),
+            ISFTestBolus(date: second, units: 1)
+        ]
+        let (service, _, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .extraBolus, date: second))
+    }
+
+    @Test("One manual bolus is the test's own, so the ISF test keeps running") func firstBolusKeepsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(events.reads > 0)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("Boluses from before the test began don't count towards a second one") func earlierBolusesDontCount() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(-1200), units: 3),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(-600), units: 1),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession?.id == session.id)
         #expect(settings.settings.dosingMode == .basalTesting)
         #expect(service.lastEnd() == nil)
     }
 
+    @Test("A basal test ignores how many boluses there were") func basalIgnoresBolusCount() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(kind: .basal)
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 1),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(1800), units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A suspend comes before logged carbs and a second bolus in an ISF test") func suspendBeatsCarbsAndBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        let suspendedAt = session.startedAt.addingTimeInterval(900)
+        events.trioSuspends(at: suspendedAt)
+        events.carbs = [session.startedAt.addingTimeInterval(600)]
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 1)
+        ]
+        let (service, _, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .low, date: suspendedAt))
+    }
+
+    @Test("Logged carbs come before a second bolus in an ISF test") func carbsBeatSecondBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        events.carbs = [session.startedAt.addingTimeInterval(600)]
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 1)
+        ]
+        let (service, _, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.lastEnd()?.sessionID == session.id)
+        #expect(service.lastEnd()?.cause == .carbsLogged)
+    }
+
+    @Test("When the bolus history can't be read, the ISF test keeps running") func bolusReadFailureLeavesISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        events.failingBoluses = true
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test(
+        "A bolus cancelled before anything was given isn't one, so the right bolus after it keeps the ISF test running"
+    ) func cancelledBolusDoesntCount() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 0),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A cancelled bolus doesn't count towards a second one either") func cancelledBolusDoesntShiftTheSecond() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        let second = session.startedAt.addingTimeInterval(900)
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 0),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2),
+            ISFTestBolus(date: second, units: 1)
+        ]
+        let (service, _, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .extraBolus, date: second))
+    }
+
+    @Test(
+        "With no bolus by the dose deadline an ISF test ends, dated at the deadline, and the usual mode comes back"
+    ) func noBolusEndsISF() async {
+        let events = FakeSettingsTestData()
+        // Two hours in, with nothing given.
+        let session = runningSession(age: 7200)
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        let deadline = session.startedAt.addingTimeInterval(ISFTest.Config.doseAllowance)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .noBolus, date: deadline))
+        #expect(storage.retrieve(sessionPath, as: SettingsTestSession.self) == nil)
+    }
+
+    @Test(
+        "A bolus that came after the dose deadline isn't the test's, so the test still ends for no bolus"
+    ) func lateBolusIsNoBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 7200)
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(6000), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        let deadline = session.startedAt.addingTimeInterval(ISFTest.Config.doseAllowance)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .noBolus, date: deadline))
+    }
+
+    @Test("A bolus cancelled before anything was given doesn't stop the test ending for no bolus") func cancelledBolusIsNoBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 7200)
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 0)]
+        let (service, _, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.lastEnd()?.cause == .noBolus)
+    }
+
+    @Test("A bolus before the dose deadline keeps an ISF test running long after it") func bolusBeforeDeadlineKeepsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 7200)
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test(
+        "Half an hour after an ISF test's 4 hours the usual mode comes back, with no reason kept, as on expiry"
+    ) func waitOverEndsISF() async {
+        let events = FakeSettingsTestData()
+        // The bolus went in 20 minutes after Start, 4 h 30 min ago.
+        let wait = ISFTest.Config.docsWait + ISFTest.Config.expiryGrace
+        let session = runningSession(age: wait + 1200)
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(storage.retrieve(sessionPath, as: SettingsTestSession.self) == nil)
+        // Nothing went wrong, so the screen finishes the test as completed when it is opened.
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A minute short of half an hour after the 4 hours an ISF test keeps running") func waitNotOverKeepsISF() async {
+        let events = FakeSettingsTestData()
+        let wait = ISFTest.Config.docsWait + ISFTest.Config.expiryGrace - 60
+        let session = runningSession(age: wait + 1200)
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A basal test isn't ended for an ISF test's wait") func basalIgnoresISFWait() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(kind: .basal, age: ISFTest.Config.docsWait + ISFTest.Config.expiryGrace + 1200)
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+    }
+
+    @Test(
+        "A test bolus the pump history flagged as an SMB is still the test bolus, so the test isn't ended for no bolus"
+    ) func smbFlaggedTestBolusKeepsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 7200)
+        events.smbFlaggedBoluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A second bolus flagged as an SMB still ends an ISF test, dated at that bolus") func smbFlaggedSecondBolusEndsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 3600)
+        let second = session.startedAt.addingTimeInterval(2400)
+        events.boluses = [ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2)]
+        events.smbFlaggedBoluses = [ISFTestBolus(date: second, units: dec("0.5"))]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .extraBolus, date: second))
+    }
+
+    @Test("A basal test isn't ended for boluses flagged as SMBs, as for any bolus") func basalIgnoresSMBFlaggedBoluses() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(kind: .basal, age: 7200)
+        events.smbFlaggedBoluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(2400), units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
+
+    @Test("Before the dose deadline no bolus yet doesn't end an ISF test") func noBolusYetKeepsISF() async {
+        let events = FakeSettingsTestData()
+        // An hour in, 30 minutes short of the deadline.
+        let session = runningSession(age: 3600)
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("A basal test is never ended for having no bolus") func basalNeverEndsForNoBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(kind: .basal, age: 7200)
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("Logged carbs come before no bolus when an ISF test is ended") func carbsBeatNoBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession(age: 7200)
+        events.carbs = [session.startedAt.addingTimeInterval(600)]
+        let (service, _, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.lastEnd()?.cause == .carbsLogged)
+    }
+
+    @Test("When the bolus history can't be read, an ISF test with no bolus keeps running") func noBolusNeedsReadableHistory() async {
+        let events = FakeSettingsTestData()
+        events.failingBoluses = true
+        let session = runningSession(age: 7200)
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test("The watchdog's check ends an ISF test on a second bolus") func checkSessionEndsISFOnSecondBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(1200), units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.checkSession()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd()?.cause == .extraBolus)
+    }
+
+    @Test(
+        "Basal stopped without Trio asking ends an ISF test, before carbs and boluses, and isn't kept as a low"
+    ) func unaskedZeroTempEndsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        // A zero temp set on the pump, with Trio's last zero temp determination long before it.
+        let stoppedAt = session.startedAt.addingTimeInterval(900)
+        events.temps = [BasalTestTempBasal(date: stoppedAt, rate: 0, minutes: 60)]
+        events.zeroTempDeterminations = [session.startedAt.addingTimeInterval(-3600)]
+        events.carbs = [session.startedAt.addingTimeInterval(600)]
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .basalStopped, date: stoppedAt))
+    }
+
+    @Test("Carbs that can't be read end an ISF test, so the usual dosing comes back") func carbsUnreadableEndsISF() async {
+        let events = FakeSettingsTestData()
+        let (service, settings, storage, session) = startBasalTest(events: events, kind: .isf)
+        defer { cleanUp(storage) }
+
+        events.failingCarbs = true
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd()?.sessionID == session.id)
+        #expect(service.lastEnd()?.cause == .carbsUnreadable)
+    }
+
+    @Test("Carbs that can't be read come before a second bolus in an ISF test") func carbsUnreadableBeatsSecondBolus() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        events.failingCarbs = true
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 1)
+        ]
+        let (service, _, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.lastEnd()?.cause == .carbsUnreadable)
+    }
+
+    @Test(
+        "When the temp basals can't be read, an ISF test still ends for a second bolus"
+    ) func secondBolusEndsISFWhenTempsUnreadable() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        let second = session.startedAt.addingTimeInterval(1800)
+        events.failingTemps = true
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 2),
+            ISFTestBolus(date: second, units: 1)
+        ]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .extraBolus, date: second))
+    }
+
+    @Test("A low from before the mode was changed still ends an ISF test as a low") func lowBeforeModeChangeISF() async {
+        let events = FakeSettingsTestData()
+        let (service, settings, storage, session) = startBasalTest(events: events, kind: .isf)
+        defer { cleanUp(storage) }
+
+        // Started as the test began, and asked for by Basal Testing's first loop, a minute after Begin, within the time a
+        // determination can trail the zero temp it asked for.
+        events.temps = [BasalTestTempBasal(date: session.startedAt, rate: 0, minutes: 30)]
+        events.zeroTempDeterminations = [session.startedAt.addingTimeInterval(ISFTest.Config.settleLoopMargin)]
+        settings.settings.dosingMode = .closed
+        #expect(service.noteTestModeLeft())
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(service.lastEnd()?.sessionID == session.id)
+        #expect(service.lastEnd()?.cause == .low)
+        // The mode the user picked stays.
+        #expect(settings.settings.dosingMode == .closed)
+    }
+
+    @Test(
+        "After the mode was changed, an ISF test ends as a mode change, not for a second bolus, no bolus or carbs"
+    ) func afterModeChangeISF() async {
+        let events = FakeSettingsTestData()
+        // Past the dose deadline with two boluses and carbs, all of which would end it in Basal Testing.
+        var session = runningSession(age: 7200)
+        session.leftTestModeAt = session.startedAt.addingTimeInterval(60)
+        events.carbs = [session.startedAt.addingTimeInterval(600)]
+        events.boluses = [
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(300), units: 2),
+            ISFTestBolus(date: session.startedAt.addingTimeInterval(600), units: 1)
+        ]
+        // The new mode's zero temp, after the change.
+        events.trioSuspends(at: session.startedAt.addingTimeInterval(120))
+        let (service, settings, storage) = makeService(mode: .closed, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        // The user's Closed Loop is left as it is, and the record says nothing was put back.
+        #expect(service.lastEnd() == SettingsTestEnd(
+            sessionID: session.id,
+            cause: .modeChanged,
+            date: session.leftTestModeAt!,
+            modeRestored: false
+        ))
+        #expect(settings.settings.dosingMode == .closed)
+    }
+
+    /// How a session ends after the user picked another mode, for each way it can happen.
+    private enum ModeChangeCase: CaseIterable {
+        /// Away from Basal Testing, and still away when the session ends.
+        case awayAndStay
+        /// Away and back to Basal Testing before the check that ends the session ran.
+        case awayAndBack
+        /// The session ran past its deadline after the change, back in Basal Testing.
+        case expiryAfterChange
+        /// Trio suspended for a low before the change, and the user came back to Basal Testing.
+        case lowBeforeChange
+    }
+
+    @Test(
+        "After a mode change, a session's end puts the usual mode back only if Basal Testing is on, basal and ISF alike"
+    ) func modeAfterTheSessionEnds() async {
+        for kind in [SettingsTestKind.basal, .isf] {
+            for item in ModeChangeCase.allCases {
+                let events = FakeSettingsTestData()
+                var session = runningSession(kind: kind, age: 3600)
+                let leftAt = session.startedAt.addingTimeInterval(1800)
+                session.leftTestModeAt = leftAt
+                if item == .expiryAfterChange { session.expiresAt = Date().addingTimeInterval(-60) }
+                if item == .lowBeforeChange { events.trioSuspends(at: session.startedAt.addingTimeInterval(900)) }
+                // The mode in force when the session ends.
+                let mode: DosingMode = item == .awayAndStay ? .lowGlucoseSuspend : .basalTesting
+                let (service, settings, storage) = makeService(mode: mode, existing: session, events: events)
+                defer { cleanUp(storage) }
+
+                await service.checkSession()
+                let label = "\(kind), \(item)"
+                #expect(service.activeSession == nil, "\(label)")
+                // Basal Testing on: the usual mode is back. Another mode: the user's, left alone.
+                #expect(settings.settings.dosingMode == (item == .awayAndStay ? .lowGlucoseSuspend : .closed), "\(label)")
+                let ended = service.lastEnd()
+                #expect(ended?.sessionID == session.id, "\(label)")
+                if item == .lowBeforeChange {
+                    // The low before the change keeps its cause.
+                    #expect(ended?.cause == .low, "\(label)")
+                } else {
+                    #expect(ended?.cause == .modeChanged, "\(label)")
+                    #expect(ended?.modeRestored == (item != .awayAndStay), "\(label)")
+                    #expect(abs((ended?.date ?? .distantPast).timeIntervalSince(leftAt)) < 0.01, "\(label)")
+                }
+            }
+        }
+    }
+
+    @Test(
+        "Switched away from Basal Testing and back between checks, the test's end puts the usual mode back and says so"
+    ) func modeSwitchedAwayAndBack() async {
+        for kind in [SettingsTestKind.isf, .basal] {
+            let events = FakeSettingsTestData()
+            let (service, settings, storage, session) = startBasalTest(events: events, kind: kind)
+            defer { cleanUp(storage) }
+
+            settings.settings.dosingMode = .closed
+            let leftAt = session.startedAt.addingTimeInterval(1)
+            #expect(service.noteTestModeLeft(at: leftAt))
+            // The user picks Basal Testing again before the check runs.
+            settings.settings.dosingMode = .basalTesting
+            await service.endIfLowOrInterrupted()
+            #expect(service.activeSession == nil)
+            let ended = service.lastEnd()
+            #expect(ended?.sessionID == session.id)
+            #expect(ended?.cause == .modeChanged)
+            #expect(ended?.modeRestored == true)
+            #expect(settings.settings.dosingMode == .closed)
+            // So neither screen says Basal Testing is still on.
+            #expect(!SettingsTestModeRule.basalTestingLeftOn(mode: settings.settings.dosingMode, activeSessionID: nil))
+        }
+        // Back in Basal Testing after the session ended, with no test running it: the Results say so.
+        #expect(SettingsTestModeRule.basalTestingLeftOn(mode: .basalTesting, activeSessionID: nil))
+        #expect(!SettingsTestModeRule.basalTestingLeftOn(mode: .basalTesting, activeSessionID: UUID()))
+        #expect(!SettingsTestModeRule.basalTestingLeftOn(mode: .closed, activeSessionID: nil))
+    }
+
+    @Test("A history that can't be read to rule out a low before the mode change waits for the next check") func modeChangeUnread() async {
+        let events = FakeSettingsTestData()
+        let (service, settings, storage, session) = startBasalTest(events: events, kind: .isf)
+        defer { cleanUp(storage) }
+
+        settings.settings.dosingMode = .closed
+        #expect(service.noteTestModeLeft(at: session.startedAt.addingTimeInterval(1)))
+        events.failingTemps = true
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(service.lastEnd() == nil)
+    }
+
+    @Test(
+        "A session that expires after the mode was left keeps why, and its end leaves no lost session for a screen to restore"
+    ) func expiryAfterModeLeft() async {
+        var session = runningSession(age: 7200)
+        session.expiresAt = Date().addingTimeInterval(-60)
+        session.leftTestModeAt = session.startedAt.addingTimeInterval(60)
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: FakeSettingsTestData())
+        defer { cleanUp(storage) }
+
+        service.endIfExpired()
+        #expect(service.activeSession == nil)
+        // Back in Basal Testing at the end: the usual mode comes back.
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd()?.sessionID == session.id)
+        #expect(service.lastEnd()?.cause == .modeChanged)
+        #expect(service.lastEnd()?.modeRestored == true)
+        // The screen that finishes the test has nothing left to put back.
+        #expect(SettingsTestModeRule.modeToRestore(
+            mode: settings.settings.dosingMode,
+            testSessionID: session.id,
+            activeSessionID: service.activeSession?.id,
+            lastEndSessionID: service.lastEnd()?.sessionID,
+            previousMode: .closed
+        ) == nil)
+    }
+
+    @Test(
+        "The pump suspended, alarmed or changed ends an ISF test from Begin, after a low and before carbs"
+    ) func pumpInterruptionEndsISF() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        let suspendedAt = session.startedAt.addingTimeInterval(900)
+        events.pumpEvents = [suspendedAt, session.startedAt.addingTimeInterval(1500), session.startedAt.addingTimeInterval(-60)]
+        events.carbs = [session.startedAt.addingTimeInterval(600)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(settings.settings.dosingMode == .closed)
+        #expect(service.lastEnd() == SettingsTestEnd(sessionID: session.id, cause: .pumpInterrupted, date: suspendedAt))
+
+        // Trio's own suspend for a low still comes first.
+        let lowEvents = FakeSettingsTestData()
+        let lowSession = runningSession()
+        lowEvents.trioSuspends(at: lowSession.startedAt.addingTimeInterval(600))
+        lowEvents.pumpEvents = [lowSession.startedAt.addingTimeInterval(300)]
+        let (lowService, _, lowStorage) = makeService(mode: .basalTesting, existing: lowSession, events: lowEvents)
+        defer { cleanUp(lowStorage) }
+        await lowService.endIfLowOrInterrupted()
+        #expect(lowService.lastEnd()?.cause == .low)
+    }
+
+    @Test(
+        "A pump history that can't be read keeps an ISF test running; the pump suspended, alarmed or changed ends a basal test too"
+    ) func pumpHistoryUnread() async {
+        let events = FakeSettingsTestData()
+        events.failingPumpEvents = true
+        let session = runningSession()
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+
+        let basalEvents = FakeSettingsTestData()
+        let basal = runningSession(kind: .basal)
+        let suspendedAt = basal.startedAt.addingTimeInterval(600)
+        basalEvents.pumpEvents = [suspendedAt]
+        let (basalService, basalSettings, basalStorage) = makeService(mode: .basalTesting, existing: basal, events: basalEvents)
+        defer { cleanUp(basalStorage) }
+        await basalService.endIfLowOrInterrupted()
+        #expect(basalService.activeSession == nil)
+        #expect(basalSettings.settings.dosingMode == .closed)
+        #expect(basalService.lastEnd() == SettingsTestEnd(sessionID: basal.id, cause: .pumpInterrupted, date: suspendedAt))
+    }
+
+    @Test(
+        "A zero temp only Closed Loop asked for as an ISF test began isn't its low; one Basal Testing asked for is"
+    ) func closedLoopZeroTempAtBegin() async {
+        let events = FakeSettingsTestData()
+        let session = runningSession()
+        // Decided before Begin, enacted 10 seconds after it.
+        events.temps = [BasalTestTempBasal(date: session.startedAt.addingTimeInterval(10), rate: 0, minutes: 30)]
+        events.zeroTempDeterminations = [session.startedAt.addingTimeInterval(-20)]
+        let (service, settings, storage) = makeService(mode: .basalTesting, existing: session, events: events)
+        defer { cleanUp(storage) }
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession?.id == session.id)
+        #expect(settings.settings.dosingMode == .basalTesting)
+        #expect(service.lastEnd() == nil)
+
+        // A basal test reads the same zero temp with the same margin (part 2, Q6): Closed Loop's, so not the fast's low.
+        // It wasn't Basal Testing's, so it stops the fast as basal stopped.
+        let basalEvents = FakeSettingsTestData()
+        let basal = runningSession(kind: .basal)
+        basalEvents.temps = [BasalTestTempBasal(date: basal.startedAt.addingTimeInterval(10), rate: 0, minutes: 30)]
+        basalEvents.zeroTempDeterminations = [basal.startedAt.addingTimeInterval(-20)]
+        let (basalService, _, basalStorage) = makeService(mode: .basalTesting, existing: basal, events: basalEvents)
+        defer { cleanUp(basalStorage) }
+        await basalService.endIfLowOrInterrupted()
+        #expect(basalService.lastEnd()?.cause == .basalStopped)
+    }
+
     @Test("Without a suspend or carbs the basal test keeps running") func noSuspendLeavesSession() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
@@ -1468,7 +2613,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
             BasalTestTempBasal(date: session.startedAt.addingTimeInterval(-600), rate: 0, minutes: 30)
         ]
         events.carbs = [session.startedAt.addingTimeInterval(-600)]
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession?.id == session.id)
         #expect(settings.settings.dosingMode == .basalTesting)
         #expect(events.reads > 0)
@@ -1476,26 +2621,26 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("A test whose mode the user already changed is left alone") func userModeLeftAlone() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
         settings.settings.dosingMode = .lowGlucoseSuspend
         events.temps = [BasalTestTempBasal(date: session.startedAt, rate: 0, minutes: 30)]
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession?.id == session.id)
         #expect(settings.settings.dosingMode == .lowGlucoseSuspend)
         #expect(events.reads == 0)
     }
 
     @Test("A session that didn't switch to Basal Testing isn't watched") func otherSessionNotWatched() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage) = makeService(mode: .basalTesting, events: events)
         defer { cleanUp(storage) }
 
         let session = service.begin(kind: .isf, expiresIn: 3600, restoring: [])
         events.temps = [BasalTestTempBasal(date: session!.startedAt, rate: 0, minutes: 30)]
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession?.id == session?.id)
         #expect(settings.settings.dosingMode == .basalTesting)
         #expect(events.reads == 0)
@@ -1504,25 +2649,25 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     @Test(
         "When the temp basals can't be read and no carbs were logged, the test keeps running"
     ) func readFailureLeavesSession() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
         events.failingTemps = true
         events.temps = [BasalTestTempBasal(date: session.startedAt, rate: 0, minutes: 30)]
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession?.id == session.id)
         #expect(settings.settings.dosingMode == .basalTesting)
         #expect(service.lastEnd() == nil)
     }
 
     @Test("Carbs that can't be read end a basal test, so the usual dosing comes back") func carbsUnreadableEndsSession() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
         events.failingCarbs = true
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession == nil)
         #expect(settings.settings.dosingMode == .closed)
         #expect(service.lastEnd()?.sessionID == session.id)
@@ -1530,27 +2675,27 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("A low still comes first when carbs can't be read") func lowBeforeCarbsUnreadable() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, _, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
         events.failingCarbs = true
-        events.trioSuspends(at: session.startedAt)
-        await service.endIfLowOrCarbsLogged()
+        events.basalTestingSuspends(at: session.startedAt, startedAt: session.startedAt)
+        await service.endIfLowOrInterrupted()
         #expect(service.lastEnd()?.cause == .low)
     }
 
     // MARK: Leaving Basal Testing
 
     @Test("A low from before the mode was changed is still kept") func lowBeforeModeChange() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
-        events.trioSuspends(at: session.startedAt)
+        events.basalTestingSuspends(at: session.startedAt, startedAt: session.startedAt)
         settings.settings.dosingMode = .closed
         #expect(service.noteTestModeLeft())
-        await service.endIfLowOrCarbsLogged()
+        await service.endIfLowOrInterrupted()
         #expect(service.activeSession == nil)
         let ended = service.lastEnd()
         #expect(ended?.sessionID == session.id)
@@ -1561,8 +2706,10 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         #expect(settings.settings.dosingMode == .closed)
     }
 
-    @Test("After the mode was changed, a zero temp or carbs aren't Basal Testing's to act on") func afterModeChange() async {
-        let events = FakeSettingsTestEvents()
+    @Test(
+        "After the mode was changed, a zero temp or carbs aren't Basal Testing's to act on: the test ends as a mode change"
+    ) func afterModeChange() async {
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
@@ -1572,14 +2719,23 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
         events.trioSuspends(at: session.startedAt.addingTimeInterval(2))
         events.temps.append(BasalTestTempBasal(date: session.startedAt.addingTimeInterval(3), rate: 0, minutes: 30))
         events.carbs = [session.startedAt]
-        await service.endIfLowOrCarbsLogged()
-        #expect(service.activeSession?.id == session.id)
-        #expect(service.lastEnd() == nil)
+        await service.endIfLowOrInterrupted()
+        #expect(service.activeSession == nil)
+        #expect(service.lastEnd()?.cause == .modeChanged)
         #expect(settings.settings.dosingMode == .closed)
+        // The basal screen reads it as a mode change.
+        #expect(BasalTestEvaluator.runningCheck(
+            sessionID: session.id,
+            serviceEnd: service.lastEnd(),
+            suspend: .none,
+            now: Date(),
+            plannedEnd: Date().addingTimeInterval(3600),
+            mode: .closed
+        ) == .modeChanged(at: service.lastEnd()?.date))
     }
 
     @Test("Only the first change away from Basal Testing is noted") func modeLeftOnce() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
@@ -1597,7 +2753,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("The service's own restore isn't a change away from Basal Testing") func restoreIsNotLeaving() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, _) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
@@ -1608,20 +2764,20 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("Without a zero temp, Trio's determinations aren't read") func noZeroTempSkipsDeterminations() async throws {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let start = Date(timeIntervalSince1970: 1_000_000)
         events.failingDeterminations = true
         events.temps = [BasalTestTempBasal(date: start.addingTimeInterval(60), rate: 0.4, minutes: 30)]
         // A failed read of them can't leave a fast with no suspend unchecked.
         #expect(try await events.suspendReading(from: start, to: start.addingTimeInterval(3600)) == .none)
         events.temps.append(BasalTestTempBasal(date: start.addingTimeInterval(120), rate: 0, minutes: 30))
-        await #expect(throws: FakeSettingsTestEvents.Failure.self) {
+        await #expect(throws: FakeSettingsTestData.Failure.self) {
             try await events.suspendReading(from: start, to: start.addingTimeInterval(3600))
         }
     }
 
     @Test("A low is kept when the session had already run past its deadline") func lowIsKeptWhenSessionExpired() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         // On a whole second, so the suspend reads back exactly.
         let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 7200).rounded(.down))
         let session = SettingsTestSession(
@@ -1644,7 +2800,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("A session recovered at launch past its deadline is checked for a low first") func lowIsKeptWhenExpiredAtLaunch() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 7200).rounded(.down))
         let session = SettingsTestSession(
             kind: .basal,
@@ -1669,7 +2825,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("An expired session with no low ends without a record") func expiredSessionWithoutALow() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let startedAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 7200).rounded(.down))
         let session = SettingsTestSession(
             kind: .basal,
@@ -1695,7 +2851,7 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("A running session isn't ended by the check") func checkSessionLeavesALiveSession() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         let (service, settings, storage, session) = startBasalTest(events: events)
         defer { cleanUp(storage) }
 
@@ -1707,11 +2863,11 @@ private final class FakeSettingsTestEvents: SettingsTestEvents {
     }
 
     @Test("A session whose history can't be read still ends at its deadline") func expiredSessionEndsWhenHistoryUnreadable() async {
-        let events = FakeSettingsTestEvents()
+        let events = FakeSettingsTestData()
         events.failing = true
-        // One whose carbs aren't read, so only the deadline ends it.
+        // One whose carbs aren't read, so only the deadline ends it. An ISF test reads them, as a basal test does.
         let session = SettingsTestSession(
-            kind: .isf,
+            kind: .carbRatio,
             startedAt: Date().addingTimeInterval(-7200),
             expiresAt: Date().addingTimeInterval(-60),
             restore: [.dosingMode(testMode: .basalTesting, previous: .closed)]
@@ -1908,6 +3064,72 @@ private final class FakeCalibrationModeService: CalibrationModeService {
 
 @Suite("Settings test events") struct SettingsTestEventsTests {
     @Test(
+        "Carb entries are read in the window with their object IDs, the same from any context; none of 0 g"
+    ) func carbEntriesWithIDs() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let writer = stack.newTaskContext()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let expected: [String] = try await writer.perform {
+            func entry(after seconds: TimeInterval, carbs: Double, fpu: Bool = false) -> CarbEntryStored {
+                let entry = CarbEntryStored(context: writer)
+                entry.id = UUID()
+                entry.date = start.addingTimeInterval(seconds)
+                entry.carbs = carbs
+                entry.isFPU = fpu
+                return entry
+            }
+            let meal = entry(after: 600, carbs: 20)
+            // Fat and protein's carb equivalents are carb entries too.
+            let equivalents = entry(after: 1200, carbs: 5, fpu: true)
+            _ = entry(after: 900, carbs: 0)
+            // Outside the window.
+            _ = entry(after: -60, carbs: 20)
+            _ = entry(after: 7200, carbs: 20)
+            try writer.save()
+            return [meal, equivalents].map { $0.objectID.uriRepresentation().absoluteString }
+        }
+
+        let end = start.addingTimeInterval(3600)
+        let entries = try await CoreDataSettingsTestEvents(context: stack.newTaskContext()).carbEntries(from: start, to: end)
+        #expect(entries.map(\.date) == [start.addingTimeInterval(600), start.addingTimeInterval(1200)])
+        #expect(entries.map(\.id) == expected)
+        // Read from another context, each is the same entry.
+        let again = try await CoreDataSettingsTestEvents(context: stack.newTaskContext()).carbEntries(from: start, to: end)
+        #expect(again == entries)
+    }
+
+    @Test(
+        "Carbs spoil a test from Begin on, and before it, back a day, only when they weren't there at Begin"
+    ) func carbRule() {
+        let begin = Date(timeIntervalSince1970: 1_000_000)
+        func entry(_ id: String, _ seconds: TimeInterval) -> SettingsTestCarbEntry {
+            SettingsTestCarbEntry(id: id, date: begin.addingTimeInterval(seconds))
+        }
+        let dinner = entry("dinner", -3 * 3600)
+        let kept = SettingsTestCarbRule.keptAtBegin([entry("lunch", -6 * 3600), dinner])
+        #expect(kept == ["dinner", "lunch"])
+        #expect(SettingsTestCarbRule.readFrom(startedAt: begin, kept: kept) == begin.addingTimeInterval(-24 * 3600))
+        func spoil(_ entries: [SettingsTestCarbEntry]) -> Bool {
+            SettingsTestCarbRule.spoil(entries, startedAt: begin, kept: kept)
+        }
+        #expect(!spoil([dinner]))
+        // Logged since Begin with the time it was eaten, before Begin.
+        #expect(spoil([dinner, entry("snack", -30 * 60)]))
+        // Dated from Begin on, as before.
+        #expect(spoil([entry("tea", 600)]))
+        #expect(spoil([entry("tea", 0)]))
+        // Dated from Begin on, it spoils the test even if it was there at Begin (fat and protein's, say).
+        #expect(SettingsTestCarbRule.spoil([entry("equivalents", 0)], startedAt: begin, kept: ["equivalents"]))
+        // More than a day before Begin.
+        #expect(!spoil([entry("yesterday", -25 * 3600)]))
+
+        // A test that kept none reads from Begin, as before.
+        #expect(SettingsTestCarbRule.readFrom(startedAt: begin, kept: nil) == begin)
+        #expect(!SettingsTestCarbRule.spoil([entry("snack", -30 * 60)], startedAt: begin, kept: nil))
+        #expect(SettingsTestCarbRule.spoil([entry("tea", 0)], startedAt: begin, kept: nil))
+    }
+
+    @Test(
         "Trio's determinations that asked for a zero temp with time on it, dated by when they were due"
     ) func zeroTempDeterminations() async throws {
         let stack = try await CoreDataStack.createForTests()
@@ -1940,6 +3162,192 @@ private final class FakeCalibrationModeService: CalibrationModeService {
             .zeroTempDeterminations(from: start, to: start.addingTimeInterval(3600))
         #expect(dates == [start.addingTimeInterval(600), start.addingTimeInterval(1820)])
     }
+
+    @Test(
+        "Boluses are read with the amount the pump history holds now, whatever their SMB flag; one at 0 U is left out"
+    ) func bolusesReadTheCurrentAmount() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        // The reader keeps its own context, as the ISF screen's provider does; the pump history writes in another.
+        let reader = stack.newTaskContext()
+        let writer = stack.newTaskContext()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        let bolusAt = start.addingTimeInterval(1200.000_3)
+        func insert(at date: Date, amount: Decimal?, isSMB: Bool = false) async throws -> NSManagedObjectID {
+            try await writer.perform {
+                let event = PumpEventStored(context: writer)
+                event.id = UUID().uuidString
+                event.timestamp = date
+                event.type = PumpEventStored.EventType.bolus.rawValue
+                event.isMutable = true
+                let bolus = BolusStored(context: writer)
+                bolus.amount = amount.map { NSDecimalNumber(decimal: $0) }
+                bolus.isSMB = isSMB
+                bolus.pumpEvent = event
+                try writer.save()
+                return event.objectID
+            }
+        }
+        // While delivering, the row holds the programmed amount.
+        let id = try await insert(at: bolusAt, amount: 2)
+        _ = try await insert(at: start.addingTimeInterval(1800), amount: 0)
+        _ = try await insert(at: start.addingTimeInterval(2400), amount: dec("0.5"), isSMB: true)
+        let unnamed = start.addingTimeInterval(3000)
+        _ = try await insert(at: unnamed, amount: nil)
+        let events = CoreDataSettingsTestEvents(context: reader)
+        let window = (start, start.addingTimeInterval(3600))
+        // The reader holds on to the row it read, as a context can, so a stale copy would show if one were kept.
+        let held = try await reader.perform { try reader.existingObject(with: id) as? PumpEventStored }
+        _ = await reader.perform { held?.bolus?.amount }
+
+        // The one flagged as an SMB is read too: Basal Testing gives none, so it is a bolus like the others.
+        let smbFlagged = ISFTestBolus(date: start.addingTimeInterval(2400), units: dec("0.5"))
+        let first = try await events.allBoluses(from: window.0, to: window.1)
+        #expect(first == [ISFTestBolus(date: bolusAt, units: 2), smbFlagged, ISFTestBolus(date: unnamed, units: 0)])
+
+        // Cut short: the pump reports what it delivered, and the row is updated in place.
+        try await writer.perform {
+            let event = try writer.existingObject(with: id) as? PumpEventStored
+            event?.bolus?.amount = NSDecimalNumber(decimal: 1)
+            event?.isMutable = false
+            try writer.save()
+        }
+        let reread = try await events.allBoluses(from: window.0, to: window.1)
+        #expect(reread == [ISFTestBolus(date: bolusAt, units: 1), smbFlagged, ISFTestBolus(date: unnamed, units: 0)])
+
+        // The test's re-read takes every bolus row with its amount, 0 U and no amount included.
+        let rows = try await events.bolusRecords(from: window.0, to: window.1)
+        #expect(rows == [
+            ISFTestBolusRecord(date: bolusAt, amount: 1),
+            ISFTestBolusRecord(date: start.addingTimeInterval(1800), amount: 0),
+            ISFTestBolusRecord(date: start.addingTimeInterval(2400), amount: dec("0.5")),
+            ISFTestBolusRecord(date: unnamed, amount: nil)
+        ])
+        // Finalized with `automatic` unset, the pump history flags the row as an SMB: both reads still find it, with the
+        // amount delivered.
+        try await writer.perform {
+            let event = try writer.existingObject(with: id) as? PumpEventStored
+            event?.bolus?.isSMB = true
+            try writer.save()
+        }
+        #expect(try await events.allBoluses(from: window.0, to: window.1) == reread)
+        let flipped = try await events.bolusRecords(from: bolusAt, to: bolusAt)
+        #expect(flipped == [ISFTestBolusRecord(date: bolusAt, amount: 1)])
+        #expect(ISFTestEvaluator.bolusAmount(saved: 2, reread: flipped, bolusAt: bolusAt, finishing: true) == .units(1))
+        // A row at 0 U reads as cancelled.
+        let zeroAt = start.addingTimeInterval(1800)
+        let zero = try await events.bolusRecords(from: zeroAt, to: zeroAt)
+        #expect(ISFTestEvaluator.bolusAmount(saved: 2, reread: zero, bolusAt: zeroAt, finishing: true) == .cancelled)
+        withExtendedLifetime(held) {}
+    }
+
+    @Test(
+        "The pump's suspends and resumes, alarms, and site, reservoir or pod changes are read in the window, nothing else"
+    ) func pumpInterruptions() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let context = stack.newTaskContext()
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        await context.perform {
+            func event(_ type: PumpEventStored.EventType, after seconds: TimeInterval) {
+                let event = PumpEventStored(context: context)
+                event.id = UUID().uuidString
+                event.timestamp = start.addingTimeInterval(seconds)
+                event.type = type.rawValue
+            }
+            event(.pumpSuspend, after: 600)
+            event(.pumpResume, after: 900)
+            event(.pumpAlarm, after: 1200)
+            event(.rewind, after: 1500)
+            event(.prime, after: 1800)
+            event(.siteChange, after: 2100)
+            // Not one: dosing, a battery event.
+            event(.bolus, after: 300)
+            event(.tempBasal, after: 400)
+            event(.pumpBattery, after: 500)
+            // Outside the window.
+            event(.pumpSuspend, after: -60)
+            event(.pumpAlarm, after: 7200)
+            try? context.save()
+        }
+        let dates = try await CoreDataSettingsTestEvents(context: context)
+            .pumpInterruptions(from: start, to: start.addingTimeInterval(3600))
+        #expect(dates == [600, 900, 1200, 1500, 1800, 2100].map { start.addingTimeInterval($0) })
+    }
+
+    @Test(
+        "Manual BG entries and CGM calibrations are left out of every glucose, arrow and newest-direction read"
+    ) func manualReadingsLeftOut() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let context = stack.newTaskContext()
+        let start = Date().addingTimeInterval(-3600)
+        await context.perform {
+            func glucose(after seconds: TimeInterval, _ value: Int16, manual: Bool, direction: String? = "Flat") {
+                let stored = GlucoseStored(context: context)
+                stored.id = UUID()
+                stored.date = start.addingTimeInterval(seconds)
+                stored.glucose = value
+                stored.isManual = manual
+                stored.direction = manual ? nil : direction
+            }
+            glucose(after: 600, 112, manual: false)
+            glucose(after: 900, 113, manual: false)
+            glucose(after: 1200, 114, manual: false, direction: "SingleUp")
+            // A fingerstick entered with Home's "+", and a calibration, both stored as manual, with no arrow.
+            glucose(after: 1300, 128, manual: true)
+            glucose(after: 1320, 140, manual: true)
+            try? context.save()
+        }
+        let events = CoreDataSettingsTestEvents(context: stack.newTaskContext())
+        let cgm = [600, 900, 1200].map { start.addingTimeInterval($0) }
+        #expect(try await events.glucose(from: start, to: start.addingTimeInterval(3600)).map(\.date) == cgm)
+        #expect(try await events.recentGlucose(since: start).map(\.date) == cgm.reversed())
+        // The newest reading's arrow is the CGM's, not none from the fingerstick after it.
+        #expect(try await events.newestDirection(since: start) == .singleUp)
+        let arrow = try await events.arrowReading(atOrBefore: start.addingTimeInterval(1400), since: start)
+        #expect(arrow == ISFTestArrowReading(date: start.addingTimeInterval(1200), direction: .singleUp))
+    }
+
+    @Test(
+        "Alarms, site and pod changes, suspends and resumes the pump driver reports are stored as the rows the interruption read finds"
+    ) func pumpInterruptionsFromThePumpDriver() async throws {
+        let stack = try await CoreDataStack.createForTests()
+        let context = stack.newTaskContext()
+        let resolver = Assembler([
+            StorageAssembly(),
+            ServiceAssembly(),
+            APSAssembly(),
+            NetworkAssembly(),
+            UIAssembly(),
+            SecurityAssembly(),
+            TestAssembly(testContext: context)
+        ]).resolver
+        let storage = try #require(resolver.resolve(PumpHistoryStorage.self))
+        let start = Date().addingTimeInterval(-3600)
+        func event(_ type: PumpEventType, after seconds: TimeInterval) -> NewPumpEvent {
+            NewPumpEvent(
+                date: start.addingTimeInterval(seconds),
+                dose: nil,
+                raw: Data("interruption-\(seconds)".utf8),
+                title: "\(type)",
+                type: type
+            )
+        }
+        // Stored through upstream's own mapping (`PumpEventType.storedEventType`), not as raw rows.
+        try await storage.storePumpEvents([
+            event(.alarm, after: 600),
+            event(.replaceComponent(componentType: .infusionSet), after: 1200),
+            event(.replaceComponent(componentType: .pump), after: 1800),
+            event(.suspend, after: 2400),
+            event(.resume, after: 2700),
+            event(.rewind, after: 3000),
+            event(.prime, after: 3060),
+            // Not one: an alarm cleared, which upstream doesn't store.
+            event(.alarmClear, after: 900)
+        ], replacePendingEvents: false)
+        let dates = try await CoreDataSettingsTestEvents(context: context).pumpInterruptions(from: start, to: Date())
+        #expect(dates == [600, 1200, 1800, 2400, 2700, 3000, 3060].map { start.addingTimeInterval($0) })
+    }
+
+    private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
 }
 
 @Suite("Settings test kinds") struct SettingsTestKindTests {
@@ -1947,9 +3355,9 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(SettingsTestKind.allCases == [.basal, .isf, .carbRatio])
     }
 
-    @Test("Only basal can be opened; sensitivity is coming and carb ratio is being rebuilt") func availability() {
+    @Test("Basal and sensitivity can be opened; carb ratio is being rebuilt") func availability() {
         #expect(SettingsTestKind.basal.availability == .available)
-        #expect(SettingsTestKind.isf.availability == .comingSoon)
+        #expect(SettingsTestKind.isf.availability == .available)
         #expect(SettingsTestKind.carbRatio.availability == .beingRebuilt)
     }
 
@@ -1972,7 +3380,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
     @Test("Only an available test opens, and only while no other test runs") func screens() {
         let state = SettingsTest.StateModel()
         #expect(state.screen(for: .basal) == .basalTest)
-        #expect(state.screen(for: .isf) == nil)
+        #expect(state.screen(for: .isf) == .isfTest)
         #expect(state.screen(for: .carbRatio) == nil)
 
         state.activeSession = SettingsTestSession(
@@ -1981,6 +3389,108 @@ private final class FakeCalibrationModeService: CalibrationModeService {
             restore: []
         )
         #expect(state.screen(for: .basal) == .basalTest)
+        #expect(state.screen(for: .isf) == nil)
+
+        state.activeSession = SettingsTestSession(kind: .isf, expiresAt: Date().addingTimeInterval(3600), restore: [])
+        #expect(state.screen(for: .isf) == .isfTest)
+        #expect(state.screen(for: .basal) == nil)
+    }
+
+    // MARK: Sensitivity row warning
+
+    private let gateNow = Date(timeIntervalSince1970: 1_700_000_000)
+    private let english = Locale(identifier: "en_US")
+
+    @Test("A steady basal test with its schedule unchanged shows no warning") func gateReadyHasNoNote() {
+        let gate = SettingsTestSchedule.BasalGate.ready(lastSteady: gateNow.addingTimeInterval(-3 * 86400))
+        #expect(SettingsTestKind.isfGateNote(for: gate, now: gateNow, locale: english) == nil)
+    }
+
+    @Test("Any other basal gate warns in the Check screen's words, and says the test can still start") func gateNotes() {
+        let past = gateNow.addingTimeInterval(-3 * 86400)
+        let gates: [SettingsTestSchedule.BasalGate] = [
+            .noSteadyTest,
+            .changedSince(past),
+            .lastWasNot(.increase, past),
+            .lastWasNot(.decrease, past)
+        ]
+        for gate in gates {
+            let note = SettingsTestKind.isfGateNote(for: gate, now: gateNow, locale: english)
+            let check = ISFTestEvaluator.basalGateText(gate, now: gateNow, locale: english)
+            #expect(note == "\(check). You can still start.")
+        }
+        #expect(
+            SettingsTestKind.isfGateNote(for: .noSteadyTest, now: gateNow, locale: english)
+                == "No steady basal test yet. You can still start."
+        )
+        #expect(
+            SettingsTestKind.isfGateNote(for: .lastWasNot(.decrease, past), now: gateNow, locale: english)
+                == "The last basal test said basal looks too high. You can still start."
+        )
+    }
+
+    @Test("The warning never locks the row, and goes while a test runs or before the gate is read") func gateNoteState() {
+        let state = SettingsTest.StateModel()
+        #expect(state.isfGateNote == nil)
+
+        state.basalGate = .noSteadyTest
+        #expect(state.isfGateNote == "No steady basal test yet. You can still start.")
+        #expect(!state.isLocked(.isf))
+        #expect(state.screen(for: .isf) == .isfTest)
+
+        state.activeSession = SettingsTestSession(kind: .isf, expiresAt: gateNow, restore: [])
+        #expect(state.isfGateNote == nil)
+    }
+
+    // MARK: Time period rows
+
+    private func period(
+        _ direction: SettingsTestDirection?,
+        changedSince: Bool = false
+    ) -> SettingsTestPeriod {
+        SettingsTestPeriod(
+            entry: SettingsTestScheduleEntry(startMinutes: 0, endMinutes: 360, value: 50),
+            lastTest: direction == nil ? nil : gateNow,
+            lastDirection: direction,
+            changedSince: changedSince
+        )
+    }
+
+    private func status(_ kind: SettingsTestKind, _ period: SettingsTestPeriod) -> String {
+        kind.periodStatusText(for: period) { _ in "3 days ago" }
+    }
+
+    @Test("A sensitivity period says whether its last test looked accurate, too high or too low") func isfStatus() {
+        #expect(status(.isf, period(.keep)) == "Looked accurate 3 days ago")
+        // The drop fell short of the ISF: the number is too high, and the docs say decrease it.
+        #expect(status(.isf, period(.decrease)) == "ISF looked too high 3 days ago")
+        // The drop overshot: the number is too low, and the docs say increase it.
+        #expect(status(.isf, period(.increase)) == "ISF looked too low 3 days ago")
+    }
+
+    @Test("A basal period reads as it always has") func basalStatus() {
+        #expect(status(.basal, period(.keep)) == "Steady 3 days ago")
+        #expect(status(.basal, period(.increase)) == "Basal looked too low 3 days ago")
+        #expect(status(.basal, period(.decrease)) == "Basal looked too high 3 days ago")
+    }
+
+    @Test("An untested or edited period says so, whatever the kind") func untestedAndChangedStatus() {
+        for kind in [SettingsTestKind.basal, .isf] {
+            #expect(status(kind, period(nil)) == "Not tested yet")
+            #expect(status(kind, period(.keep, changedSince: true)) == "Changed since the last test")
+            #expect(status(kind, period(.decrease, changedSince: true)) == "Changed since the last test")
+        }
+    }
+
+    @Test("A sensitivity shows in the user's units, with the unit kept together") func isfText() {
+        // The unit never breaks across lines, so compare as it reads.
+        func read(_ text: String) -> String {
+            text.replacingOccurrences(of: "\u{00A0}", with: " ").replacingOccurrences(of: "\u{2060}", with: "")
+        }
+        #expect(read(SettingsTestKind.isfText(50, units: .mgdL, locale: english)) == "50 mg/dL/U")
+        #expect(read(SettingsTestKind.isfText(45.5, units: .mgdL, locale: english)) == "45.5 mg/dL/U")
+        // 50 mg/dL per unit is 2.8 mmol/L per unit.
+        #expect(read(SettingsTestKind.isfText(50, units: .mmolL, locale: english)) == "2.8 mmol/L/U")
     }
 
     private var observingCarbRatioTest: CalibrationTestState {
@@ -2057,6 +3567,30 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         )
         let decoded = try JSONCoding.decoder.decode(SettingsTestSession.self, from: JSONCoding.encoder.encode(session))
         #expect(decoded == session)
+
+        var isf = session
+        isf.kind = .isf
+        isf.bolusWindowStart = Date(timeIntervalSince1970: 1_900_600)
+        let decodedISF = try JSONCoding.decoder.decode(SettingsTestSession.self, from: JSONCoding.encoder.encode(isf))
+        #expect(decodedISF == isf)
+        #expect(decodedISF.bolusWindowStart == Date(timeIntervalSince1970: 1_900_600))
+    }
+
+    @Test("A session saved before the bolus window start was kept decodes with none") func decodesOldSession() throws {
+        let json = """
+        {
+          "id": "6F1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
+          "kind": "isf",
+          "startedAt": "2026-11-03T12:00:00Z",
+          "expiresAt": "2026-11-03T18:00:00Z",
+          "restore": [{"dosingMode": {"testMode": "basalTesting", "previous": "closed"}}]
+        }
+        """
+        let decoded = try JSONCoding.decoder.decode(SettingsTestSession.self, from: Data(json.utf8))
+        #expect(decoded.kind == .isf)
+        #expect(decoded.bolusWindowStart == nil)
+        #expect(decoded.leftTestModeAt == nil)
+        #expect(decoded.restore == [.dosingMode(testMode: .basalTesting, previous: .closed)])
     }
 }
 
@@ -2110,6 +3644,74 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(!SettingsTestFormulaCard.showsApproximate(result: [exact, share], lineCount: 1))
     }
 
+    @Test("At accessibility sizes a formula stacks one term to a line, its operators leading") func stackedFormula() {
+        let current = term("Current", "212", "mg/dL")
+        let target = term("Target", "100", "mg/dL", fromSettings: true)
+        let isf = term("ISF", "50", "mg/dL/U", fromSettings: true)
+        func shape(_ parts: [SettingsTestFormulaPart]) -> [String] {
+            SettingsTestFormulaCard.stackedLines(parts).map { "\($0.leading)|\($0.term.label)|\($0.trailing)" }
+        }
+
+        // The docs' dose: ( Current − Target ) ÷ ISF.
+        let dose: [SettingsTestFormulaPart] = [
+            .op("("), .term(current), .op("−"), .term(target), .op(")"), .op("÷"), .term(isf)
+        ]
+        #expect(shape(dose) == ["(|Current|", "−|Target|)", "÷|ISF|"])
+        // Each term keeps whether it is from the settings, so it stays blue.
+        #expect(SettingsTestFormulaCard.stackedLines(dose).map(\.term.fromSettings) == [false, true, true])
+
+        // The basal rate: no brackets, so the first term has nothing before it.
+        let rate: [SettingsTestFormulaPart] = [
+            .term(term("Change", "+37", "mg/dL")), .op("÷"), .term(isf), .op("÷"), .term(term("Hours", "6", "h"))
+        ]
+        #expect(shape(rate) == ["|Change|", "÷|ISF|", "÷|Hours|"])
+
+        // A bracket that opens after an operator leads with both; brackets that close together close one line.
+        let nested: [SettingsTestFormulaPart] = [
+            .term(current), .op("÷"), .op("("), .term(target), .op("−"), .term(isf), .op(")")
+        ]
+        #expect(shape(nested) == ["|Current|", "÷ (|Target|", "−|ISF|)"])
+        let closedTwice: [SettingsTestFormulaPart] = [
+            .op("("), .op("("), .term(current), .op("−"), .term(target), .op(")"), .op(")")
+        ]
+        #expect(shape(closedTwice) == ["( (|Current|", "−|Target|) )"])
+
+        // Every term is on a line, once, in order.
+        for parts in [dose, rate, nested, closedTwice] {
+            let terms = parts.compactMap { part -> String? in
+                if case let .term(term) = part { return term.label }
+                return nil
+            }
+            #expect(SettingsTestFormulaCard.stackedLines(parts).map(\.term.label) == terms)
+        }
+        #expect(SettingsTestFormulaCard.stackedLines([]).isEmpty)
+    }
+
+    @Test("The step bar checks the steps before the current one, unless they were skipped") func stepBarStatus() {
+        typealias Bar = SettingsTestStepBar<BasalTest.Step>
+        // Basal passes no skipped steps, so its bar is as it was.
+        #expect(BasalTest.Step.allCases.map { Bar.status(of: $0, current: .check, skipped: []) } == [
+            .current, .upcoming, .upcoming
+        ])
+        #expect(BasalTest.Step.allCases.map { Bar.status(of: $0, current: .result, skipped: []) } == [
+            .done, .done, .current
+        ])
+        // A skipped step before the current one is skipped; the current step and those to come never are.
+        #expect(BasalTest.Step.allCases.map { Bar.status(of: $0, current: .result, skipped: [.fast]) } == [
+            .done, .skipped, .current
+        ])
+        #expect(BasalTest.Step.allCases.map { Bar.status(of: $0, current: .fast, skipped: [.fast, .result]) } == [
+            .done, .current, .upcoming
+        ])
+    }
+
+    @Test("A warning is an orange triangle, apart from the info look") func warningState() {
+        #expect(SettingsTestCheckState.warning.icon == "exclamationmark.triangle.fill")
+        #expect(SettingsTestCheckState.warning.color == .orange)
+        #expect(SettingsTestCheckState.info.icon == "info.circle")
+        #expect(SettingsTestCheckState.info.color == .secondary)
+    }
+
     @Test("A glucose and its unit stay on one line, and read the same") func keepTogether() {
         let mgdl = SettingsTestFormat.keepTogether("72", unit: "mg/dL")
         // A no-break space before the unit, and a word joiner after its slash.
@@ -2123,6 +3725,31 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(SettingsTestFormat.passedChecksSummary(passing: 5, total: 5) == String(localized: "All 5 checks pass"))
         #expect(SettingsTestFormat.passedChecksSummary(passing: 4, total: 5) == String(localized: "4 other checks pass"))
         #expect(SettingsTestFormat.passedChecksSummary(passing: 1, total: 5) == String(localized: "1 other check passes"))
+    }
+
+    @Test("The chart's range pads the readings, and leaves room above a target line for its label") func chartRange() {
+        // Without a target, the readings with 10 mg/dL either side, as the basal screens draw it.
+        #expect(SettingsTestGlucoseChart.yRange(values: [100, 140], target: nil) == 90 ... 150)
+        #expect(SettingsTestGlucoseChart.yRange(values: [], target: nil) == 60 ... 190)
+        #expect(SettingsTestGlucoseChart.yRange(values: [35, 410], target: nil) == 40 ... 400)
+        // A target under the readings changes nothing above them.
+        #expect(SettingsTestGlucoseChart.yRange(values: [150, 220], target: 100) == 90 ... 230)
+        // A target at the top gets a fifth of the range below it above it, so its label isn't cut off.
+        #expect(SettingsTestGlucoseChart.yRange(values: [60, 100], target: 110) == 50 ... 122)
+        // And at least 10 mg/dL.
+        #expect(SettingsTestGlucoseChart.yRange(values: [105], target: 110) == 95 ... 120)
+        // A reading just over the target still leaves the label its room.
+        #expect(SettingsTestGlucoseChart.yRange(values: [60, 112], target: 110) == 50 ... 122)
+    }
+
+    @Test("The chart's range is always a valid range, however far the values are past its limits") func chartRangeClamped() {
+        // Every reading above 400, with no target: the top 10 mg/dL of the chart.
+        #expect(SettingsTestGlucoseChart.yRange(values: [420, 450], target: nil) == 390 ... 400)
+        #expect(SettingsTestGlucoseChart.yRange(values: [], target: 450) == 390 ... 400)
+        // Every reading below 40: the bottom 10 mg/dL.
+        #expect(SettingsTestGlucoseChart.yRange(values: [20, 25], target: nil) == 40 ... 50)
+        // In between, nothing changes.
+        #expect(SettingsTestGlucoseChart.yRange(values: [35, 410], target: nil) == 40 ... 400)
     }
 }
 
@@ -2186,6 +3813,42 @@ private final class FakeCalibrationModeService: CalibrationModeService {
 
     @Test("An empty profile has no entries") func emptyProfile() {
         #expect(SettingsTestSchedule.entries([]).isEmpty)
+    }
+
+    private func isf(_ units: GlucoseUnits, _ points: [(hour: Int, value: Decimal)]) -> InsulinSensitivities {
+        InsulinSensitivities(
+            units: units,
+            userPreferredUnits: units,
+            sensitivities: points.map {
+                InsulinSensitivityEntry(sensitivity: $0.value, offset: $0.hour * 60, start: String(format: "%02d:00:00", $0.hour))
+            }
+        )
+    }
+
+    @Test("An ISF profile becomes entries that run to the next start, the last to midnight") func isfEntriesSpanTheDay() {
+        let entries = SettingsTestSchedule.entries(isf(.mgdL, [(0, 50), (6, 40), (18, 45)]))
+        #expect(entries == [entry(0, 360, 50), entry(360, 1080, 40), entry(1080, 1440, 45)])
+    }
+
+    @Test("ISF entries are built in start order whatever order the profile arrives in") func isfEntriesAreSorted() {
+        let shuffled = SettingsTestSchedule.entries(isf(.mgdL, [(18, 45), (0, 50), (6, 40)]))
+        #expect(shuffled == [entry(0, 360, 50), entry(360, 1080, 40), entry(1080, 1440, 45)])
+    }
+
+    @Test("An ISF saved in mmol/L is read in mg/dL, keeping its decimals") func isfEntriesFromMmol() {
+        let entries = SettingsTestSchedule.entries(isf(.mmolL, [(0, 2.8), (12, 2.2)]))
+        #expect(entries == [
+            entry(0, 720, Decimal(2.8) / GlucoseUnits.exchangeRate),
+            entry(720, 1440, Decimal(2.2) / GlucoseUnits.exchangeRate)
+        ])
+        // 2.8 mmol/L is 50.45 mg/dL, not the app's whole 50, which is close to 1% off, and it reads back as 2.8.
+        #expect(Trio.rounded(entries[0].value, scale: 2, roundingMode: .plain) == Decimal(string: "50.45"))
+        #expect(entries[0].value.formattedISF(for: .mmolL, locale: Locale(identifier: "en_US")) == "2.8")
+        #expect(SettingsTestSchedule.isfInMgdL(50, units: .mgdL) == 50)
+    }
+
+    @Test("An ISF profile with no entries has none") func isfEntriesEmpty() {
+        #expect(SettingsTestSchedule.entries(isf(.mgdL, [])).isEmpty)
     }
 
     @Test("A window takes its minutes of the day from the calendar") func windowMinutes() {
@@ -2328,6 +3991,51 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(decoded.direction == .keep)
     }
 
+    @Test("A record saved before boluses were kept decodes with no bolus or tablets") func decodesRecordWithoutBolus() throws {
+        let json = """
+        {
+          "id": "6F1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D",
+          "kind": "basal",
+          "startedAt": "2026-10-25T02:00:00Z",
+          "completedAt": "2026-10-25T06:00:00Z",
+          "timeBlock": "Overnight",
+          "startGlucose": 100,
+          "endGlucose": 105,
+          "direction": "keep",
+          "summary": "steady",
+          "applied": false,
+          "coveredEntries": [{"startMinutes": 0, "endMinutes": 360, "value": 0.8}]
+        }
+        """
+        let decoded = try JSONCoding.decoder.decode(SettingsTestRecord.self, from: Data(json.utf8))
+        #expect(decoded.bolusUnits == nil)
+        #expect(decoded.tabletCarbs == nil)
+        #expect(decoded.iobHandling == nil)
+        #expect(decoded.iobCounted == nil)
+        #expect(decoded.coveredEntries == [entry(0, 360, 0.8)])
+    }
+
+    @Test("How an ISF test handled insulin on board, and what it counted, survive a round trip through JSON") func iobRoundTrip() throws {
+        var saved = record(.decrease, minutesAgo: 10, kind: .isf, covered: [entry(0, 360, 50)])
+        saved.bolusUnits = 2
+        saved.iobHandling = ISFTestIOBHandling.count.rawValue
+        saved.iobCounted = Decimal(string: "-0.3")!
+        let decoded = try JSONCoding.decoder.decode(SettingsTestRecord.self, from: JSONCoding.encoder.encode(saved))
+        #expect(decoded.iobHandling == "count")
+        #expect(decoded.iobCounted == Decimal(string: "-0.3")!)
+        #expect(decoded == saved)
+    }
+
+    @Test("The bolus and tablets of a test survive a round trip through JSON") func bolusRoundTrip() throws {
+        var saved = record(.decrease, minutesAgo: 10, kind: .isf, covered: [entry(0, 360, 50)])
+        saved.bolusUnits = 1.8
+        saved.tabletCarbs = 12
+        let decoded = try JSONCoding.decoder.decode(SettingsTestRecord.self, from: JSONCoding.encoder.encode(saved))
+        #expect(decoded.bolusUnits == 1.8)
+        #expect(decoded.tabletCarbs == 12)
+        #expect(decoded == saved)
+    }
+
     @Test("Covered entries survive a round trip through JSON") func recordRoundTrip() throws {
         let saved = record(.keep, minutesAgo: 10, covered: [entry(0, 360, 0.8), entry(1320, 1440, 0.7)])
         let decoded = try JSONCoding.decoder.decode(SettingsTestRecord.self, from: JSONCoding.encoder.encode(saved))
@@ -2336,20 +4044,20 @@ private final class FakeCalibrationModeService: CalibrationModeService {
 
     // MARK: Basal periods
 
-    private func untested(_ entry: SettingsTestScheduleEntry) -> SettingsTestBasalPeriod {
-        SettingsTestBasalPeriod(entry: entry, lastTest: nil, lastDirection: nil, changedSince: false)
+    private func untested(_ entry: SettingsTestScheduleEntry) -> SettingsTestPeriod {
+        SettingsTestPeriod(entry: entry, lastTest: nil, lastDirection: nil, changedSince: false)
     }
 
     @Test("With no tests, every period is untested") func periodsUntested() {
-        let periods = SettingsTestSchedule.basalPeriods(current: profile, history: [])
+        let periods = SettingsTestSchedule.periods(for: .basal, current: profile, history: [])
         #expect(periods == profile.map(untested))
     }
 
     @Test("A steady test marks the period it covered and leaves the others untested") func periodSteady() {
         let steady = record(.keep, minutesAgo: 10, covered: [entry(0, 360, 0.8)])
-        let periods = SettingsTestSchedule.basalPeriods(current: profile, history: [steady])
+        let periods = SettingsTestSchedule.periods(for: .basal, current: profile, history: [steady])
         #expect(periods == [
-            SettingsTestBasalPeriod(
+            SettingsTestPeriod(
                 entry: entry(0, 360, 0.8),
                 lastTest: steady.completedAt,
                 lastDirection: .keep,
@@ -2363,7 +4071,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
     @Test("A rising or falling test keeps its direction") func periodDirection() {
         let rising = record(.increase, minutesAgo: 10, covered: [entry(0, 360, 0.8)])
         let falling = record(.decrease, minutesAgo: 20, covered: [entry(360, 1320, 1.0)])
-        let periods = SettingsTestSchedule.basalPeriods(current: profile, history: [rising, falling])
+        let periods = SettingsTestSchedule.periods(for: .basal, current: profile, history: [rising, falling])
         #expect(periods[0].lastDirection == .increase)
         #expect(periods[0].lastTest == rising.completedAt)
         #expect(periods[1].lastDirection == .decrease)
@@ -2376,8 +4084,8 @@ private final class FakeCalibrationModeService: CalibrationModeService {
     @Test("A period edited since its test says so, and still shows what the test said") func periodEdited() {
         let steady = record(.keep, minutesAgo: 10, covered: [entry(0, 360, 0.8)])
         let edited = SettingsTestSchedule.entries([basal(0, 0.85), basal(6, 1.0), basal(22, 0.7)])
-        let periods = SettingsTestSchedule.basalPeriods(current: edited, history: [steady])
-        #expect(periods[0] == SettingsTestBasalPeriod(
+        let periods = SettingsTestSchedule.periods(for: .basal, current: edited, history: [steady])
+        #expect(periods[0] == SettingsTestPeriod(
             entry: entry(0, 360, 0.85),
             lastTest: steady.completedAt,
             lastDirection: .keep,
@@ -2390,10 +4098,10 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         let steady = record(.keep, minutesAgo: 10, covered: [entry(0, 360, 0.8)])
 
         let moved = SettingsTestSchedule.entries([basal(0, 0.8), basal(5, 1.0), basal(22, 0.7)])
-        #expect(SettingsTestSchedule.basalPeriods(current: moved, history: [steady])[0].changedSince)
+        #expect(SettingsTestSchedule.periods(for: .basal, current: moved, history: [steady])[0].changedSince)
 
         let split = SettingsTestSchedule.entries([basal(0, 0.8), basal(3, 0.8), basal(6, 1.0), basal(22, 0.7)])
-        let splitPeriods = SettingsTestSchedule.basalPeriods(current: split, history: [steady])
+        let splitPeriods = SettingsTestSchedule.periods(for: .basal, current: split, history: [steady])
         #expect(splitPeriods[0].changedSince)
         #expect(splitPeriods[1].changedSince)
         #expect(splitPeriods[0].lastTest == steady.completedAt)
@@ -2403,7 +4111,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
     @Test("An edit to another entry doesn't change a tested period") func periodOtherEntryEdited() {
         let steady = record(.keep, minutesAgo: 10, covered: [entry(0, 360, 0.8)])
         let edited = SettingsTestSchedule.entries([basal(0, 0.8), basal(6, 1.2), basal(22, 0.7)])
-        let periods = SettingsTestSchedule.basalPeriods(current: edited, history: [steady])
+        let periods = SettingsTestSchedule.periods(for: .basal, current: edited, history: [steady])
         #expect(!periods[0].changedSince)
         #expect(periods[1] == untested(entry(360, 1320, 1.2)))
     }
@@ -2414,7 +4122,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         let older = record(.increase, minutesAgo: 600, covered: covered)
 
         for history in [[newer, older], [older, newer]] {
-            let period = SettingsTestSchedule.basalPeriods(current: profile, history: history)[0]
+            let period = SettingsTestSchedule.periods(for: .basal, current: profile, history: history)[0]
             #expect(period.lastTest == newer.completedAt)
             #expect(period.lastDirection == .keep)
         }
@@ -2423,7 +4131,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
     @Test("A test that covered only another entry says nothing about this one") func periodCoveredOnlyOther() {
         let other = record(.increase, minutesAgo: 10, covered: [entry(360, 1320, 1.0)])
         let steady = record(.keep, minutesAgo: 600, covered: [entry(0, 360, 0.8)])
-        let periods = SettingsTestSchedule.basalPeriods(current: profile, history: [other, steady])
+        let periods = SettingsTestSchedule.periods(for: .basal, current: profile, history: [other, steady])
         // The newer test covered the daytime entry, so the overnight one still goes by the older test.
         #expect(periods[0].lastTest == steady.completedAt)
         #expect(periods[0].lastDirection == .keep)
@@ -2434,7 +4142,7 @@ private final class FakeCalibrationModeService: CalibrationModeService {
 
     @Test("A test over midnight marks each entry it touched") func periodOvernightTest() {
         let overnight = record(.keep, minutesAgo: 10, covered: [entry(0, 360, 0.8), entry(1320, 1440, 0.7)])
-        let periods = SettingsTestSchedule.basalPeriods(current: profile, history: [overnight])
+        let periods = SettingsTestSchedule.periods(for: .basal, current: profile, history: [overnight])
         #expect(periods[0].lastTest == overnight.completedAt)
         #expect(periods[1] == untested(entry(360, 1320, 1.0)))
         #expect(periods[2].lastTest == overnight.completedAt)
@@ -2445,16 +4153,42 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         let carbRatio = record(.decrease, minutesAgo: 6, kind: .carbRatio, covered: [entry(0, 360, 0.8)])
         let steady = record(.keep, minutesAgo: 600, covered: [entry(0, 360, 0.8)])
 
-        #expect(SettingsTestSchedule.basalPeriods(current: profile, history: [legacy, carbRatio]) == profile.map(untested))
+        #expect(
+            SettingsTestSchedule.periods(for: .basal, current: profile, history: [legacy, carbRatio]) == profile
+                .map(untested)
+        )
 
-        let periods = SettingsTestSchedule.basalPeriods(current: profile, history: [legacy, carbRatio, steady])
+        let periods = SettingsTestSchedule.periods(for: .basal, current: profile, history: [legacy, carbRatio, steady])
         #expect(periods[0].lastTest == steady.completedAt)
         #expect(periods[0].lastDirection == .keep)
     }
 
+    @Test("A test marks only the periods of its own kind") func periodsByKind() {
+        let isfProfile = [entry(0, 720, 50), entry(720, 1440, 40)]
+        let basalTest = record(.keep, minutesAgo: 600, covered: [entry(0, 360, 0.8)])
+        let isfTest = record(.decrease, minutesAgo: 10, kind: .isf, covered: [entry(0, 720, 50)])
+
+        // An ISF test doesn't mark a basal period, whatever its entries cover.
+        let basalPeriods = SettingsTestSchedule.periods(for: .basal, current: profile, history: [isfTest, basalTest])
+        #expect(basalPeriods[0].lastTest == basalTest.completedAt)
+        #expect(basalPeriods[0].lastDirection == .keep)
+        #expect(SettingsTestSchedule.periods(for: .basal, current: profile, history: [isfTest]) == profile.map(untested))
+
+        // And a basal test doesn't mark an ISF period.
+        let isfPeriods = SettingsTestSchedule.periods(for: .isf, current: isfProfile, history: [basalTest, isfTest])
+        #expect(isfPeriods[0] == SettingsTestPeriod(
+            entry: isfProfile[0],
+            lastTest: isfTest.completedAt,
+            lastDirection: .decrease,
+            changedSince: false
+        ))
+        #expect(isfPeriods[1] == untested(isfProfile[1]))
+        #expect(SettingsTestSchedule.periods(for: .isf, current: isfProfile, history: [basalTest]) == isfProfile.map(untested))
+    }
+
     @Test("No schedule means no periods") func periodsWithoutSchedule() {
         let steady = record(.keep, minutesAgo: 10, covered: [entry(0, 360, 0.8)])
-        #expect(SettingsTestSchedule.basalPeriods(current: [], history: [steady]).isEmpty)
+        #expect(SettingsTestSchedule.periods(for: .basal, current: [], history: [steady]).isEmpty)
     }
 
     // MARK: Times of day
@@ -2476,5 +4210,18 @@ private final class FakeCalibrationModeService: CalibrationModeService {
     @Test("A period's span runs from its start to its end") func spanText() {
         #expect(SettingsTestSchedule.spanText(of: entry(0, 360, 0.8), formatter: britain) == "00:00–06:00")
         #expect(SettingsTestSchedule.spanText(of: entry(1320, 1440, 0.7), formatter: britain) == "22:00–00:00")
+    }
+
+    @Test("An entry that runs the whole day reads as all day, not midnight to midnight") func spanTextAllDay() {
+        #expect(SettingsTestSchedule.spanText(of: entry(0, 1440, 0.8), formatter: britain) == "All day")
+        #expect(SettingsTestSchedule.spanText(of: entry(0, 1440, 0.8)) == String(localized: "All day"))
+        // Only the whole day: one ending at midnight from later in the day is still a span.
+        #expect(SettingsTestSchedule.spanText(of: entry(60, 1440, 0.8), formatter: britain) == "01:00–00:00")
+        // Inside a sentence it is lowercase ("This test covered all day."); other spans read the same either way.
+        #expect(SettingsTestSchedule.spanText(of: entry(0, 1440, 0.8), inSentence: true, formatter: britain) == "all day")
+        #expect(SettingsTestSchedule.spanText(of: entry(0, 1440, 0.8), inSentence: true) == String(localized: "all day"))
+        #expect(
+            SettingsTestSchedule.spanText(of: entry(0, 360, 0.8), inSentence: true, formatter: britain) == "00:00–06:00"
+        )
     }
 }

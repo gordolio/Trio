@@ -14,7 +14,14 @@ extension SettingsTest {
         var lastRecords: [SettingsTestKind: SettingsTestRecord] = [:]
 
         /// The basal schedule's entries, each with what its latest test said.
-        var basalPeriods: [SettingsTestBasalPeriod] = []
+        var basalPeriods: [SettingsTestPeriod] = []
+
+        /// The insulin sensitivity schedule's entries, each with what its latest test said.
+        var isfPeriods: [SettingsTestPeriod] = []
+
+        /// What the newest basal test says about starting a sensitivity test, or nil until it has been read. A warning
+        /// only: it never locks the row.
+        var basalGate: SettingsTestSchedule.BasalGate?
 
         /// Whether the old carb ratio wizard left a test under way. Its row then offers to end it; it never opens the
         /// wizard, which is being rebuilt.
@@ -40,6 +47,35 @@ extension SettingsTest {
                     self?.refreshHistory()
                 }
                 .store(in: &lifetime)
+
+            // The session ends before the runner archives, so its end alone would leave the rows a test behind.
+            Self.testFinishes(
+                isf: testService.isfRunner?.statePublisher,
+                basal: testService.basalRunner?.statePublisher
+            )
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.refreshHistory() }
+            .store(in: &lifetime)
+        }
+
+        /// Each time a runner's test reaches `.finished`: the runner archives a verdict in the same step as that save, after
+        /// it ended the session, so the session's end alone comes before the history has it. Not for the test each runner
+        /// holds as this is subscribed, which `subscribe` reads already.
+        static func testFinishes(
+            isf: AnyPublisher<ISFTestRunnerState, Never>?,
+            basal: AnyPublisher<BasalTestState?, Never>?
+        ) -> AnyPublisher<Void, Never> {
+            /// The ID of the test a runner holds once it has finished, each new one once.
+            func finished(_ ids: AnyPublisher<UUID?, Never>) -> AnyPublisher<Void, Never> {
+                ids.removeDuplicates().dropFirst().compactMap { $0.map { _ in () } }.eraseToAnyPublisher()
+            }
+            let isfFinishes = isf.map { publisher in
+                finished(publisher.map { $0.test.flatMap { $0.phase == .finished ? $0.id : nil } }.eraseToAnyPublisher())
+            }
+            let basalFinishes = basal.map { publisher in
+                finished(publisher.map { $0.flatMap { $0.phase == .finished ? $0.id : nil } }.eraseToAnyPublisher())
+            }
+            return Publishers.MergeMany([isfFinishes, basalFinishes].compactMap { $0 }).eraseToAnyPublisher()
         }
 
         func refreshHistory() {
@@ -51,10 +87,28 @@ extension SettingsTest {
             }
             lastRecords = latest
 
-            basalPeriods = SettingsTestSchedule.basalPeriods(
-                current: provider.basalEntries(),
-                history: testService.history(for: .basal)
+            let basalEntries = provider.basalEntries()
+            let basalHistory = testService.history(for: .basal)
+            basalPeriods = SettingsTestSchedule.periods(for: .basal, current: basalEntries, history: basalHistory)
+            basalGate = SettingsTestSchedule.basalGate(history: basalHistory, current: basalEntries)
+
+            isfPeriods = SettingsTestSchedule.periods(
+                for: .isf,
+                current: provider.isfEntries(),
+                history: testService.history(for: .isf)
             )
+        }
+
+        /// The warning under the sensitivity row, or nil when the newest basal test is steady, and while a test runs,
+        /// when the row says that instead.
+        var isfGateNote: String? {
+            guard activeSession == nil, let basalGate else { return nil }
+            return SettingsTestKind.isfGateNote(for: basalGate)
+        }
+
+        /// A sensitivity in mg/dL per unit, in the user's units.
+        func formatISF(_ mgdl: Decimal) -> String {
+            SettingsTestKind.isfText(mgdl, units: glucoseUnits)
         }
 
         /// The carb ratio wizard recovers its saved test only when its own screen opens, so before that the saved file
@@ -98,11 +152,7 @@ extension SettingsTest {
         /// with a test of its own under way, so its bolus and ratio change can't be reached.
         func screen(for kind: SettingsTestKind) -> Screen? {
             guard kind.availability == .available, !isLocked(kind) else { return nil }
-            switch kind {
-            case .basal: return .basalTest
-            case .carbRatio,
-                 .isf: return nil
-            }
+            return kind.testScreen
         }
     }
 }

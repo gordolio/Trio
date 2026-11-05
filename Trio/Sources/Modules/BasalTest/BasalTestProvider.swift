@@ -3,13 +3,14 @@ import Foundation
 import Swinject
 
 extension BasalTest {
-    final class Provider: BaseProvider, BasalTestProvider {
+    final class Provider: BaseProvider, BasalTestProvider, BasalTestReads {
         @Injected() var iobService: IOBService!
         @Injected() var determinationStorage: DeterminationStorage!
         @Injected() var fetchGlucoseManager: FetchGlucoseManager!
 
         private let context: NSManagedObjectContext
-        /// Temp basals and carbs, read the same way as `SettingsTestService` reads them to watch a running test.
+        /// Temp basals and carbs, read the same way as `SettingsTestService` reads them to watch a running test, and the CGM
+        /// readings.
         private let events: CoreDataSettingsTestEvents
 
         required init(resolver: Resolver) {
@@ -46,48 +47,20 @@ extension BasalTest {
 
         // MARK: - Glucose
 
-        /// Newest first.
+        /// Newest first (`CoreDataSettingsTestEvents.recentGlucose`).
         func fetchRecentGlucose(minutes: Int) async throws -> [BasalTestReading] {
-            let cutoff = Date().addingTimeInterval(-Double(minutes) * 60)
-            return try await fetchGlucose(predicate: NSPredicate(format: "date > %@", cutoff as NSDate), ascending: false)
+            try await events.recentGlucose(since: Date().addingTimeInterval(-Double(minutes) * 60))
         }
 
-        /// Oldest first.
+        /// Oldest first (`CoreDataSettingsTestEvents.glucose`).
         func fetchGlucose(from start: Date, to end: Date) async throws -> [BasalTestReading] {
-            try await fetchGlucose(
-                predicate: NSPredicate(format: "date >= %@ AND date <= %@", start as NSDate, end as NSDate),
-                ascending: true
-            )
+            try await events.glucose(from: start, to: end)
         }
 
-        private func fetchGlucose(predicate: NSPredicate, ascending: Bool) async throws -> [BasalTestReading] {
-            let results = try await CoreDataStack.shared.fetchEntitiesAsync(
-                ofType: GlucoseStored.self,
-                onContext: context,
-                predicate: predicate,
-                key: "date",
-                ascending: ascending
-            )
-            return await context.perform {
-                ((results as? [GlucoseStored]) ?? []).compactMap { stored in
-                    guard let date = stored.date else { return nil }
-                    return BasalTestReading(date: date, glucose: Int(stored.glucose))
-                }
-            }
-        }
-
-        /// The CGM's own trend arrow for the newest reading, if it gave one.
+        /// The CGM's own trend arrow for the newest reading of the last day, if it gave one
+        /// (`CoreDataSettingsTestEvents.newestDirection`).
         func fetchNewestDirection() async throws -> BloodGlucose.Direction? {
-            let cutoff = Date().addingTimeInterval(-24 * 3600)
-            let results = try await CoreDataStack.shared.fetchEntitiesAsync(
-                ofType: GlucoseStored.self,
-                onContext: context,
-                predicate: NSPredicate(format: "date > %@", cutoff as NSDate),
-                key: "date",
-                ascending: false,
-                fetchLimit: 1
-            )
-            return await context.perform { (results as? [GlucoseStored])?.first?.directionEnum }
+            try await events.newestDirection(since: Date().addingTimeInterval(-24 * 3600))
         }
 
         // MARK: - IOB and COB
@@ -185,9 +158,15 @@ extension BasalTest {
             return await context.perform { (results as? [CarbEntryStored])?.first?.date }
         }
 
-        /// Carbs logged in a window, e.g. while a fast is running.
-        func hasCarbEntries(from start: Date, to end: Date) async throws -> Bool {
-            try await events.hasCarbEntries(from: start, to: end)
+        /// The carb entries dated in a window, e.g. while a fast is running, read as `SettingsTestService` reads them.
+        func fetchCarbEntries(from start: Date, to end: Date) async throws -> [SettingsTestCarbEntry] {
+            try await events.carbEntries(from: start, to: end)
+        }
+
+        /// When the pump was suspended or resumed, gave an alarm, or had its site, reservoir or pod changed in the window,
+        /// oldest first (`SettingsTestEvents.pumpInterruptions`).
+        func fetchPumpInterruptions(from start: Date, to end: Date) async throws -> [Date] {
+            try await events.pumpInterruptions(from: start, to: end)
         }
 
         /// A bolus the user gave (not an SMB) in a window.
