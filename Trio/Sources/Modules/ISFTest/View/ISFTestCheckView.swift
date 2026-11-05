@@ -20,6 +20,11 @@ extension ISFTest {
                     )
                 )
 
+                SettingsTestStepsButton(
+                    title: String(localized: "How the ISF test goes"),
+                    items: Self.steps(aim: state.formatWithUnits(Config.docsStartAim))
+                )
+
                 SettingsTestCard(title: String(localized: "Ready to start?")) {
                     // A check that fails stays in view on its own; the ones that pass fold into one line.
                     ForEach(state.failingChecks) { check in
@@ -77,6 +82,47 @@ extension ISFTest {
                         )
                     }
             }
+        }
+
+        // MARK: - Steps
+
+        /// Every step, as each one's screen and the runner run it, for the steps sheet. `aim` is the docs' starting
+        /// glucose in the user's units.
+        static func steps(aim: String) -> [SettingsTestStepItem<Step>] {
+            let readings = Config.settleReadings
+            let doseMinutes = Int(Config.doseAllowance / 60)
+            return [
+                .init(
+                    step: .check,
+                    detail: Text("The checks on this screen. Begin turns on once each one passes.")
+                ),
+                .init(
+                    step: .settle,
+                    detail: Text(
+                        "Trio switches to Basal Testing, so SMBs stop. The test waits for Trio's first loop in it and \(readings) CGM readings after that. If you chose Wait for It, it also waits, up to an hour, for insulin on board to come within the line of zero."
+                    )
+                ),
+                .init(
+                    step: .raise,
+                    detail: Text(
+                        "Only when glucose is under \(aim) and your target is lower than that. Glucose tablets aim for around \(aim), then glucose levels off. You can skip them and dose from where you are."
+                    )
+                ),
+                .init(
+                    step: .dose,
+                    detail: Text(
+                        "The step works out the correction from your target and ISF and waits for a flat CGM arrow, or a recent reading with none. You open Treatments and give that dose there, within \(doseMinutes) minutes."
+                    )
+                ),
+                .init(
+                    step: .wait,
+                    detail: Text("4 hours without eating or exercising. Logged carbs or another bolus end the test.")
+                ),
+                .init(
+                    step: .result,
+                    detail: Text("How far glucose fell for each unit, against your ISF, and which way it leans.")
+                )
+            ]
         }
 
         // MARK: - Insulin on board

@@ -118,7 +118,8 @@ extension SettingsTest {
             carbRatioInProgress = SettingsTestKind.carbRatioTestInProgress(test?.phase)
         }
 
-        /// Only one test runs at a time, so while one does, the others can't start.
+        /// Only one test runs at a time, so while one does, the others can't start. Their screens still open, so their
+        /// steps can be read; each one's Check is what blocks the start.
         func isLocked(_ kind: SettingsTestKind) -> Bool {
             guard let running = activeSession?.kind else { return false }
             return running != kind
@@ -148,10 +149,11 @@ extension SettingsTest {
             }
         }
 
-        /// Where tapping a test goes, or nil while it can't be opened. The old carb ratio wizard is never opened, even
-        /// with a test of its own under way, so its bolus and ratio change can't be reached.
+        /// Where tapping a test goes, or nil while it can't be opened. A test opens while another runs, so its steps and
+        /// checks can be read; its Check screen says another test is running and keeps Begin off. The old carb ratio
+        /// wizard is never opened, even with a test of its own under way, so its bolus and ratio change can't be reached.
         func screen(for kind: SettingsTestKind) -> Screen? {
-            guard kind.availability == .available, !isLocked(kind) else { return nil }
+            guard kind.availability == .available else { return nil }
             return kind.testScreen
         }
     }

@@ -181,7 +181,8 @@ extension BasalTest {
 
         /// What has to be true before the fast starts: the docs' rule about food, and facts about the app.
         var blockingChecks: [Check] {
-            [devicesCheck, foodCheck, adjustmentsCheck, pumpTempBasalCheck, modeCheck, otherTestCheck]
+            // Another test running comes first: its Basal Testing fails the mode check too, and the footer names the test.
+            [otherTestCheck, devicesCheck, foodCheck, adjustmentsCheck, pumpTempBasalCheck, modeCheck]
         }
 
         /// Readings that go with the docs' words but set no rule, so they never hold up the start.
@@ -316,9 +317,7 @@ extension BasalTest {
             Check(
                 id: "mode",
                 title: String(localized: "Starting from your usual mode"),
-                detail: modeAvailable
-                    ? String(localized: "\(currentMode.displayName) now. Trio returns to it after.")
-                    : String(localized: "Switch to your usual dosing mode first, so Trio can return you to it"),
+                detail: modeDetail,
                 state: modeAvailable ? .passed : .failed,
                 info: SettingsTestInfo(
                     title: String(localized: "Starting from your usual mode"),
@@ -329,12 +328,32 @@ extension BasalTest {
             )
         }
 
+        /// Under the mode check. While another test runs, Basal Testing is that test's, so the line names it and says nothing
+        /// about switching modes: a switch would end it.
+        private var modeDetail: String {
+            if modeAvailable { return String(localized: "\(currentMode.displayName) now. Trio returns to it after.") }
+            if let running = otherRunningTest {
+                return String(localized: "The \(running.title) test has Basal Testing on. It goes off when that test ends.")
+            }
+            return String(localized: "Switch to your usual dosing mode first, so Trio can return you to it")
+        }
+
+        /// The other settings test running now, or nil. The hub opens this screen while one does, so its steps can be read.
+        var otherRunningTest: SettingsTestKind? {
+            activeSessionKind.flatMap { $0 == .basal ? nil : $0 }
+        }
+
+        /// Whether the usual dosing mode is on, so the Result can say it is back. Not while Basal Testing is on, whether
+        /// left on or another test's.
+        var usualModeIsOn: Bool { currentMode != .basalTesting }
+
         private var otherTestCheck: Check {
             Check(
                 id: "otherTest",
                 title: String(localized: "No other test running"),
-                detail: activeSessionKind.map { String(localized: "The \($0.title) test is still running. Finish it first.") },
-                state: activeSessionKind == nil ? .passed : .failed,
+                // Not this test's own session: one open with no test of its own leaves the mode check to say the way out.
+                detail: otherRunningTest.map { String(localized: "The \($0.title) test is still running. Finish it first.") },
+                state: otherRunningTest == nil ? .passed : .failed,
                 info: SettingsTestInfo(
                     title: String(localized: "No other test running"),
                     body: String(
