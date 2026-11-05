@@ -5,6 +5,14 @@ import Observation
 import SwiftUI
 
 extension ISFTest {
+    /// The pages of the Check step, one question each: the checks, insulin on board (only when it is over the test's
+    /// line), and the summary with Begin. Screen state, never saved: a relaunch opens the checks.
+    enum CheckPage: CaseIterable, Hashable {
+        case checks
+        case iob
+        case ready
+    }
+
     @Observable final class StateModel: BaseStateModel<Provider> {
         @ObservationIgnored @Injected() var testService: SettingsTestService!
         @ObservationIgnored @Injected() var glucoseStorage: GlucoseStorage!
@@ -69,6 +77,8 @@ extension ISFTest {
 
         /// How the test handles insulin on board over its line, as picked on the Check screen. The docs' way first.
         var iobChoice: ISFTestIOBHandling = .wait
+        /// The Check step's page, as the user moved to it (`shownCheckPage` is the one shown).
+        var checkPage: CheckPage = .checks
         /// Where settling is, from its last check. Nil when the test isn't settling, or before the first check.
         private(set) var settling: ISFTestSettling?
         /// The boluses given while the test settles, oldest first (`ISFTestEvaluator.settlingBoluses`).
@@ -572,8 +582,8 @@ extension ISFTest {
             )
         }
 
-        /// Warns once insulin on board is over the test's line, where the card under it asks how to handle it. Before
-        /// Trio has worked it out, it says so and doesn't hold up Begin; settling then waits for it.
+        /// Warns once insulin on board is over the test's line, where the page after the checks asks how to handle it.
+        /// Before Trio has worked it out, it says so and doesn't hold up Begin; settling then waits for it.
         private var iobCheck: Check {
             let warns: Bool
             switch iobDecision {
@@ -644,6 +654,83 @@ extension ISFTest {
             formatter.unitsStyle = .full
             formatter.allowedUnits = [.hour, .minute]
             return formatter.string(from: Config.settleAllowance) ?? "\(Int(Config.settleAllowance / 60)) min"
+        }
+
+        // MARK: - Pages
+
+        /// The pages that apply now, in order: insulin on board only when it is over the test's line, where there is a
+        /// choice to make (`iobDecision` is `.choice`).
+        var checkPages: [CheckPage] {
+            CheckPage.allCases.filter { page in
+                guard page == .iob else { return true }
+                if case .choice = iobDecision { return true }
+                return false
+            }
+        }
+
+        /// The page shown: the one the user moved to while it applies, otherwise the one before it that does
+        /// (`SettingsTestPageFlow.shown`), so the insulin on board page that stops applying hands over to the checks.
+        var shownCheckPage: CheckPage {
+            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases)
+        }
+
+        /// "2 of 3", for the page's heading.
+        func checkPagePosition(_ page: CheckPage) -> String {
+            SettingsTestPageFlow.position(of: page, in: checkPages)
+        }
+
+        /// Whether Next goes on: only while every check passes, as Begin does. A check that starts failing on a later page
+        /// turns Next and Begin off there, with its sentence (`startBlocker`).
+        var canGoOn: Bool { readyToStart }
+
+        /// Next: the page after the one shown, while every check passes.
+        func nextCheckPage() {
+            guard canGoOn, let next = SettingsTestPageFlow.page(after: shownCheckPage, in: checkPages) else { return }
+            checkPage = next
+        }
+
+        /// Back: the page before the one shown, the insulin on board page skipped when it doesn't apply.
+        func previousCheckPage() {
+            guard let previous = SettingsTestPageFlow.page(before: shownCheckPage, in: checkPages) else { return }
+            checkPage = previous
+        }
+
+        /// One line of the Ready page's summary.
+        struct SummaryRow: Equatable {
+            let title: String
+            let value: String
+        }
+
+        /// The Ready page's summary: what comes after settling, from the glucose now (`startPath`), the dose the test
+        /// expects, and how insulin on board is handled when there was a choice to make. A row without its reading is
+        /// left out.
+        var readySummary: [SummaryRow] {
+            var rows: [SummaryRow] = []
+            switch startPath {
+            case .raise:
+                rows.append(SummaryRow(
+                    title: String(localized: "After settling"),
+                    value: String(localized: "Glucose tablets, then the dose")
+                ))
+            case .dose:
+                rows.append(SummaryRow(title: String(localized: "After settling"), value: String(localized: "The dose")))
+            case nil,
+                 .noDose:
+                break
+            }
+            if let dose = expectedDose {
+                rows.append(SummaryRow(
+                    title: String(localized: "Dose"),
+                    value: String(localized: "About \(SettingsTestFormat.keepTogether(formatUnits(dose), unit: "U"))")
+                ))
+            }
+            if case .choice = iobDecision {
+                rows.append(SummaryRow(
+                    title: String(localized: "Insulin on board"),
+                    value: iobChoice == .count ? String(localized: "Count It") : String(localized: "Wait for It")
+                ))
+            }
+            return rows
         }
 
         /// The docs test ISF with no carbs on board, a docs rule, so carbs on board hold up Begin (round 13 item 2). Nil
@@ -1571,6 +1658,7 @@ extension ISFTest {
             guard !isEnding else { return }
             runner?.discard()
             iobChoice = .wait
+            checkPage = .checks
             Task { await refresh() }
         }
 
@@ -1578,6 +1666,7 @@ extension ISFTest {
         @MainActor func acknowledgeResult() {
             runner?.acknowledgeResult()
             iobChoice = .wait
+            checkPage = .checks
             Task { await refresh() }
         }
 

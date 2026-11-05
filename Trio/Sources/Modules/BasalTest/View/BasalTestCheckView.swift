@@ -1,10 +1,71 @@
 import SwiftUI
 
 extension BasalTest {
+    /// Before Start, one question per page (`CheckPage`), each about a screen long: the checks; how long to fast; and a
+    /// summary with Start. The step bar shows Check on every page. Next and Start are off while a check blocks, with its
+    /// sentence.
     struct CheckView: View {
         @Bindable var state: StateModel
 
-        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+        var body: some View {
+            Group {
+                switch state.shownCheckPage {
+                case .checks: ChecksPage(state: state)
+                case .length: LengthPage(state: state)
+                case .ready: ReadyPage(state: state)
+                }
+            }
+            // A page of its own, scrolled to its top.
+            .id(state.shownCheckPage)
+        }
+
+        // MARK: - Steps
+
+        /// Every step, for the steps sheet, with the fast as long as the `hours` picked on this screen.
+        static func steps(hours: Int) -> [SettingsTestStepItem<Step>] {
+            [
+                .init(
+                    step: .check,
+                    detail: Text("The checks, then a page for how long to fast. Start turns on once each check passes.")
+                ),
+                .init(
+                    step: .fast,
+                    detail: Text(
+                        "\(hours) hours in Basal Testing. Don't eat or bolus until it ends, unless you need to treat a low."
+                    )
+                ),
+                .init(
+                    step: .result,
+                    detail: Text("Whether glucose stayed steady, or which way your basal leans for the hours it covered.")
+                )
+            ]
+        }
+    }
+
+    /// Next, under every page but the last, and Back, under every page but the first.
+    private struct NextFooter: View {
+        let state: StateModel
+        var showsBack = true
+
+        var body: some View {
+            SettingsTestPageFooter(
+                blocker: state.startBlocker,
+                back: showsBack ? { state.previousCheckPage() } : nil
+            ) {
+                Button("Next") { state.nextCheckPage() }
+                    .buttonStyle(.testPrimary)
+                    .disabled(!state.canGoOn)
+            }
+        }
+    }
+
+    // MARK: - 1. Checks
+
+    /// The app facts that must hold, folded into one line once they pass, then the readings that only inform, one line
+    /// each, with their details one tap away.
+    private struct ChecksPage: View {
+        let state: StateModel
+
         /// Whether the passed checks are shown one by one.
         @State private var showsPassedChecks = false
 
@@ -20,7 +81,7 @@ extension BasalTest {
 
                 SettingsTestStepsButton(
                     title: String(localized: "How the basal test goes"),
-                    items: Self.steps(hours: state.selectedHours)
+                    items: CheckView.steps(hours: state.selectedHours)
                 )
 
                 SettingsTestCard(title: String(localized: "Ready to start?")) {
@@ -43,79 +104,10 @@ extension BasalTest {
                         SettingsTestValueRow(title: check.title, value: check.value ?? check.detail ?? "", info: check.info)
                     }
                 }
-
-                SettingsTestCard(title: String(localized: "How long to fast")) {
-                    hoursPicker
-                    plannedWindowText
-                        .font(.footnote)
-                        .fixedSize(horizontal: false, vertical: true)
-                    SettingsTestDocsQuote(text: Docs.testTimesOfDaySeparately)
-                }
-
-                SettingsTestCard(title: String(localized: "While Basal Testing is on")) {
-                    bullet(Text("Trio won't correct highs, give SMBs, or adjust for sensitivity."))
-                    bullet(
-                        Text(
-                            "If glucose or Trio's forecast drops below \(lowThresholdText), Trio stops basal and the test ends."
-                        )
-                    )
-                    bullet(Text("Your usual dosing mode returns when the test ends."))
-                }
             } footer: {
-                // Why Start can't be tapped yet, where the eye goes to tap it.
-                if let blocker = state.startBlocker {
-                    Label {
-                        Text(blocker)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
-                    }
-                    .font(.footnote)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Button {
-                    state.requestStart()
-                } label: {
-                    Text("Start \(state.selectedHours)-Hour Fast")
-                }
-                .buttonStyle(.testPrimary)
-                .disabled(!state.readyToStart)
-            }
-            .alert("Start the fast?", isPresented: $state.showStartConfirmation) {
-                Button("Cancel", role: .cancel) {}
-                Button("Start") { state.confirmStart() }
-            } message: {
-                Text(
-                    "Trio switches to Basal Testing for \(state.selectedHours) hours and then returns to \(state.currentMode.displayName). Don't eat or bolus until it ends, unless you need to treat a low."
-                )
+                NextFooter(state: state, showsBack: false)
             }
         }
-
-        // MARK: - Steps
-
-        /// Every step, for the steps sheet, with the fast as long as the `hours` picked on this screen.
-        static func steps(hours: Int) -> [SettingsTestStepItem<Step>] {
-            [
-                .init(
-                    step: .check,
-                    detail: Text("The checks on this screen. Start turns on once each one passes.")
-                ),
-                .init(
-                    step: .fast,
-                    detail: Text(
-                        "\(hours) hours in Basal Testing. Don't eat or bolus until it ends, unless you need to treat a low."
-                    )
-                ),
-                .init(
-                    step: .result,
-                    detail: Text("Whether glucose stayed steady, or which way your basal leans for the hours it covered.")
-                )
-            ]
-        }
-
-        // MARK: - Pieces
 
         private func checkRow(for check: StateModel.Check) -> some View {
             SettingsTestCheckRow(title: check.title, detail: check.detail, state: check.state, info: check.info)
@@ -146,6 +138,34 @@ extension BasalTest {
             .buttonStyle(.plain)
             .accessibilityHint(Text(showsPassedChecks ? "Hides the checks" : "Shows the checks"))
         }
+    }
+
+    // MARK: - 2. How long
+
+    /// The hours picker, the hours a fast started now covers with the rates in them, and the docs' line on times of day.
+    private struct LengthPage: View {
+        @Bindable var state: StateModel
+
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+        var body: some View {
+            SettingsTestScreen(paintsBackground: false) {
+                SettingsTestPageHeading(
+                    title: String(localized: "How long to fast"),
+                    position: state.checkPagePosition(.length)
+                )
+
+                SettingsTestCard {
+                    hoursPicker
+                    plannedWindowText
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                    SettingsTestDocsQuote(text: Docs.testTimesOfDaySeparately)
+                }
+            } footer: {
+                NextFooter(state: state)
+            }
+        }
 
         /// A segmented control doesn't grow with the text size, so at accessibility sizes it becomes a menu, as
         /// upstream's settings pickers are.
@@ -175,9 +195,62 @@ extension BasalTest {
                 text = text
                     + Text(verbatim: index == 0 ? " · " : ", ")
                     + (index == 0 ? Text("covers \(span) at ") : Text(verbatim: "\(span) at "))
-                    + Text(verbatim: "\(rate) U/h").foregroundStyle(Color.accentColor)
+                    + Text(verbatim: SettingsTestFormat.keepTogether(rate, unit: "U/h")).foregroundStyle(Color.accentColor)
             }
             return text
+        }
+    }
+
+    // MARK: - 3. Ready
+
+    /// How long the fast is and when it ends, the rules while Basal Testing is on, and Start.
+    private struct ReadyPage: View {
+        @Bindable var state: StateModel
+
+        var body: some View {
+            SettingsTestScreen(paintsBackground: false) {
+                SettingsTestPageHeading(
+                    title: String(localized: "Ready to begin"),
+                    position: state.checkPagePosition(.ready)
+                )
+
+                SettingsTestCard {
+                    ForEach(state.readySummary, id: \.title) { row in
+                        SettingsTestValueRow(title: row.title, value: row.value)
+                    }
+                }
+
+                SettingsTestCard(title: String(localized: "While Basal Testing is on")) {
+                    bullet(Text("Trio won't correct highs, give SMBs, or adjust for sensitivity."))
+                    bullet(
+                        Text(
+                            "If glucose or Trio's forecast drops below \(lowThresholdText), Trio stops basal and the test ends."
+                        )
+                    )
+                    bullet(Text("Your usual dosing mode returns when the test ends."))
+                }
+            } footer: {
+                SettingsTestPageFooter(blocker: state.startBlocker, back: { state.previousCheckPage() }) {
+                    Button {
+                        state.requestStart()
+                    } label: {
+                        // A non-breaking hyphen, so a label that wraps keeps "4-Hour" whole, centered as on one line.
+                        Text("Start \(state.selectedHours)\u{2011}Hour Fast")
+                            .multilineTextAlignment(.center)
+                    }
+                    .buttonStyle(.testPrimary)
+                    .disabled(!state.readyToStart)
+                    // On the button it confirms, as the other steps' dialogs are.
+                    .alert("Start the fast?", isPresented: $state.showStartConfirmation) {
+                        Button("Cancel", role: .cancel) {}
+                        Button("Start") { state.confirmStart() }
+                    } message: {
+                        Text(
+                            "Trio switches to Basal Testing for \(state.selectedHours) hours and then returns to \(state.currentMode.displayName). Don't eat or bolus until it ends, unless you need to treat a low."
+                        )
+                    }
+                }
+            }
         }
 
         /// Basal Testing's own line, 72 mg/dL, or the user's low threshold in blue when theirs is higher.

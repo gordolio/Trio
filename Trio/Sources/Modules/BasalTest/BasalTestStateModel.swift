@@ -5,6 +5,14 @@ import Observation
 import SwiftUI
 
 extension BasalTest {
+    /// The pages of the Check step, one question each: the checks, how long to fast, and the summary with Start. Screen
+    /// state, never saved: a relaunch opens the checks.
+    enum CheckPage: CaseIterable, Hashable {
+        case checks
+        case length
+        case ready
+    }
+
     @Observable final class StateModel: BaseStateModel<Provider> {
         @ObservationIgnored @Injected() var testService: SettingsTestService!
         @ObservationIgnored @Injected() var glucoseStorage: GlucoseStorage!
@@ -51,6 +59,8 @@ extension BasalTest {
 
         /// Hours the user picked for the fast.
         var selectedHours = 4
+        /// The Check step's page, as the user moved to it (`shownCheckPage` is the one shown).
+        var checkPage: CheckPage = .checks
 
         var errorMessage: String?
         var showStartConfirmation = false
@@ -537,6 +547,54 @@ extension BasalTest {
             return BasalTestEvaluator.fastingSMBs(smbs, cob: source.cob, window: window)
         }
 
+        // MARK: - Pages
+
+        /// The pages, in order. Each one always applies.
+        var checkPages: [CheckPage] { CheckPage.allCases }
+
+        /// The page shown: the one the user moved to (`SettingsTestPageFlow.shown`).
+        var shownCheckPage: CheckPage {
+            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases)
+        }
+
+        /// "2 of 3", for the page's heading.
+        func checkPagePosition(_ page: CheckPage) -> String {
+            SettingsTestPageFlow.position(of: page, in: checkPages)
+        }
+
+        /// Whether Next goes on: only while every check passes, as Start does. A check that starts failing on a later page
+        /// turns Next and Start off there, with its sentence (`startBlocker`).
+        var canGoOn: Bool { readyToStart }
+
+        /// Next: the page after the one shown, while every check passes.
+        func nextCheckPage() {
+            guard canGoOn, let next = SettingsTestPageFlow.page(after: shownCheckPage, in: checkPages) else { return }
+            checkPage = next
+        }
+
+        /// Back: the page before the one shown.
+        func previousCheckPage() {
+            guard let previous = SettingsTestPageFlow.page(before: shownCheckPage, in: checkPages) else { return }
+            checkPage = previous
+        }
+
+        /// One line of the Ready page's summary.
+        struct SummaryRow: Equatable {
+            let title: String
+            let value: String
+        }
+
+        /// The Ready page's summary of the pick: how long the fast is, and about when a fast started now ends.
+        var readySummary: [SummaryRow] {
+            [
+                SummaryRow(title: String(localized: "Fast for"), value: String(localized: "\(selectedHours) hours")),
+                SummaryRow(
+                    title: String(localized: "Ends about"),
+                    value: plannedWindow.end.formatted(date: .omitted, time: .shortened)
+                )
+            ]
+        }
+
         // MARK: - Running
 
         var elapsed: TimeInterval {
@@ -826,16 +884,18 @@ extension BasalTest {
             SettingsTestModeRule.basalTestingLeftOn(mode: currentMode, activeSessionID: testService.activeSession?.id)
         }
 
-        /// Stops without keeping a result.
+        /// Stops without keeping a result. The next test's Check starts on its first page.
         @MainActor func discard() {
             guard !isEnding else { return }
             runner?.discard()
+            checkPage = .checks
             Task { await refresh() }
         }
 
-        /// Clears a finished result so the user can start over.
+        /// Clears a finished result so the user can start over, on the Check step's first page.
         @MainActor func acknowledgeResult() {
             runner?.acknowledgeResult()
+            checkPage = .checks
             Task { await refresh() }
         }
     }

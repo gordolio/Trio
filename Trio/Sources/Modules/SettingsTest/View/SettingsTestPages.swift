@@ -1,7 +1,7 @@
 import SwiftUI
 
 // A test's start as a short wizard: one question per page inside its Check step, each page with Next (or Begin) and
-// Back. The carb ratio test uses it first; the basal and ISF Check screens can move onto it later.
+// Back. The basal, ISF and carb ratio tests use it.
 
 // MARK: - Order
 
