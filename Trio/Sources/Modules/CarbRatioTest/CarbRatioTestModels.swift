@@ -491,6 +491,12 @@ struct CarbRatioTestState: JSON, Equatable {
         return carbsAt?.addingTimeInterval(CarbRatioTest.Config.mealPairing)
     }
 
+    /// With the tablets' carbs logged first, when the bolus has to come by in effect: the meal's own time
+    /// (`bolusDeadline`), or the dose deadline when that is sooner, since the test ends for no bolus then. Nil otherwise.
+    var effectiveBolusDeadline: Date? {
+        bolusDeadline.map { min($0, doseDeadline) }
+    }
+
     /// The whole minutes left at `now` until `bolusDeadline`, rounded up, never below 0. Nil without one.
     func minutesLeftForBolus(at now: Date) -> Int? {
         guard let deadline = bolusDeadline else { return nil }

@@ -1011,14 +1011,17 @@ extension CarbRatioTest {
             } else {
                 headline = String(localized: "The tablets' carbs are logged. Give the bolus now.")
             }
-            let minutes = test.minutesLeftForBolus(at: Date()) ?? 0
+            // The sooner of the meal's 15 minutes and the dose deadline: either ends the test.
+            guard let deadline = test.effectiveBolusDeadline else { return nil }
+            let minutes = Int((max(0, deadline.timeIntervalSinceNow) / 60).rounded(.up))
             let pairing = Int(Config.mealPairing / 60)
-            let time = test.bolusDeadline?.formatted(date: .omitted, time: .shortened) ?? ""
+            let time = deadline.formatted(date: .omitted, time: .shortened)
+            let left = deadline == test.bolusDeadline
+                ? String(localized: "\(minutes) of \(pairing) minutes left, until \(time).")
+                : String(localized: "\(minutes) minutes left, until \(time).")
             return (
                 headline,
-                String(
-                    localized: "\(minutes) of \(pairing) minutes left, until \(time). Enter only the bolus in Treatments: the carbs are in. Then take the tablets."
-                )
+                left + " " + String(localized: "Enter only the bolus in Treatments: the carbs are in. Then take the tablets.")
             )
         }
 
@@ -1064,7 +1067,7 @@ extension CarbRatioTest {
         /// clock time only, since the minutes run from settling's end, not from Begin.
         var doseDeadlineText: String? {
             guard let test else { return nil }
-            let deadline = test.bolusDeadline.map { min($0, test.doseDeadline) } ?? test.doseDeadline
+            let deadline = test.effectiveBolusDeadline ?? test.doseDeadline
             let time = deadline.formatted(date: .omitted, time: .shortened)
             return String(localized: "The test needs your bolus by \(time).")
         }
