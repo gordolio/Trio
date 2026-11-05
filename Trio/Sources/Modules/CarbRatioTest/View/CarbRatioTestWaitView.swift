@@ -125,9 +125,16 @@ extension CarbRatioTest {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    Button("Open Treatments") { state.openTreatmentsForCarbs() }
-                        .buttonStyle(.testSecondary)
-                        .disabled(state.isEnding)
+                    Button { state.openTreatmentsForCarbs() } label: {
+                        // Inside the card at AX5 "Treatments" is wider than the button and broke as "Treat- / ments":
+                        // the label shrinks a little first, so the word stays whole.
+                        Text("Open Treatments")
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.75)
+                    }
+                    .buttonStyle(.testSecondary)
+                    .disabled(state.isEnding)
                 }
             }
         }

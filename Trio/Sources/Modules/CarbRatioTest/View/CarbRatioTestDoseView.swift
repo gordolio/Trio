@@ -9,6 +9,20 @@ extension CarbRatioTest {
 
         @State private var showsCancelConfirmation = false
 
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+        /// "Waiting for your bolus", while Open Treatments can be tapped.
+        private var showsWaitingLine: Bool {
+            (state.docsDose != nil || state.noDoseReason?.isWaiting == true) && state.canOpenTreatments && !state.isEnding
+        }
+
+        private var waitingLine: some View {
+            Text("Waiting for your bolus. The test goes on when Trio sees it.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
         var body: some View {
             // The dose and its gate read the time (the newest reading's age), so the step is drawn again each minute, as
             // Settle and Wait are, and a dose from a reading grown old doesn't stay on screen.
@@ -94,17 +108,27 @@ extension CarbRatioTest {
                         noDoseText(state.noDoseReason ?? .noSettings)
                     }
                 }
+
+                // At accessibility sizes the waiting line ends the content: pinned under Open Treatments, it left a small
+                // phone's step no room at all.
+                if dynamicTypeSize.isAccessibilitySize, showsWaitingLine {
+                    waitingLine
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                }
             } footer: {
                 if state.docsDose != nil || state.noDoseReason?.isWaiting == true {
-                    Button("Open Treatments") { state.openTreatments() }
-                        .buttonStyle(.testPrimary)
-                        .disabled(!state.canOpenTreatments || state.isEnding)
-                    if state.canOpenTreatments, !state.isEnding {
-                        Text("Waiting for your bolus. The test goes on when Trio sees it.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                    Button { state.openTreatments() } label: {
+                        // Wraps at accessibility sizes instead of being cut to "Open Treat…".
+                        Text("Open Treatments")
                             .multilineTextAlignment(.center)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.testPrimary)
+                    .disabled(!state.canOpenTreatments || state.isEnding)
+                    if !dynamicTypeSize.isAccessibilitySize, showsWaitingLine {
+                        waitingLine
+                            .multilineTextAlignment(.center)
                     }
                 }
                 Button("Cancel Test") { showsCancelConfirmation = true }
@@ -379,28 +403,48 @@ extension CarbRatioTest {
 
         @State private var isShowingInfo = false
 
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
         private var texts: (note: String, info: String) {
             state.suggestionNote(suggestion: suggestion, dose: dose)
         }
 
         var body: some View {
+            let bulb = Image(systemName: "lightbulb")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Color.orange)
+                .accessibilityHidden(true)
+            let note = Text(texts.note)
+                .font(.subheadline)
+                .foregroundStyle(Color.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            let infoIcon = Image(systemName: "info.circle")
+                .font(.body)
+                .foregroundStyle(Color.blue)
+                .accessibilityHidden(true)
             Button {
                 isShowingInfo = true
             } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Image(systemName: "lightbulb")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(Color.orange)
-                        .accessibilityHidden(true)
-                    Text(texts.note)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.primary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Image(systemName: "info.circle")
-                        .font(.body)
-                        .foregroundStyle(Color.blue)
-                        .accessibilityHidden(true)
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        // The bulb and the info button on a line above the note, so it has the card's width: between
+                        // them it was a column of a word or two a line, hyphenated.
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                bulb
+                                Spacer(minLength: 0)
+                                infoIcon
+                            }
+                            note
+                        }
+                    } else {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            bulb
+                            note
+                            Spacer(minLength: 0)
+                            infoIcon
+                        }
+                    }
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)

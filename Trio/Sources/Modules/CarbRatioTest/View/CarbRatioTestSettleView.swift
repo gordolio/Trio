@@ -82,9 +82,14 @@ extension CarbRatioTest {
                     }
                 } footer: {
                     if state.settleTimeUpQuestion != nil {
-                        Button("Count It and Go On") { state.countAndGoOn() }
-                            .buttonStyle(.testPrimary)
-                            .disabled(state.isEnding)
+                        Button { state.countAndGoOn() } label: {
+                            // Wraps at accessibility sizes instead of being cut to "Count It an…".
+                            Text("Count It and Go On")
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .buttonStyle(.testPrimary)
+                        .disabled(state.isEnding)
                     }
                     Button("Cancel Test") { showsCancelConfirmation = true }
                         .buttonStyle(.testSecondary)
