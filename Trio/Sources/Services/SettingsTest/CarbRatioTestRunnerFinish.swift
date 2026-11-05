@@ -160,6 +160,57 @@ extension CarbRatioTestRunner {
             }
         }
 
+        // No verdict without the meal's checks: a meal whose halves were first seen together as the test ended (a
+        // relaunch after a long gap, say) is judged now, or, unpaired, ends for that. A read that fails leaves it
+        // unchecked, so with no verdict.
+        var mealUnchecked = false
+        if reason != .interrupted, reason != .noBolus, current.mealJudgedAt == nil,
+           let bolusAt = current.bolusAt, let carbsAt = current.carbsAt, let logged = current.carbs
+        {
+            if let unpaired = CarbRatioTestEvaluator.mealPairingEnd(carbsAt: carbsAt, bolusAt: bolusAt, now: .distantFuture) {
+                reason = .interrupted
+                note = unpaired.note
+            } else {
+                do {
+                    let meal = try await readMeal(carbsAt: carbsAt, bolusAt: bolusAt)
+                    current.startGlucose = current.startGlucose ?? meal.start
+                    if let failed = CarbRatioTestEvaluator.failedMealCondition(
+                        bolusAt: bolusAt,
+                        carbsAt: carbsAt,
+                        loggedCarbs: logged,
+                        plannedCarbs: current.tabletCarbs,
+                        startGlucose: meal.start,
+                        carbRatio: current.carbRatio,
+                        arrow: meal.arrow,
+                        determinations: meal.determinations,
+                        handling: current.iobHandling
+                    ) {
+                        reason = .interrupted
+                        note = failed.note
+                    } else {
+                        current.mealJudgedAt = Date()
+                    }
+                } catch {
+                    warning(.settings, "CarbRatioTestRunner: couldn't read what the meal is judged on as it ended", error: error)
+                    mealUnchecked = true
+                }
+            }
+        }
+
+        // Ended after the bolus with no carb entry logged from the end of settling: its words say to log the tablets'
+        // carbs if they were eaten. Never when one is in, and not when the carbs can't be read.
+        if current.bolusAt != nil, current.carbs == nil, let windowStart = current.bolusWindowStart {
+            do {
+                let entries = try await reads.fetchCarbs(
+                    from: windowStart,
+                    to: Date().addingTimeInterval(CarbRatioTest.Config.savedDateTolerance)
+                )
+                current.carbsUnloggedAtEnd = CarbRatioTestEvaluator.mealCarbs(entries, since: windowStart) == nil ? true : nil
+            } catch {
+                warning(.settings, "CarbRatioTestRunner: couldn't read carbs to say whether to log them", error: error)
+            }
+        }
+
         // From the bolus, or from Begin if none came, and from a little before it for the start glucose. A little past
         // the end, which is saved to the millisecond, so a reading at the same moment as it is read.
         let anchor = current.bolusAt ?? current.startedAt
@@ -194,7 +245,7 @@ extension CarbRatioTestRunner {
         } else {
             interference = note
         }
-        let interferenceUnread = checked == .unreadable || bolusUnread
+        let interferenceUnread = checked == .unreadable || bolusUnread || mealUnchecked
 
         // `reason` as the finish decided it, so a test that ran its length needs the insulin left at the end read.
         current.endReason = reason
@@ -209,13 +260,21 @@ extension CarbRatioTestRunner {
             interferenceUnread: interferenceUnread,
             // Insulin on board the units judged rest on couldn't be read: no units to judge by.
             iobUnread: CarbRatioTestEvaluator.iobUnread(of: current),
-            // A low counts the carbs only when they were logged by Trio's suspend.
-            carbs: CarbRatioTestEvaluator.judgedCarbs(current.carbs, carbsAt: current.carbsAt, reason: reason, end: end),
+            // The tablets' planned grams, what was eaten, once logged; a low counts them only when logged by its suspend.
+            carbs: CarbRatioTestEvaluator.judgedCarbs(
+                current.carbs,
+                planned: current.tabletCarbs,
+                carbsAt: current.carbsAt,
+                reason: reason,
+                end: end
+            ),
             carbRatio: current.carbRatio,
             isf: current.isf,
-            // A low says the CR number is too low only at or below the start, after no more than a docs step lower's dose.
+            // A low says the CR number is too low only at or below the start and Trio's low threshold, after no more than
+            // a docs step lower's dose.
             givenUnits: CarbRatioTestEvaluator.givenUnits(of: current),
-            increment: current.bolusIncrement
+            increment: current.bolusIncrement,
+            lowThreshold: current.lowThreshold ?? Preferences.basalTestingThreshold
         )
 
         current.phase = .finished
@@ -274,7 +333,11 @@ extension CarbRatioTestRunner {
             }
             // A note that says the usual dosing came back says so only when the mode in force now is it.
             var finished = ended
-            finished.interference = CarbRatioTestEvaluator.modeWorded(ended.interference, modeBack: modeIsBack(for: ended))
+            finished.interference = CarbRatioTestEvaluator.modeWorded(
+                ended.interference,
+                modeBack: modeIsBack(for: ended),
+                usualMode: ended.previousMode
+            )
             // Read back before it is shown, archived and posted: a write that didn't last would leave the test running on
             // disk with its ending, so a relaunch would finish, archive and post it again. It stays ending instead, as
             // shown, and the next check finishes it again.
@@ -307,7 +370,8 @@ extension CarbRatioTestRunner {
             .carbRatio,
             sentence: sentence,
             // Carbs with no bolus say the usual mode is back in their own words.
-            modeBack: modeIsBack(for: test) && sentence != CarbRatioTestEvaluator.carbsWithoutBolusNote
+            modeBack: modeIsBack(for: test)
+                && !sentence.hasPrefix(CarbRatioTestEvaluator.carbsWithoutBolusNote(modeBack: false))
         )
     }
 

@@ -337,15 +337,26 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
         #expect(state.showStartConfirmation)
         state.confirmStart()
         #expect(await eventuallyOnMain { runner.begins.count == 1 })
+        // L2: nothing on board, so the Ready page showed no choice, and Begin sends none, whatever was picked before.
+        #expect(!state.checkPages.contains(.iob))
         #expect(runner.begins == [CarbRatioTestBegin(
             brand: .reliOn,
             count: 8,
             length: 3 * 3600,
             glucose: 110,
             iob: 0,
-            iobChoice: .count
+            iobChoice: nil
         )])
         #expect(state.errorMessage == nil)
+
+        // With insulin on board over the line, the page shows the choice, and Begin sends it.
+        state.show(screenData(readings(110), iob: dec("0.5")))
+        #expect(state.checkPages.contains(.iob))
+        state.confirmStart()
+        #expect(await eventuallyOnMain { runner.begins.count == 2 })
+        #expect(runner.begins.last?.iobChoice == .count)
+        #expect(runner.begins.last?.iob == dec("0.5"))
+        state.show(screenData(readings(110)))
 
         runner.beginError = .tabletsOverLimits
         state.confirmStart()
@@ -356,14 +367,14 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
         state.settingsManager.settings.dosingMode = .basalTesting
         state.confirmStart()
         try await Task.sleep(for: .milliseconds(100))
-        #expect(runner.begins.count == 2)
+        #expect(runner.begins.count == 3)
 
         // With no recent reading, no glucose is made up.
         state.settingsManager.settings.dosingMode = .closed
         state.show(screenData([BasalTestReading(date: Date().addingTimeInterval(-30 * minute), glucose: 110)]))
         state.confirmStart()
         try await Task.sleep(for: .milliseconds(100))
-        #expect(runner.begins.count == 2)
+        #expect(runner.begins.count == 3)
         #expect(state.errorMessage != nil)
     }
 
@@ -490,9 +501,17 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
         let inside = state.suggestionNote(suggestion: dec("3.8"), dose: 4)
         #expect(inside.note.hasSuffix("Either is fine: the result is worked out from what you give."))
         #expect(inside.info.contains("correction"))
-        // Insulin on board counts with the bolus: 3.80 + 0.70 is past the 4.45 U top.
+        // R2-4: a test that waits for insulin on board judges the bolus alone, so 0.70 U on board doesn't count.
         state.show(screenData(readings(110), iob: dec("0.7")))
+        #expect(state.suggestionInRange(dec("3.8")))
+        // Inside the 3.55–4.50 U the bolus may take, but not by the 0.05 U increment: "Enter 4.00 U".
+        #expect(!state.suggestionInRange(dec("3.55")))
+        #expect(!state.suggestionNote(suggestion: dec("3.55"), dose: 4).note.contains("Either is fine"))
+        #expect(state.suggestionNote(suggestion: dec("3.6"), dose: 4).note.contains("Either is fine"))
+        // Count It counts it with the bolus: 3.80 + 0.70 is past the 4.45 U top.
+        state.apply(CarbRatioTestRunnerState(test: carbRatioTest(.dosing, handling: .count), doseIOB: dec("0.7")))
         #expect(!state.suggestionInRange(dec("3.8")))
+        #expect(state.suggestionInRange(dec("3.2")))
     }
 
     // MARK: The meal's two halves
@@ -529,6 +548,86 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
         state.openTreatments()
         #expect(router.mainModalScreen.value == .treatmentView)
         #expect(!prefill.isPending)
+    }
+
+    /// A Dose step for `test`, with Treatments behind a fake router and a prefill that fills nothing in.
+    private func doseStep(_ test: CarbRatioTestState, doseIOB: Decimal?) -> (
+        state: CarbRatioTest.StateModel,
+        router: SettingsTestFakeRouter,
+        prefill: SettingsTestTreatmentsPrefill
+    ) {
+        let router = SettingsTestFakeRouter()
+        let prefill = SettingsTestTreatmentsPrefill(
+            router: { router },
+            aiRequestFills: { false },
+            testCarbsLogged: { false }
+        )
+        let state = CarbRatioTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        state.router = router
+        state.prefill = prefill
+        state.opener = SettingsTestScreenOpener(
+            router: { router },
+            keyWindowPresents: { false },
+            recheckTicks: { Empty().eraseToAnyPublisher() }
+        )
+        state.apply(CarbRatioTestRunnerState(test: test, doseIOB: doseIOB))
+        state.show(screenData(readings(110), iob: nil, cob: nil))
+        return (state, router, prefill)
+    }
+
+    @Test(
+        "Count It with the carbs logged and insulin on board unread shows no dose, and still opens Treatments, filling nothing in"
+    ) func countItAwaitsIOB() {
+        // A3: no loop in the last 12 minutes, so no insulin on board to take off the formula's 4 U.
+        var test = carbRatioTest(.dosing, handling: .count)
+        test.carbsAt = Date().addingTimeInterval(-3 * minute)
+        test.carbs = 40
+        let (state, router, prefill) = doseStep(test, doseIOB: nil)
+        #expect(state.noDoseReason == .iobUnread)
+        #expect(state.docsDose == nil)
+        #expect(state.countedDoseAwaitsIOB)
+        #expect(state.canOpenTreatments)
+        #expect(state.doseHoldText == nil)
+        state.openTreatments()
+        #expect(router.mainModalScreen.value == .treatmentView)
+        #expect(!prefill.isPending)
+
+        // Wait for It reads insulin on board only to hold the dose under its line: unread, Treatments stays closed.
+        let waitForIt = doseStep(
+            {
+                var test = carbRatioTest(.dosing, handling: .wait)
+                test.carbsAt = Date().addingTimeInterval(-3 * minute)
+                test.carbs = 40
+                return test
+            }(),
+            doseIOB: nil
+        ).state
+        #expect(!waitForIt.countedDoseAwaitsIOB)
+        #expect(!waitForIt.canOpenTreatments)
+        // Count It before the carbs are logged doesn't open Treatments without the dose.
+        let beforeCarbs = doseStep(carbRatioTest(.dosing, handling: .count), doseIOB: nil).state
+        #expect(!beforeCarbs.countedDoseAwaitsIOB)
+        #expect(!beforeCarbs.canOpenTreatments)
+    }
+
+    @Test(
+        "Once the 15 minutes for the bolus are up, the Dose step turns Open Treatments off and says the test is ending"
+    ) func bolusTimeUp() {
+        // R2-2: the carbs logged 16 minutes ago, no bolus seen yet.
+        for handling in [ISFTestIOBHandling?.none, .count] {
+            var test = carbRatioTest(.dosing, handling: handling)
+            test.carbsAt = Date().addingTimeInterval(-16 * minute)
+            test.carbs = 40
+            let (state, router, _) = doseStep(test, doseIOB: handling == .count ? nil : 0)
+            #expect(state.noDoseReason == .mealTimeUp)
+            #expect(state.noDoseReason?.isWaiting == true)
+            #expect(!state.canDose)
+            #expect(!state.canOpenTreatments)
+            #expect(state.doseHoldText == "The 15 minutes for the bolus are up, so the test is ending.")
+            state.openTreatments()
+            #expect(router.mainModalScreen.value == nil)
+        }
     }
 
     @Test(
@@ -570,6 +669,30 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
         state.apply(CarbRatioTestRunnerState(test: test))
         #expect(state.carbsAwaitedUntil == nil)
         #expect(state.carbsMinutesLeft(at: Date()) == nil)
+    }
+
+    @Test("The Result's expected end uses the tablets' planned grams, not grams logged within a gram") func expectedEndOnPlanned() {
+        // R2-3: 39.5 g logged for the tablets' 40 g; 4.50 U acted, so an accurate ratio ends at 110 + 50 × (4 − 4.5) = 85,
+        // where 39.5 g would give 82.5.
+        let state = CarbRatioTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        var test = carbRatioTest(.finished)
+        let endedAt = Date().addingTimeInterval(-10 * minute)
+        test.bolusAt = endedAt.addingTimeInterval(-4 * 3600)
+        test.bolusUnits = dec("4.5")
+        test.iobAtBolus = 0
+        test.iobAtEnd = 0
+        test.startGlucose = 110
+        test.carbs = dec("39.5")
+        test.carbsAt = test.bolusAt
+        test.endGlucose = 90
+        test.endedAt = endedAt
+        test.endReason = .completed
+        test.interferenceUnread = false
+        test.outcome = CarbRatioTestEvaluator.evaluation(of: test)?.outcome
+        #expect(test.outcome == .accurate)
+        state.apply(CarbRatioTestRunnerState(test: test))
+        #expect(state.expectedEndAwayFromStart == 85)
     }
 
     @Test(

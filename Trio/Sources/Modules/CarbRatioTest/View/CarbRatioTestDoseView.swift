@@ -58,10 +58,18 @@ extension CarbRatioTest {
                 case .carbsUnread,
                      .iobUnread,
                      .noRecentReading:
-                    SettingsTestCard {
-                        ISFTest.WaitingRow(text: state.noDoseReason?.sentence ?? "")
+                    // With the carbs logged, the counted dose's wait is the carbs-logged card's to say.
+                    if !state.countedDoseAwaitsIOB {
+                        SettingsTestCard {
+                            ISFTest.WaitingRow(text: state.noDoseReason?.sentence ?? "")
+                        }
                     }
                     deadlineText
+                case .mealTimeUp:
+                    // The pairing's ending comes with the next check, in its own words; nothing is offered meanwhile.
+                    SettingsTestCard {
+                        ISFTest.WaitingRow(text: CarbRatioTestNoDose.mealTimeUp.sentence)
+                    }
                 case .carbsOnBoard:
                     SettingsTestCard {
                         noDoseText(.carbsOnBoard)
@@ -88,8 +96,8 @@ extension CarbRatioTest {
                 if state.docsDose != nil || state.noDoseReason?.isWaiting == true {
                     Button("Open Treatments") { state.openTreatments() }
                         .buttonStyle(.testPrimary)
-                        .disabled(!state.canDose || state.isEnding)
-                    if state.canDose, !state.isEnding {
+                        .disabled(!state.canOpenTreatments || state.isEnding)
+                    if state.canOpenTreatments, !state.isEnding {
                         Text("Waiting for your bolus. The test goes on when Trio sees it.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
@@ -135,15 +143,19 @@ extension CarbRatioTest {
         /// The tablets' carbs are logged and the bolus hasn't come: the bolus now, with the minutes left of the meal's 15,
         /// then the tablets. Treatments opens with nothing filled in, since the carbs are in.
         private func carbsLoggedCard(test: CarbRatioTestState) -> some View {
-            let dose = state.docsDose ?? state.formulaDose
+            // With Count It, only the counted dose: the formula's would leave the insulin on board in.
+            let dose = state.dosesCountIOB ? state.docsDose : (state.docsDose ?? state.formulaDose)
             let minutes = test.minutesLeftForBolus(at: Date()) ?? 0
             let pairing = Int(Config.mealPairing / 60)
             let time = test.bolusDeadline?.formatted(date: .omitted, time: .shortened) ?? ""
+            let timeUp = state.noDoseReason == .mealTimeUp
             return SettingsTestCard {
                 Label {
-                    if let dose {
+                    if let dose, !timeUp {
                         let units = SettingsTestFormat.keepTogether(state.formatUnits(dose), unit: "U")
                         Text("The tablets' carbs are logged. Give the bolus now: \(Text(verbatim: units).bold()).")
+                    } else if timeUp {
+                        Text("The tablets' carbs are logged, and the time for the bolus is up.")
                     } else {
                         Text("The tablets' carbs are logged. Give the bolus now.")
                     }
@@ -153,12 +165,20 @@ extension CarbRatioTest {
                 }
                 .font(.subheadline.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
-                Text(
-                    "\(minutes) of \(pairing) minutes left, until \(time). Enter only the bolus in Treatments: the carbs are in. Then take the tablets."
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                if state.countedDoseAwaitsIOB {
+                    ISFTest
+                        .WaitingRow(
+                            text: String(localized: "Waiting for Trio to read insulin on board, so the dose can take it off.")
+                        )
+                }
+                if !timeUp {
+                    Text(
+                        "\(minutes) of \(pairing) minutes left, until \(time). Enter only the bolus in Treatments: the carbs are in. Then take the tablets."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
 

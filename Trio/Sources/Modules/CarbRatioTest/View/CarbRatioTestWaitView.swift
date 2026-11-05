@@ -99,25 +99,36 @@ extension CarbRatioTest {
         private func carbsCard(until: Date, now: Date) -> some View {
             let grams = state.test.map { SettingsTestFormat.keepTogether(state.formatGrams($0.tabletCarbs), unit: "g") } ?? ""
             let time = until.formatted(date: .omitted, time: .shortened)
-            let minutes = state.carbsMinutesLeft(at: max(now, Date())) ?? 0
+            let current = max(now, Date())
+            let minutes = state.carbsMinutesLeft(at: current) ?? 0
+            // Past the 15 minutes the test is ending: no button that does nothing, and the card says so.
+            let timeUp = until <= current
             return SettingsTestCard {
                 Label {
-                    Text("The tablets' carbs aren't logged yet. Log their \(grams) in Treatments without another bolus.")
-                        .fixedSize(horizontal: false, vertical: true)
+                    if timeUp {
+                        let pairing = Int(Config.mealPairing / 60)
+                        Text("The \(pairing) minutes for the tablets' carbs are up, so the test is ending.")
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("The tablets' carbs aren't logged yet. Log their \(grams) in Treatments without another bolus.")
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
                 .font(.subheadline.weight(.semibold))
-                Text(
-                    "Leave the bolus at 0: another bolus ends the test. \(minutes) min left, until \(time), or the test ends without a result."
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                Button("Open Treatments") { state.openTreatmentsForCarbs() }
-                    .buttonStyle(.testSecondary)
-                    .disabled(state.isEnding)
+                if !timeUp {
+                    Text(
+                        "Leave the bolus at 0: another bolus ends the test. \(minutes) min left, until \(time), or the test ends without a result."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    Button("Open Treatments") { state.openTreatmentsForCarbs() }
+                        .buttonStyle(.testSecondary)
+                        .disabled(state.isEnding)
+                }
             }
         }
 

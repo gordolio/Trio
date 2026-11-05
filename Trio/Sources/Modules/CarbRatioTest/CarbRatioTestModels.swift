@@ -143,10 +143,14 @@ enum CarbRatioTestNoDose: Equatable {
     case iobUnread
     /// The test counts insulin on board, and it covers the dose or leaves less than the pump can give.
     case iobCoversDose
+    /// The tablets' carbs are logged and the time for the bolus after them is up
+    /// (`CarbRatioTestState.bolusDeadline`): the test is ending (`CarbRatioTestEvaluator.mealPairingEnd`).
+    case mealTimeUp
 
     /// Whether the Dose step is waiting for something a later check can bring, rather than at a dead end. Carbs and
     /// insulin on board only come down while the test runs, since other carbs and boluses end it, so each is a wait.
-    /// Only missing settings are a dead end, which the runner ends the test at with `sentence`.
+    /// Only missing settings are a dead end, which the runner ends the test at with `sentence`. The meal's time up is
+    /// the pairing's ending to make, in its own words, so the step only waits for it.
     var isWaiting: Bool {
         switch self {
         case .carbsOnBoard,
@@ -154,6 +158,7 @@ enum CarbRatioTestNoDose: Equatable {
              .iobCoversDose,
              .iobOverLine,
              .iobUnread,
+             .mealTimeUp,
              .noRecentReading,
              .notLevel: return true
         case .noSettings: return false
@@ -183,6 +188,9 @@ enum CarbRatioTestNoDose: Equatable {
             return String(localized: "Waiting for Trio to count insulin on board.")
         case .iobCoversDose:
             return String(localized: "Your insulin on board covers the dose, so there's nothing to give yet.")
+        case .mealTimeUp:
+            let minutes = Int(CarbRatioTest.Config.mealPairing / 60)
+            return String(localized: "The \(minutes) minutes for the bolus are up, so the test is ending.")
         }
     }
 }
@@ -203,10 +211,11 @@ enum CarbRatioTestBolusCondition: Equatable {
     /// The carbs logged (`logged`, grams) were 1 g or more from the tablets' planned grams (`planned`): the test can't
     /// tell what the bolus covered (`CarbRatioTestEvaluator.carbsDiffer`). Both are kept to 1 decimal for the note.
     case carbsDiffer(logged: Decimal, planned: Decimal)
-    /// The units given (the bolus, plus insulin on board at it) were more than a docs step from the formula's dose
-    /// (`formula`), outside `CarbRatioTestEvaluator.bolusRange`: "Deliver the full bolus manually". The result would rest
-    /// on the ISF instead of the carb ratio.
-    case bolusOffFormula(given: Decimal, formula: Decimal)
+    /// The units the test judges the bolus by (`given`: the bolus, or with Count It, `counted`, the bolus and insulin on
+    /// board at it) were more than a docs step from the formula's dose (`formula`), past the pump's rounding
+    /// (`CarbRatioTestEvaluator.bolusOffFormula`): "Deliver the full bolus manually". The result would rest on the ISF
+    /// instead of the carb ratio.
+    case bolusOffFormula(given: Decimal, formula: Decimal, counted: Bool)
 
     /// What the Result says about it, and the note the runner ends the test with.
     var note: String {
@@ -217,12 +226,17 @@ enum CarbRatioTestBolusCondition: Equatable {
             return String(
                 localized: "The carbs logged (\(loggedText)) weren't the tablets' \(plannedText), so the test can't tell what the bolus covered."
             )
-        case let .bolusOffFormula(given, formula):
+        case let .bolusOffFormula(given, formula, counted):
             let givenText = SettingsTestFormat.keepTogether(ISFTestEvaluator.shownUnits(given), unit: "U")
             let formulaText = SettingsTestFormat.keepTogether(ISFTestEvaluator.shownUnits(formula), unit: "U")
-            return String(
-                localized: "The bolus was \(givenText), more than a 1 g/U step from the formula's \(formulaText), so the result would rest on your ISF instead of your carb ratio."
-            ) + " " + SettingsTestNotice.modeBackSentence
+            let sentence = counted
+                ? String(
+                    localized: "The bolus and the insulin on board came to \(givenText), more than a 1 g/U step from the formula's \(formulaText), so the result would rest on your ISF instead of your carb ratio."
+                )
+                : String(
+                    localized: "The bolus was \(givenText), more than a 1 g/U step from the formula's \(formulaText), so the result would rest on your ISF instead of your carb ratio."
+                )
+            return sentence + " " + SettingsTestNotice.modeBackSentence
         case .glucoseMoving:
             return ISFTestBolusCondition.glucoseMoving.note
         case .carbsOnBoard:
@@ -279,6 +293,12 @@ struct CarbRatioTestDoseRange: Equatable {
     func contains(_ units: Decimal) -> Bool {
         let shown = rounded(units, scale: 2, roundingMode: .plain)
         return shown >= lowest && highest.map { shown <= $0 } ?? true
+    }
+
+    /// The range with `margin` more room either side, never below zero: what the test accepts, since the pump rounds a
+    /// bolus to its increment.
+    func widened(by margin: Decimal) -> CarbRatioTestDoseRange {
+        CarbRatioTestDoseRange(lowest: max(0, lowest - margin), highest: highest.map { $0 + margin })
     }
 }
 
@@ -384,6 +404,17 @@ struct CarbRatioTestState: JSON, Equatable {
     var carbsAt: Date? = nil
     /// That entry's ID, so it isn't taken for other carbs (`CarbRatioTestEvaluator.extraCarbs`).
     var carbsID: String? = nil
+    /// When the meal's conditions were judged and held (`CarbRatioTestEvaluator.failedMealCondition`): the grams, the
+    /// start glucose, the arrow and carbs on board at the meal, insulin on board at the bolus. No verdict without it: a
+    /// finish that finds it nil judges the meal first (`CarbRatioTestRunner.finish`).
+    var mealJudgedAt: Date? = nil
+    /// Trio's own low threshold in Basal Testing at Begin, in mg/dL: the higher of 72 and the user's
+    /// (`Preferences.clamped(for: .basalTesting)`). A low counts as "End up low" only at or under it
+    /// (`CarbRatioTestEvaluator.lowNoVerdict`). Nil for a test begun before it was kept, which reads 72.
+    var lowThreshold: Decimal? = nil
+    /// Whether, as the test ended after the bolus, no carb entry was logged from the end of settling: its words then
+    /// say to log the tablets' carbs if they were eaten (`CarbRatioTestEvaluator.noVerdictText`). Never when one is in.
+    var carbsUnloggedAtEnd: Bool? = nil
 
     // Filled in when the test finishes.
     /// Insulin on board Trio reports still left at the planned end (`ISFTestEvaluator.iobAtEnd`), signed: what hadn't
@@ -710,6 +741,7 @@ enum CarbRatioTestEvaluator {
         isf: Decimal?,
         givenUnits: Decimal? = nil,
         increment: Decimal = 0,
+        lowThreshold: Decimal = Preferences.basalTestingThreshold,
         step: Decimal = CarbRatioTest.Config.docsSmallestStep
     ) -> Evaluation {
         func result(
@@ -738,6 +770,7 @@ enum CarbRatioTestEvaluator {
                 carbs: carbs,
                 carbRatio: carbRatio,
                 increment: increment,
+                lowThreshold: lowThreshold,
                 step: step
             ) == nil ? result(.tooLow, .increase) : result(.inconclusive, nil)
         }
@@ -784,12 +817,13 @@ enum CarbRatioTestEvaluator {
 
     /// Why Trio's suspend for a low says nothing about the carb ratio, nil when it says the number is too low. The docs'
     /// rule is "End up low: CR is too low", so the low counts only with glucose at the suspend (`glucoseAtSuspend`, the
-    /// mean of the readings at or before it) at or below the start glucose: Trio also suspends on its forecast, with
-    /// glucose still above it (`forecastSuspend`). And only when what went in, `givenUnits` (the bolus, plus insulin on
-    /// board at it), was no more than the dose a carb ratio a docs step lower gives, carbs ÷ (CR − step), rounded up to
-    /// the pump's bolus `increment`: a bigger bolus brings on a low whatever the ratio (`doseOverDocs`). A carb ratio at
-    /// or under the step has no ratio a step lower, so no bolus is too big for it. Without a reading, the units or the
-    /// carbs to tell, the reason is the one missing.
+    /// mean of the readings after the meal at or before it, `endGlucose`) both at or below Trio's own low threshold in
+    /// Basal Testing (`lowThreshold`, `CarbRatioTestState.lowThreshold`: lows use Trio's own threshold) and at or below
+    /// the start glucose. Trio also suspends on its forecast, with glucose still above either (`forecastSuspend`). And
+    /// only when what went in, `givenUnits` (the bolus, plus insulin on board at it), was no more than the dose a carb
+    /// ratio a docs step lower gives, carbs ÷ (CR − step), rounded up to the pump's bolus `increment`: a bigger bolus
+    /// brings on a low whatever the ratio (`doseOverDocs`). A carb ratio at or under the step has no ratio a step lower,
+    /// so no bolus is too big for it. Without a reading, the units or the carbs to tell, the reason is the one missing.
     static func lowNoVerdict(
         glucoseAtSuspend: Int?,
         startGlucose: Int?,
@@ -797,10 +831,11 @@ enum CarbRatioTestEvaluator {
         carbs: Decimal?,
         carbRatio: Decimal?,
         increment: Decimal,
+        lowThreshold: Decimal = Preferences.basalTestingThreshold,
         step: Decimal = CarbRatioTest.Config.docsSmallestStep
     ) -> CarbRatioTestNoVerdict? {
         guard let glucoseAtSuspend, let startGlucose else { return .noReadings }
-        guard glucoseAtSuspend <= startGlucose else { return .forecastSuspend }
+        guard glucoseAtSuspend <= startGlucose, Decimal(glucoseAtSuspend) <= lowThreshold else { return .forecastSuspend }
         guard let givenUnits else { return .noAmount }
         guard let carbs, carbs > 0 else { return .noCarbs }
         guard let carbRatio, carbRatio > 0 else { return .noAmount }
@@ -841,10 +876,10 @@ enum CarbRatioTestEvaluator {
 
     /// The glucose the test ended at, in mg/dL: the mean of the last 3 readings at or before `end` (a saved date, so a
     /// reading at the same moment is at it), from the bolus on (`BasalTestEvaluator.endGlucose`). For a low, the glucose
-    /// at Trio's suspend, from readings dated after the meal only (`CarbRatioTestState.mealAt`: the earlier of the bolus
-    /// and the tablets' carbs, `carbsAt`), so a suspend before the CGM had 3 readings after the meal has none, and isn't
-    /// read as "End up low" from the readings the start glucose came from. Nil without a bolus, and without a reading
-    /// recent enough at the end.
+    /// at Trio's suspend, from readings dated after the later half of the meal only (the bolus, or the tablets' carbs,
+    /// `carbsAt`, logged after it): the tablets are taken after the bolus, so a suspend before the CGM had 3 readings
+    /// since then has none, and isn't read as "End up low" from glucose the tablets hadn't touched. Nil without a bolus,
+    /// and without a reading recent enough at the end.
     static func endGlucose(
         _ fetched: [BasalTestReading],
         bolusAt: Date?,
@@ -856,32 +891,35 @@ enum CarbRatioTestEvaluator {
         let atEnd = ISFTestEvaluator.readings(fetched, atOrBefore: end)
         let counted: [BasalTestReading]
         if reason == .low {
-            let mealAt = carbsAt.map { min($0, bolusAt) } ?? bolusAt
-            counted = atEnd.filter { ISFTestEvaluator.isAfter($0.date, mealAt) }
+            let laterHalf = carbsAt.map { max($0, bolusAt) } ?? bolusAt
+            counted = atEnd.filter { ISFTestEvaluator.isAfter($0.date, laterHalf) }
         } else {
             counted = ISFTestEvaluator.readings(atEnd, since: bolusAt)
         }
         return BasalTestEvaluator.endGlucose(from: counted, endingAt: end)
     }
 
-    /// The carbs a test that ended at `end` for `reason` is judged on: those logged (`carbs`, dated `carbsAt`), except
-    /// that a low counts only carbs dated at or before Trio's suspend (`end`). A suspend before them came from a forecast
-    /// that saw the bolus without the carbs, which says nothing about the carb ratio (`lowNoVerdict` then gives
-    /// `.noCarbs`).
+    /// The carbs a test that ended at `end` for `reason` is judged on: the tablets' planned grams (`planned`), what was
+    /// eaten, once their entry is logged (`carbs`, dated `carbsAt`), since a logged amount within a gram of them is the
+    /// entry field's rounding (`carbsDiffer`). A low counts them only when logged at or before Trio's suspend (`end`): a
+    /// suspend before them came from a forecast that saw the bolus without the carbs, which says nothing about the carb
+    /// ratio (`lowNoVerdict` then gives `.noCarbs`). Nil without them.
     static func judgedCarbs(
         _ carbs: Decimal?,
+        planned: Decimal,
         carbsAt: Date?,
         reason: CarbRatioTestEndReason?,
         end: Date?
     ) -> Decimal? {
-        guard reason == .low else { return carbs }
+        guard carbs != nil else { return nil }
+        guard reason == .low else { return planned }
         guard let carbsAt, let end, !ISFTestEvaluator.isAfter(carbsAt, end) else { return nil }
-        return carbs
+        return planned
     }
 
     /// `judgedCarbs` for a finished test, from what it saved.
     static func judgedCarbs(of test: CarbRatioTestState) -> Decimal? {
-        judgedCarbs(test.carbs, carbsAt: test.carbsAt, reason: test.endReason, end: test.endedAt)
+        judgedCarbs(test.carbs, planned: test.tabletCarbs, carbsAt: test.carbsAt, reason: test.endReason, end: test.endedAt)
     }
 
     // MARK: - The meal: the tablets' carbs and the bolus
@@ -1019,29 +1057,33 @@ enum CarbRatioTestEvaluator {
         return CarbRatioTestDoseRange(lowest: lowest, highest: highest)
     }
 
-    /// A bolus outside `bolusRange` for the tablets' planned grams and the carb ratio in force at it: the units given
-    /// (`givenUnits`: the bolus, plus insulin on board at it), or the bolus alone while that is unread in a test that
-    /// doesn't count it (it is under the line then). Nil when the bolus is in the range, and while there is nothing to
-    /// judge: no bolus, no amount, or a test that counts insulin on board before it is read.
+    /// A bolus off the formula's dose by more than a docs step, for the tablets' planned grams and the carb ratio in
+    /// force at it: outside `bolusRange` widened by one pump `increment` either side, since the pump rounds what it gives
+    /// (`CarbRatioTestDoseRange.widened`). The units judged are the bolus alone in a test that waited for insulin on board
+    /// (Wait for It, or no choice to make: it was under the line), and the bolus with insulin on board at it with Count
+    /// It, whose dose took it off (`counted`). Nil when the bolus is in range, and while there is nothing to judge: no
+    /// bolus, no amount, or Count It before the insulin on board at the bolus is read: checked as soon as it is.
     static func bolusOffFormula(of test: CarbRatioTestState) -> CarbRatioTestBolusCondition? {
         guard test.bolusAt != nil, let bolus = test.bolusUnits else { return nil }
-        let given: Decimal
-        if let units = givenUnits(of: test) {
-            given = units
-        } else if test.iobHandling != .count {
-            given = bolus
+        let counted = test.iobHandling == .count
+        let units: Decimal
+        if counted {
+            guard let iob = test.iobAtBolus else { return nil }
+            units = bolus + iob
         } else {
-            return nil
+            units = bolus
         }
         guard let range = bolusRange(carbs: test.tabletCarbs, carbRatio: test.carbRatio, increment: test.bolusIncrement),
-              let formula = dose(carbs: test.tabletCarbs, carbRatio: test.carbRatio), !range.contains(given)
+              let formula = dose(carbs: test.tabletCarbs, carbRatio: test.carbRatio),
+              !range.widened(by: test.bolusIncrement).contains(units)
         else { return nil }
-        return .bolusOffFormula(given: rounded(given, scale: 2, roundingMode: .plain), formula: formula)
+        return .bolusOffFormula(given: rounded(units, scale: 2, roundingMode: .plain), formula: formula, counted: counted)
     }
 
-    /// Whether Trio's `suggestion` for the bolus, with `iob` on board as the units given count it, lies in `bolusRange`
-    /// for the tablets. When it doesn't, the Dose step says to enter the formula's dose instead of tapping it. False
-    /// without carbs or a carb ratio.
+    /// Whether Trio's `suggestion` for the bolus sits inside the range the test accepts by at least one pump increment,
+    /// that is, in `bolusRange` itself: only then does the Dose step say "Either is fine"; otherwise it says to enter the
+    /// formula's dose. `iob` is the insulin on board the units count, with Count It only (zero otherwise: the bolus alone
+    /// is judged). False without carbs or a carb ratio.
     static func suggestionInRange(
         _ suggestion: Decimal,
         iob: Decimal = 0,
@@ -1149,12 +1191,15 @@ enum CarbRatioTestEvaluator {
     /// (`countedDose`); otherwise read and at or under the line for the dose (`iobLine`). Once the tablets' carbs are
     /// logged ahead of the bolus (`CarbRatioTestState.carbsLoggedAwaitingBolus`), the start glucose, the arrow and carbs on
     /// board are judged at the carbs, the meal's moment (`failedMealCondition`), so only the settings and insulin on
-    /// board can hold the bolus back: the tablets' own rise mustn't.
+    /// board can hold the bolus back: the tablets' own rise mustn't. Once the time for the bolus after them is up,
+    /// nothing is offered (`.mealTimeUp`).
     static func noDoseReason(of test: CarbRatioTestState, _ inputs: CarbRatioTestDoseInputs) -> CarbRatioTestNoDose? {
         let settings = doseSettings(of: test, at: inputs.now)
         guard settings.isf > 0, let dose = dose(carbs: test.tabletCarbs, carbRatio: settings.carbRatio) else {
             return .noSettings
         }
+        // Past the time for the bolus after the tablets' carbs, the test is ending: nothing is offered.
+        if let deadline = test.bolusDeadline, inputs.now >= deadline { return .mealTimeUp }
         if !test.carbsLoggedAwaitingBolus {
             guard let cob = inputs.cob else { return .carbsUnread }
             if cobBlocks(cob: cob, line: cobLine(carbs: test.tabletCarbs, carbRatio: settings.carbRatio)) {
@@ -1246,12 +1291,17 @@ enum CarbRatioTestEvaluator {
 
     /// The note a finished test keeps and its notice says, worded from the mode in force once it ended
     /// (`ISFTestEvaluator.modeWorded`), with this test's words for a record that couldn't be read. A note of this test's
-    /// that says the usual dosing came back (carbs with no bolus, a bolus off the formula) says so only when it did.
-    static func modeWorded(_ note: String?, modeBack: Bool) -> String? {
+    /// that says the usual dosing came back (carbs with no bolus, a bolus off the formula, halves apart) says so only
+    /// when it did, and carbs with no bolus say the usual mode covers them only when it is Closed Loop (`usualMode`):
+    /// the others never add insulin.
+    static func modeWorded(_ note: String?, modeBack: Bool, usualMode: DosingMode = .closed) -> String? {
         let worded = ISFTestEvaluator.modeWorded(note, modeBack: modeBack)
         if worded == ISFTestEvaluator.historyUnreadNote { return historyUnreadNote }
-        guard !modeBack, let worded else { return worded }
-        if worded == carbsWithoutBolusNote { return carbsWithoutBolusNote(modeBack: false) }
+        guard let worded else { return worded }
+        if worded.hasPrefix(carbsWithoutBolusNote(modeBack: false)) {
+            return carbsWithoutBolusNote(modeBack: modeBack, usualMode: usualMode)
+        }
+        guard !modeBack else { return worded }
         let modeBackSuffix = " " + SettingsTestNotice.modeBackSentence
         return worded.hasSuffix(modeBackSuffix) ? String(worded.dropLast(modeBackSuffix.count)) : worded
     }
@@ -1279,25 +1329,58 @@ enum CarbRatioTestEvaluator {
     }
 
     /// The note the test ends with when the tablets' carbs were logged and no bolus came within
-    /// `CarbRatioTest.Config.mealPairing` (`mealPairingEnd`): the usual dosing comes back to cover them.
+    /// `CarbRatioTest.Config.mealPairing` (`mealPairingEnd`), as decided: worded for Closed Loop, the usual mode the
+    /// finish words it from (`modeWorded`).
     static var carbsWithoutBolusNote: String { carbsWithoutBolusNote(modeBack: true) }
 
-    /// The same, saying the usual dosing came back only when it did (`modeWorded`).
-    static func carbsWithoutBolusNote(modeBack: Bool) -> String {
+    /// The same, saying the usual dosing came back only when it did, and that it covers the carbs only when it is Closed
+    /// Loop: Open Loop and Low Glucose Suspend never add insulin, so the user covers them as usual.
+    static func carbsWithoutBolusNote(modeBack: Bool, usualMode: DosingMode = .closed) -> String {
         let minutes = Int(CarbRatioTest.Config.mealPairing / 60)
         let logged = String(
             localized: "The tablets' carbs were logged, but no bolus came within \(minutes) minutes."
         )
-        return modeBack ? logged + " " + String(localized: "Your usual dosing mode is back to cover them.") : logged
+        guard modeBack else { return logged }
+        return logged + " " + (
+            usualMode == .closed
+                ? String(localized: "Your usual dosing mode is back to cover them.")
+                : String(
+                    localized: "Your usual dosing mode is back, and it doesn't bolus for carbs: cover them as you usually would."
+                )
+        )
     }
 
-    /// The note the test ends with when the bolus came and the tablets' carbs weren't logged within
-    /// `CarbRatioTest.Config.mealPairing` (`mealPairingEnd`).
+    /// The note the test ends with when the bolus came and no carb entry was logged within
+    /// `CarbRatioTest.Config.mealPairing` (`mealPairingEnd`). Whether to say to log them is the finish's to add
+    /// (`logCarbsSentence`), from a read of the carbs as it ends: never when they are in.
     static var bolusWithoutCarbsNote: String {
         let minutes = Int(CarbRatioTest.Config.mealPairing / 60)
+        return String(localized: "The bolus came, but the tablets' carbs weren't logged within \(minutes) minutes.")
+    }
+
+    /// The note the test ends with when both halves of the meal came, more than `CarbRatioTest.Config.mealPairing`
+    /// apart, in either order (`mealPairingEnd`): both are logged, so it never says to log either again.
+    static var mealApartNote: String {
+        let minutes = Int(CarbRatioTest.Config.mealPairing / 60)
         return String(
-            localized: "The bolus came, but the tablets' carbs weren't logged within \(minutes) minutes. If you ate the tablets, log their carbs now so Trio counts them."
+            localized: "The tablets' carbs and the bolus came more than \(minutes) minutes apart, so the test can't judge them."
+        ) + " " + SettingsTestNotice.modeBackSentence
+    }
+
+    /// The note the test ends with when the tablets' carbs were logged more than `CarbRatioTest.Config.mealPairing` ago
+    /// and the boluses couldn't be read, so no bolus could be paired with them (`bolusesUnreadEnd`): the safe way is to
+    /// end it, and if no bolus was given, the carbs are the user's to cover.
+    static var bolusesUnreadNote: String {
+        let minutes = Int(CarbRatioTest.Config.mealPairing / 60)
+        return String(
+            localized: "Trio couldn't read your boluses to pair one with the tablets' carbs within \(minutes) minutes, so the test can't be judged. If you didn't give the bolus, cover the carbs as you usually would."
         )
+    }
+
+    /// What a test that ended after its bolus with no carb entry logged adds to its words
+    /// (`CarbRatioTestState.carbsUnloggedAtEnd`).
+    static var logCarbsSentence: String {
+        String(localized: "If you ate the tablets, log their carbs so Trio counts them.")
     }
 
     /// The note for the service's record of a meal not paired (`SettingsTestEndCause.mealUnpaired`) when the test itself
@@ -1335,7 +1418,8 @@ enum CarbRatioTestEvaluator {
             carbRatio: test.carbRatio,
             isf: test.isf,
             givenUnits: givenUnits(of: test),
-            increment: test.bolusIncrement
+            increment: test.bolusIncrement,
+            lowThreshold: test.lowThreshold ?? Preferences.basalTestingThreshold
         )
     }
 
@@ -1350,7 +1434,7 @@ enum CarbRatioTestEvaluator {
     /// (`matchingEvaluation`, not a low). Nil otherwise, and when no whole reading lies inside.
     static func resultBand(of test: CarbRatioTestState) -> CarbRatioTestBand? {
         guard test.endReason != .low, matchingEvaluation(of: test)?.outcome.isConclusive == true,
-              let start = test.startGlucose, let carbs = test.carbs, let units = judgedUnits(of: test)
+              let start = test.startGlucose, let carbs = judgedCarbs(of: test), let units = judgedUnits(of: test)
         else { return nil }
         return accurateEnds(startGlucose: start, carbs: carbs, units: units, carbRatio: test.carbRatio, isf: test.isf)
     }
@@ -1372,7 +1456,8 @@ enum CarbRatioTestEvaluator {
                 givenUnits: givenUnits(of: test),
                 carbs: judgedCarbs(of: test),
                 carbRatio: test.carbRatio,
-                increment: test.bolusIncrement
+                increment: test.bolusIncrement,
+                lowThreshold: test.lowThreshold ?? Preferences.basalTestingThreshold
             )
         }
         if iobUnread(of: test) { return .historyUnread }
@@ -1381,7 +1466,7 @@ enum CarbRatioTestEvaluator {
             return .tooSoon
         }
         guard let start = test.startGlucose, test.endGlucose != nil else { return .noReadings }
-        guard let carbs = test.carbs, carbs > 0 else { return .noCarbs }
+        guard let carbs = judgedCarbs(of: test), carbs > 0 else { return .noCarbs }
         guard let units = judgedUnits(of: test), units > 0, test.carbRatio > 0, test.isf > 0 else { return .noAmount }
         if accurateEnds(startGlucose: start, carbs: carbs, units: units, carbRatio: test.carbRatio, isf: test.isf) == nil {
             return .carbsTooFew
@@ -1390,8 +1475,15 @@ enum CarbRatioTestEvaluator {
     }
 
     /// What a result with no verdict says about why, for the Result and for the notice that the test ended. `noVerdict`
-    /// is `noVerdict(for:)`; `test` gives the wording what it needs (its note, how long it ran).
+    /// is `noVerdict(for:)`; `test` gives the wording what it needs (its note, how long it ran). A test that ended after
+    /// its bolus with no carb entry logged adds that the tablets' carbs, if eaten, are the user's to log
+    /// (`logCarbsSentence`); never when one is in.
     static func noVerdictText(_ noVerdict: CarbRatioTestNoVerdict?, test: CarbRatioTestState) -> String {
+        let text = reasonText(noVerdict, test: test)
+        return test.carbsUnloggedAtEnd == true ? text + " " + logCarbsSentence : text
+    }
+
+    private static func reasonText(_ noVerdict: CarbRatioTestNoVerdict?, test: CarbRatioTestState) -> String {
         switch noVerdict {
         case .noBolus:
             let minutes = Int(CarbRatioTest.Config.doseAllowance / 60)
@@ -1428,7 +1520,7 @@ enum CarbRatioTestEvaluator {
             return String(localized: "The carbs were too few for this test to tell your carb ratio apart from CGM noise.")
         case .forecastSuspend:
             return String(
-                localized: "Trio suspended insulin on its forecast while your glucose was still above where it started, so the test can't tell."
+                localized: "Trio suspended insulin on its forecast, with your glucose not yet low or still above where it started, so the test can't tell."
             )
         case .doseOverDocs:
             return String(

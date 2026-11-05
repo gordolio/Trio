@@ -68,11 +68,12 @@ extension CarbRatioTestEvaluator {
 
     /// How a test ends whose meal's halves, the tablets' carbs (`carbsAt`) and the bolus (`bolusAt`), didn't come within
     /// `CarbRatioTest.Config.mealPairing` of each other, whichever came first: at once, with no verdict, dated at the end
-    /// of the pairing time from the first, so the usual dosing comes back. Carbs with no bolus are carbs Basal Testing
-    /// gives no insulin for (`carbsWithoutBolusNote`); a bolus with no carbs is insulin Trio's forecast sees alone, and
-    /// the user is told to log the carbs (`bolusWithoutCarbsNote`). A second half that came after the pairing time is the
-    /// same ending. Nil while the second half can still come, and once both came in time. `now` is when the halves were
-    /// read: a half not seen by then hadn't come.
+    /// of the pairing time from the first, so the usual dosing comes back. It is worded from what is logged when it is
+    /// decided: carbs with no bolus are carbs Basal Testing gives no insulin for (`carbsWithoutBolusNote`); a bolus with
+    /// no carbs is insulin Trio's forecast sees alone (`bolusWithoutCarbsNote`; the finish says to log them only if none
+    /// is logged by then); both in, one late, are both logged, so it says they came too far apart and never to log
+    /// either (`mealApartNote`). Nil while the second half can still come, and once both came in time. `now` is when the
+    /// halves were read: a half not seen by then hadn't come.
     static func mealPairingEnd(carbsAt: Date?, bolusAt: Date?, now: Date) -> Ending? {
         let pairing = CarbRatioTest.Config.mealPairing
         switch (carbsAt, bolusAt) {
@@ -89,27 +90,40 @@ extension CarbRatioTestEvaluator {
             let deadline = first.addingTimeInterval(pairing)
             // Dates saved in the test's state, so the second half at the same moment as the deadline is in time.
             guard ISFTestEvaluator.isAfter(max(carbsAt, bolusAt), deadline) else { return nil }
-            return Ending(
-                reason: .interrupted,
-                at: deadline,
-                note: carbsAt <= bolusAt ? carbsWithoutBolusNote : bolusWithoutCarbsNote
-            )
+            return Ending(reason: .interrupted, at: deadline, note: mealApartNote)
         }
+    }
+
+    /// How a test ends whose tablets' carbs were logged (`carbsAt`) with no bolus seen, when the boluses couldn't be read
+    /// (`bolusesRead` false) past the pairing time: so no bolus could be paired with them. The safe way: at once, with
+    /// `bolusesUnreadNote`, dated now, as the service's watchdog dates it: a bolus may have come, so when the test should
+    /// have ended can't be told. Nil otherwise.
+    static func bolusesUnreadEnd(carbsAt: Date?, bolusAt: Date?, bolusesRead: Bool, now: Date) -> Ending? {
+        guard !bolusesRead, bolusAt == nil, let carbsAt else { return nil }
+        let deadline = carbsAt.addingTimeInterval(CarbRatioTest.Config.mealPairing)
+        return now >= deadline ? Ending(reason: .interrupted, at: nil, note: bolusesUnreadNote) : nil
     }
 
     /// The test's ending for the service's record of ending its session for a meal not paired
     /// (`SettingsTestEndCause.mealUnpaired`), dated as the service dated it, if dated by the test's limit (the planned
-    /// end, or the bolus deadline before the bolus). Its words come from the half the test saw: carbs with no bolus, a
-    /// bolus with no carbs, or, when it saw neither, `mealUnpairedNote`. Nil for any other record, and another session's.
-    static func serviceMealEnd(of test: CarbRatioTestState, serviceEnd: SettingsTestEnd?) -> Ending? {
+    /// end, or the bolus deadline before the bolus). Its words come from what the test saw this check: both halves, one
+    /// late (`mealApartNote`), or in time, so the service's boluses were unread (`historyUnreadNote`); carbs alone, with
+    /// the boluses read (`carbsWithoutBolusNote`) or not (`bolusesUnreadNote`);
+    /// a bolus alone (`bolusWithoutCarbsNote`); or neither (`mealUnpairedNote`). Nil for any other record, and another
+    /// session's.
+    static func serviceMealEnd(of test: CarbRatioTestState, serviceEnd: SettingsTestEnd?, bolusesRead: Bool) -> Ending? {
         guard let serviceEnd, serviceEnd.cause == .mealUnpaired, let sessionID = test.sessionID,
               serviceEnd.sessionID == sessionID,
               !ISFTestEvaluator.isAfter(serviceEnd.date, test.plannedEnd ?? test.noBolusDeadline)
         else { return nil }
         let note: String
         switch (test.carbsAt, test.bolusAt) {
-        case let (carbsAt?, bolusAt?): note = carbsAt <= bolusAt ? carbsWithoutBolusNote : bolusWithoutCarbsNote
-        case (.some, nil): note = carbsWithoutBolusNote
+        case let (carbsAt?, bolusAt?):
+            // Paired in time, the service couldn't have seen them apart: it couldn't read the bolus that came.
+            note = mealPairingEnd(carbsAt: carbsAt, bolusAt: bolusAt, now: .distantFuture) == nil
+                ? historyUnreadNote
+                : mealApartNote
+        case (.some, nil): note = bolusesRead ? carbsWithoutBolusNote : bolusesUnreadNote
         case (nil, .some): note = bolusWithoutCarbsNote
         case (nil, nil): note = mealUnpairedNote
         }

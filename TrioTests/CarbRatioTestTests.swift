@@ -425,7 +425,8 @@ private func finishedTest(
         carbs: Decimal? = 40,
         carbRatio: Decimal? = 10,
         isf: Decimal? = 50,
-        givenUnits: Decimal? = 4
+        givenUnits: Decimal? = 4,
+        lowThreshold: Decimal = Preferences.basalTestingThreshold
     ) -> CarbRatioTestEvaluator.Evaluation {
         CarbRatioTestEvaluator.evaluate(
             startGlucose: start,
@@ -441,7 +442,8 @@ private func finishedTest(
             carbRatio: carbRatio,
             isf: isf,
             givenUnits: givenUnits,
-            increment: dec("0.05")
+            increment: dec("0.05"),
+            lowThreshold: lowThreshold
         )
     }
 
@@ -532,7 +534,7 @@ private func finishedTest(
 
     @Test("Records that couldn't be read say nothing, a low among them") func unread() {
         #expect(evaluate(end: 100, interferenceUnread: true).outcome == .inconclusive)
-        #expect(evaluate(end: 90, reason: .low, interferenceUnread: true).outcome == .inconclusive)
+        #expect(evaluate(end: 70, reason: .low, interferenceUnread: true).outcome == .inconclusive)
         #expect(evaluate(end: 100, iobUnread: true).outcome == .inconclusive)
     }
 
@@ -562,26 +564,31 @@ private func finishedTest(
     }
 
     @Test("A low the carb ratio accounts for says it is too low; others say nothing") func low() {
-        // At or below the start, after no more than 40 ÷ 9 = 4.44 U, rounded up to 4.45.
-        #expect(evaluate(end: 90, reason: .low, givenUnits: 4).outcome == .tooLow)
-        #expect(evaluate(end: 90, reason: .low, givenUnits: 4).direction == .increase)
-        #expect(evaluate(end: 90, reason: .low, givenUnits: dec("4.5")).outcome == .inconclusive)
+        // At or below the start and Trio's 72 mg/dL low line, after no more than 40 ÷ 9 = 4.44 U, rounded up to 4.45.
+        #expect(evaluate(end: 70, reason: .low, givenUnits: 4).outcome == .tooLow)
+        #expect(evaluate(end: 70, reason: .low, givenUnits: 4).direction == .increase)
+        #expect(evaluate(end: 70, reason: .low, givenUnits: dec("4.5")).outcome == .inconclusive)
         // Still above the start.
         #expect(evaluate(end: 105, reason: .low).outcome == .inconclusive)
+        // R2-1: under the start but above the low line: Trio's forecast, not a low.
+        #expect(evaluate(end: 80, reason: .low).outcome == .inconclusive)
+        // With the user's own threshold over 72, that line.
+        #expect(evaluate(end: 80, reason: .low, lowThreshold: 85).outcome == .tooLow)
         // A low ends the test, so it isn't judged on the ratio, and comes before insulin on board left unread.
-        #expect(evaluate(end: 90, elapsed: hour, reason: .low, iobUnread: true).outcome == .tooLow)
-        #expect(evaluate(end: 90, reason: .low).shownRatio == nil)
+        #expect(evaluate(end: 70, elapsed: hour, reason: .low, iobUnread: true).outcome == .tooLow)
+        #expect(evaluate(end: 70, reason: .low).shownRatio == nil)
     }
 }
 
 @Suite("Carb ratio test low") struct CarbRatioTestLowTests {
     private func noVerdict(
-        suspend: Int? = 90,
+        suspend: Int? = 70,
         start: Int? = 100,
         given: Decimal? = 4,
         carbs: Decimal? = 40,
         carbRatio: Decimal? = 10,
-        increment: Decimal = dec("0.05")
+        increment: Decimal = dec("0.05"),
+        lowThreshold: Decimal = Preferences.basalTestingThreshold
     ) -> CarbRatioTestNoVerdict? {
         CarbRatioTestEvaluator.lowNoVerdict(
             glucoseAtSuspend: suspend,
@@ -589,13 +596,18 @@ private func finishedTest(
             givenUnits: given,
             carbs: carbs,
             carbRatio: carbRatio,
-            increment: increment
+            increment: increment,
+            lowThreshold: lowThreshold
         )
     }
 
-    @Test("A low at or below the start, after no more than a 1 g/U lower ratio's dose, counts") func counts() {
+    @Test(
+        "A low at or below the start and Trio's low line, after no more than a 1 g/U lower ratio's dose, counts"
+    ) func counts() {
         #expect(noVerdict() == nil)
-        #expect(noVerdict(suspend: 100) == nil)
+        // At the line, and at the start.
+        #expect(noVerdict(suspend: 72) == nil)
+        #expect(noVerdict(suspend: 65, start: 65) == nil)
         // 40 ÷ 9 = 4.44, rounded up to 0.05 U: 4.45.
         #expect(noVerdict(given: dec("4.45")) == nil)
     }
@@ -610,8 +622,16 @@ private func finishedTest(
         #expect(noVerdict(given: dec("4.55"), increment: dec("0.1")) == .doseOverDocs)
     }
 
-    @Test("A suspend still above the start is Trio's forecast") func forecast() {
+    @Test("A suspend still above the start, or above Trio's low line, is Trio's forecast") func forecast() {
         #expect(noVerdict(suspend: 101) == .forecastSuspend)
+        // R2-1: under the start, over the line.
+        #expect(noVerdict(suspend: 73) == .forecastSuspend)
+        #expect(noVerdict(suspend: 90) == .forecastSuspend)
+        // Under the line but over the start.
+        #expect(noVerdict(suspend: 70, start: 65) == .forecastSuspend)
+        // The user's threshold over 72 is the line.
+        #expect(noVerdict(suspend: 80, lowThreshold: 80) == nil)
+        #expect(noVerdict(suspend: 81, lowThreshold: 80) == .forecastSuspend)
     }
 
     @Test("Without a reading, the units, the carbs or a carb ratio, the reason is the one missing") func missing() {
@@ -1121,6 +1141,7 @@ private func finishedTest(
         #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(bolus: dec("0.2"), iobAtBolus: 0)) == .noAmount)
         // The empty band: 4 g at 30 g/U with 0.12 U and an ISF of 20.
         var few = finishedTest(end: 100, bolus: dec("0.12"), iobAtBolus: 0, iobAtEnd: 0, carbs: 4)
+        few.tabletCarbs = 4
         few.carbRatio = 30
         few.isf = 20
         #expect(CarbRatioTestEvaluator.noVerdict(for: few) == .carbsTooFew)
@@ -1128,19 +1149,25 @@ private func finishedTest(
     }
 
     @Test("A low says it is too low, or why it can't, with no band") func low() {
-        // At 90, after 4.3 U, no more than 4.45.
-        let low = finishedTest(reason: .low, ranFor: 2 * hour, end: 90)
+        // At 70, at or under Trio's 72 mg/dL low line, after 4.3 U, no more than 4.45.
+        let low = finishedTest(reason: .low, ranFor: 2 * hour, end: 70)
         #expect(CarbRatioTestEvaluator.noVerdict(for: low) == nil)
         #expect(low.outcome == .tooLow)
         #expect(CarbRatioTestEvaluator.resultBand(of: low) == nil)
         #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 105)) == .forecastSuspend)
+        // R2-1: at 80, under the start but over the line Begin saved, Trio's forecast; under a higher line saved, a low.
+        #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 80)) == .forecastSuspend)
+        var higherLine = finishedTest(reason: .low, ranFor: 2 * hour, end: 80)
+        higherLine.lowThreshold = 85
+        #expect(CarbRatioTestEvaluator.noVerdict(for: higherLine) == nil)
+        #expect(CarbRatioTestEvaluator.evaluation(of: higherLine)?.outcome == .tooLow)
         // 4.4 + 0.3 = 4.7 U, over 4.45.
-        #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 90, bolus: dec("4.4"))) == .doseOverDocs)
-        #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 90, iobAtBolus: nil)) == .historyUnread)
-        #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 90, carbs: nil)) == .noCarbs)
+        #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 70, bolus: dec("4.4"))) == .doseOverDocs)
+        #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 70, iobAtBolus: nil)) == .historyUnread)
+        #expect(CarbRatioTestEvaluator.noVerdict(for: finishedTest(reason: .low, end: 70, carbs: nil)) == .noCarbs)
     }
 
-    @Test("The end glucose is from the bolus on; a low's only from readings after the meal") func endGlucose() {
+    @Test("The end glucose is from the bolus on; a low's only from readings after the later half of the meal") func endGlucose() {
         let bolus = at(hour)
         let readings = [-10.0, -5, 0, 5, 10, 15]
             .map { BasalTestReading(date: bolus.addingTimeInterval($0 * minute), glucose: 100 + Int($0)) }
@@ -1159,30 +1186,81 @@ private func finishedTest(
         #expect(end(2, .low) == nil)
         // A low at 16 minutes: the 3 readings after the bolus, 105, 110 and 115, average 110; not the one at it.
         #expect(end(16, .low) == 110)
-        // Carbs logged 6 minutes before the bolus make the meal earlier: 100 at the bolus counts too.
-        #expect(end(11, carbsAt: bolus.addingTimeInterval(-6 * minute), .low) == 105)
+        // R2-1: carbs logged 6 minutes before the bolus leave the bolus the later half, so only 105 and 110 are after
+        // it at 11 minutes: no mean of 3, where readings from the carbs on gave 105.
+        #expect(end(11, carbsAt: bolus.addingTimeInterval(-6 * minute), .low) == nil)
+        #expect(end(16, carbsAt: bolus.addingTimeInterval(-6 * minute), .low) == 110)
+        // Carbs logged 6 minutes after the bolus are the later half: only 110 and 115 are after them at 16 minutes.
+        #expect(end(16, carbsAt: bolus.addingTimeInterval(6 * minute), .low) == nil)
+        #expect(end(16, carbsAt: bolus.addingTimeInterval(4 * minute), .low) == 110)
         #expect(CarbRatioTestEvaluator.endGlucose(readings, bolusAt: nil, carbsAt: nil, end: bolus, reason: .low) == nil)
     }
 
     @Test("A low counts the carbs only when they were logged by Trio's suspend") func lowCarbs() {
         let suspend = at(2 * hour)
-        #expect(CarbRatioTestEvaluator.judgedCarbs(40, carbsAt: suspend, reason: .low, end: suspend) == 40)
+        #expect(CarbRatioTestEvaluator.judgedCarbs(40, planned: 40, carbsAt: suspend, reason: .low, end: suspend) == 40)
         #expect(
-            CarbRatioTestEvaluator.judgedCarbs(40, carbsAt: suspend.addingTimeInterval(minute), reason: .low, end: suspend)
+            CarbRatioTestEvaluator.judgedCarbs(
+                40,
+                planned: 40,
+                carbsAt: suspend.addingTimeInterval(minute),
+                reason: .low,
+                end: suspend
+            )
                 == nil
         )
-        #expect(CarbRatioTestEvaluator.judgedCarbs(40, carbsAt: nil, reason: .low, end: suspend) == nil)
+        #expect(CarbRatioTestEvaluator.judgedCarbs(40, planned: 40, carbsAt: nil, reason: .low, end: suspend) == nil)
         // Any other ending judges the carbs logged.
         #expect(
-            CarbRatioTestEvaluator.judgedCarbs(40, carbsAt: suspend.addingTimeInterval(minute), reason: .completed, end: suspend)
-                == 40
+            CarbRatioTestEvaluator.judgedCarbs(
+                40,
+                planned: 40,
+                carbsAt: suspend.addingTimeInterval(minute),
+                reason: .completed,
+                end: suspend
+            ) == 40
         )
         // So a low before them gives no verdict, and says why.
-        var early = finishedTest(reason: .low, ranFor: 5 * minute, end: 90)
+        var early = finishedTest(reason: .low, ranFor: 5 * minute, end: 70)
         early.carbsAt = early.endedAt?.addingTimeInterval(2 * minute)
         #expect(CarbRatioTestEvaluator.noVerdict(for: early) == .noCarbs)
         #expect(CarbRatioTestEvaluator.noVerdictText(.noCarbs, test: early) == CarbRatioTestEvaluator.lowBeforeCarbsNote)
         #expect(CarbRatioTestEvaluator.evaluation(of: early)?.outcome == .inconclusive)
+    }
+
+    @Test("Grams logged within a gram of the tablets' are judged as the tablets' planned grams") func judgedOnPlanned() {
+        // R2-3: 1 TruePlus tablet (3.75 g) logged as 3 g, which the 1 g rule lets through. CR 10 and ISF 50 right:
+        // 0.35 U given, 0.049 U left at 4 hours, so 0.301 U acted; glucose 100 to 104.
+        #expect(!CarbRatioTestEvaluator.carbsDiffer(logged: 3, planned: dec("3.75")))
+        #expect(
+            CarbRatioTestEvaluator.judgedCarbs(3, planned: dec("3.75"), carbsAt: at(hour), reason: .completed, end: at(5 * hour))
+                == dec("3.75")
+        )
+        var test = makeTest(phase: .finished, tabletCarbs: dec("3.75"))
+        test.bolusAt = at(hour + 10 * minute)
+        test.bolusUnits = dec("0.35")
+        test.iobAtBolus = 0
+        test.iobAtEnd = dec("0.049")
+        test.startGlucose = 100
+        test.endGlucose = 104
+        test.carbs = 3
+        test.carbsAt = test.bolusAt
+        test.endedAt = test.bolusAt?.addingTimeInterval(4 * hour)
+        test.endReason = .completed
+        // On the 3 g logged: 3 ÷ 0.381 = 7.9 g/U, "too high". On the 3.75 g eaten: 9.8 g/U, accurate.
+        #expect(CarbRatioTestEvaluator.judgedCarbs(of: test) == dec("3.75"))
+        #expect(CarbRatioTestEvaluator.evaluation(of: test)?.outcome == .accurate)
+        // The chart's band too.
+        test.outcome = .accurate
+        let band = CarbRatioTestEvaluator.accurateEnds(
+            startGlucose: 100,
+            carbs: dec("3.75"),
+            units: dec("0.301"),
+            carbRatio: 10,
+            isf: 50
+        )
+        #expect(band != nil)
+        #expect(CarbRatioTestEvaluator.resultBand(of: test) == band)
     }
 }
 
@@ -1364,7 +1442,7 @@ private func finishedTest(
         #expect(CarbRatioTestEvaluator.doseDeadEnd(of: makeTest(phase: .settling, isf: 0), inputs) == nil)
     }
 
-    @Test("A bolus with no carbs ends the test 15 minutes after it, with the note to log them") func bolusWithoutCarbs() {
+    @Test("A bolus with no carbs ends the test 15 minutes after it, in words that don't ask for carbs") func bolusWithoutCarbs() {
         let bolus = at(hour + 10 * minute)
         let deadline = bolus.addingTimeInterval(15 * minute)
         func ending(at now: Date) -> CarbRatioTestEvaluator.Ending? {
@@ -1378,10 +1456,13 @@ private func finishedTest(
         )
         #expect(ending(at: deadline) == ended)
         #expect(ending(at: deadline.addingTimeInterval(hour)) == ended)
+        // R2-6: whether to log them is the finish's to add, from a read of the carbs as the test ends.
         #expect(
             CarbRatioTestEvaluator.bolusWithoutCarbsNote
-                ==
-                "The bolus came, but the tablets' carbs weren't logged within 15 minutes. If you ate the tablets, log their carbs now so Trio counts them."
+                == "The bolus came, but the tablets' carbs weren't logged within 15 minutes."
+        )
+        #expect(
+            CarbRatioTestEvaluator.logCarbsSentence == "If you ate the tablets, log their carbs so Trio counts them."
         )
     }
 
@@ -1410,7 +1491,30 @@ private func finishedTest(
     }
 
     @Test(
-        "Both halves within 15 minutes of each other, either way round, pair; further apart, the first one's end"
+        "Carbs with no bolus say the usual mode covers them only for Closed Loop: the others don't bolus for carbs"
+    ) func carbsWithoutBolusModes() {
+        // A2: Open Loop and Low Glucose Suspend never add insulin.
+        let other =
+            "The tablets' carbs were logged, but no bolus came within 15 minutes. Your usual dosing mode is back, and it doesn't bolus for carbs: cover them as you usually would."
+        for mode in [DosingMode.open, .lowGlucoseSuspend] {
+            #expect(
+                CarbRatioTestEvaluator
+                    .modeWorded(CarbRatioTestEvaluator.carbsWithoutBolusNote, modeBack: true, usualMode: mode) == other
+            )
+            #expect(CarbRatioTestEvaluator.carbsWithoutBolusNote(modeBack: true, usualMode: mode) == other)
+        }
+        #expect(
+            CarbRatioTestEvaluator.modeWorded(CarbRatioTestEvaluator.carbsWithoutBolusNote, modeBack: true, usualMode: .closed)
+                == CarbRatioTestEvaluator.carbsWithoutBolusNote
+        )
+        #expect(
+            CarbRatioTestEvaluator.modeWorded(CarbRatioTestEvaluator.carbsWithoutBolusNote, modeBack: false, usualMode: .open)
+                == "The tablets' carbs were logged, but no bolus came within 15 minutes."
+        )
+    }
+
+    @Test(
+        "Both halves within 15 minutes of each other, either way round, pair; further apart, both are logged and too far apart"
     ) func bothHalves() {
         let first = at(hour + 10 * minute)
         let late = first.addingTimeInterval(16 * minute)
@@ -1420,42 +1524,101 @@ private func finishedTest(
             #expect(CarbRatioTestEvaluator.mealPairingEnd(carbsAt: first, bolusAt: second, now: farFuture) == nil)
             #expect(CarbRatioTestEvaluator.mealPairingEnd(carbsAt: second, bolusAt: first, now: farFuture) == nil)
         }
-        // The bolus 16 minutes after the carbs: the carbs went uncovered.
-        #expect(
-            CarbRatioTestEvaluator.mealPairingEnd(carbsAt: first, bolusAt: late, now: farFuture)
-                == CarbRatioTestEvaluator.Ending(
-                    reason: .interrupted,
-                    at: first.addingTimeInterval(15 * minute),
-                    note: CarbRatioTestEvaluator.carbsWithoutBolusNote
-                )
+        // A1: the bolus 16 minutes after the carbs, or the carbs 16 minutes after the bolus: both are logged, so the
+        // ending says they came too far apart, and never to log the carbs.
+        let apart = CarbRatioTestEvaluator.Ending(
+            reason: .interrupted,
+            at: first.addingTimeInterval(15 * minute),
+            note: CarbRatioTestEvaluator.mealApartNote
         )
-        // The carbs 16 minutes after the bolus: the bolus went alone.
+        #expect(CarbRatioTestEvaluator.mealPairingEnd(carbsAt: first, bolusAt: late, now: farFuture) == apart)
+        #expect(CarbRatioTestEvaluator.mealPairingEnd(carbsAt: late, bolusAt: first, now: farFuture) == apart)
         #expect(
-            CarbRatioTestEvaluator.mealPairingEnd(carbsAt: late, bolusAt: first, now: farFuture)?.note
-                == CarbRatioTestEvaluator.bolusWithoutCarbsNote
+            CarbRatioTestEvaluator.mealApartNote
+                ==
+                "The tablets' carbs and the bolus came more than 15 minutes apart, so the test can't judge them. Your usual dosing mode is back."
         )
         #expect(CarbRatioTestEvaluator.mealPairingEnd(carbsAt: nil, bolusAt: nil, now: farFuture) == nil)
     }
 
-    @Test("The service's record of a meal not paired ends the test in the words of the half it saw") func serviceMealEnd() {
+    @Test(
+        "Carbs logged past 15 minutes with the boluses unreadable end the test then, in words for that"
+    ) func bolusesUnread() {
+        // M1: no bolus can be seen, so none can be paired with the carbs.
+        let carbs = at(hour + 10 * minute)
+        let deadline = carbs.addingTimeInterval(15 * minute)
+        // Dated now: a bolus may have come, so when the test should have ended can't be told.
+        #expect(
+            CarbRatioTestEvaluator.bolusesUnreadEnd(carbsAt: carbs, bolusAt: nil, bolusesRead: false, now: deadline)
+                == CarbRatioTestEvaluator.Ending(
+                    reason: .interrupted,
+                    at: nil,
+                    note: CarbRatioTestEvaluator.bolusesUnreadNote
+                )
+        )
+        #expect(
+            CarbRatioTestEvaluator.bolusesUnreadEnd(
+                carbsAt: carbs,
+                bolusAt: nil,
+                bolusesRead: false,
+                now: deadline.addingTimeInterval(-1)
+            ) == nil
+        )
+        // Read, a bolus already in, or no carbs: not this ending.
+        #expect(CarbRatioTestEvaluator.bolusesUnreadEnd(carbsAt: carbs, bolusAt: nil, bolusesRead: true, now: deadline) == nil)
+        #expect(CarbRatioTestEvaluator.bolusesUnreadEnd(carbsAt: carbs, bolusAt: carbs, bolusesRead: false, now: deadline) == nil)
+        #expect(CarbRatioTestEvaluator.bolusesUnreadEnd(carbsAt: nil, bolusAt: nil, bolusesRead: false, now: deadline) == nil)
+        #expect(
+            CarbRatioTestEvaluator.bolusesUnreadNote
+                ==
+                "Trio couldn't read your boluses to pair one with the tablets' carbs within 15 minutes, so the test can't be judged. If you didn't give the bolus, cover the carbs as you usually would."
+        )
+    }
+
+    @Test("The service's record of a meal not paired ends the test in the words of what it saw") func serviceMealEnd() {
         var test = makeTest()
         test.sessionID = UUID()
         let at15 = at(hour + 30 * minute)
         let record = SettingsTestEnd(sessionID: test.sessionID!, cause: .mealUnpaired, date: at15)
         #expect(
-            CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: record)
+            CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: record, bolusesRead: true)
                 == CarbRatioTestEvaluator.Ending(reason: .interrupted, at: at15, note: CarbRatioTestEvaluator.mealUnpairedNote)
         )
         test.carbsAt = at(hour + 15 * minute)
         #expect(
-            CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: record)?.note == CarbRatioTestEvaluator
-                .carbsWithoutBolusNote
+            CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: record, bolusesRead: true)?.note
+                == CarbRatioTestEvaluator.carbsWithoutBolusNote
+        )
+        // M1: with the boluses unread, no bolus can be said not to have come.
+        #expect(
+            CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: record, bolusesRead: false)?.note
+                == CarbRatioTestEvaluator.bolusesUnreadNote
+        )
+        // A1: both halves in, one late.
+        var both = test
+        both.bolusAt = at(hour + 31 * minute)
+        #expect(
+            CarbRatioTestEvaluator.serviceMealEnd(of: both, serviceEnd: record, bolusesRead: true)?.note
+                == CarbRatioTestEvaluator.mealApartNote
+        )
+        // In time: the service's ending came from boluses it couldn't read, so no half is called late or missing.
+        var paired = both
+        paired.bolusAt = at(hour + 20 * minute)
+        #expect(
+            CarbRatioTestEvaluator.serviceMealEnd(of: paired, serviceEnd: record, bolusesRead: true)?.note
+                == CarbRatioTestEvaluator.historyUnreadNote
+        )
+        var bolusOnly = both
+        bolusOnly.carbsAt = nil
+        #expect(
+            CarbRatioTestEvaluator.serviceMealEnd(of: bolusOnly, serviceEnd: record, bolusesRead: true)?.note
+                == CarbRatioTestEvaluator.bolusWithoutCarbsNote
         )
         // Another session's, or another cause, isn't one.
         let other = SettingsTestEnd(sessionID: UUID(), cause: .mealUnpaired, date: at15)
-        #expect(CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: other) == nil)
+        #expect(CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: other, bolusesRead: true) == nil)
         let noBolus = SettingsTestEnd(sessionID: test.sessionID!, cause: .noBolus, date: at15)
-        #expect(CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: noBolus) == nil)
+        #expect(CarbRatioTestEvaluator.serviceMealEnd(of: test, serviceEnd: noBolus, bolusesRead: true) == nil)
         // And the ISF test's rules never read it.
         #expect(
             CarbRatioTestEvaluator
@@ -1606,17 +1769,23 @@ private func finishedTest(
         return test
     }
 
-    @Test("A bolus outside the range, counted with insulin on board, is off the formula") func offFormula() {
+    @Test("A bolus outside the range widened by a pump increment is off the formula") func offFormula() {
         #expect(CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: 4, iob: 0)) == nil)
         // Trio's 80% suggestion: 3.2 U.
         #expect(
             CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("3.2"), iob: 0))
-                == .bolusOffFormula(given: dec("3.2"), formula: 4)
+                == .bolusOffFormula(given: dec("3.2"), formula: 4, counted: false)
         )
-        // 4.2 U plus 0.3 U on board: 4.5 U given, over 4.45.
+        // 3.60 to 4.45 widened by the 0.05 U increment: 3.55 to 4.50.
+        #expect(CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("3.55"), iob: 0)) == nil)
+        #expect(CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("4.5"), iob: 0)) == nil)
         #expect(
-            CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("4.2"), iob: dec("0.3")))
-                == .bolusOffFormula(given: dec("4.5"), formula: 4)
+            CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("3.5"), iob: 0))
+                == .bolusOffFormula(given: dec("3.5"), formula: 4, counted: false)
+        )
+        #expect(
+            CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("4.55"), iob: 0))
+                == .bolusOffFormula(given: dec("4.55"), formula: 4, counted: false)
         )
         // Insulin on board unread: the bolus alone, unless the test counts it.
         #expect(CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("3.2"), iob: nil)) != nil)
@@ -1626,25 +1795,61 @@ private func finishedTest(
         // No amount, nothing to judge.
         #expect(CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: nil, iob: 0)) == nil)
         #expect(
-            CarbRatioTestBolusCondition.bolusOffFormula(given: dec("3.2"), formula: 4).note
+            CarbRatioTestBolusCondition.bolusOffFormula(given: dec("3.2"), formula: 4, counted: false).note
                 ==
                 "The bolus was 3.20\u{00A0}U, more than a 1 g/U step from the formula's 4.00\u{00A0}U, so the result would rest on your ISF instead of your carb ratio. Your usual dosing mode is back."
         )
         // Without the mode sentence when the usual mode isn't back.
         #expect(
             CarbRatioTestEvaluator.modeWorded(
-                CarbRatioTestBolusCondition.bolusOffFormula(given: dec("3.2"), formula: 4).note,
+                CarbRatioTestBolusCondition.bolusOffFormula(given: dec("3.2"), formula: 4, counted: false).note,
                 modeBack: false
             )?.hasSuffix("instead of your carb ratio.") == true
         )
     }
 
-    @Test("Trio's suggestion is in range or not, with insulin on board counted") func suggestion() {
+    @Test(
+        "Waiting for insulin on board, or with no choice, judges the bolus alone; Count It judges it with insulin on board"
+    ) func offFormulaUnits() {
+        // R2-4: 40 g at 12 g/U, 3.33 U; range 3.05 to 3.65. The dose shown with 0.26 U under zero, given as 3.30 U: the
+        // bolus alone is in range, where with insulin on board it came to 3.04 U.
+        func atTwelve(handling: ISFTestIOBHandling?) -> CarbRatioTestState {
+            var test = makeTest(phase: .waiting, carbRatio: 12, handling: handling)
+            test.bolusAt = at(hour + 10 * minute)
+            test.bolusUnits = dec("3.3")
+            test.iobAtBolus = dec("-0.26")
+            return test
+        }
+        #expect(CarbRatioTestEvaluator.bolusOffFormula(of: atTwelve(handling: nil)) == nil)
+        #expect(CarbRatioTestEvaluator.bolusOffFormula(of: atTwelve(handling: .wait)) == nil)
+        // Count It: 3.04 U is under 3.05 but within the increment, 3.00; 3.3 − 0.31 = 2.99 U isn't.
+        #expect(CarbRatioTestEvaluator.bolusOffFormula(of: atTwelve(handling: .count)) == nil)
+        var counted = atTwelve(handling: .count)
+        counted.iobAtBolus = dec("-0.31")
+        #expect(
+            CarbRatioTestEvaluator.bolusOffFormula(of: counted)
+                == .bolusOffFormula(given: dec("2.99"), formula: dec("3.33"), counted: true)
+        )
+        // A Wait for It bolus of 4.2 U with 0.35 U on board is judged at 4.2 U; with Count It, at 4.55 U, off.
+        #expect(CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("4.2"), iob: dec("0.35"), handling: .wait)) == nil)
+        let countIt = CarbRatioTestEvaluator.bolusOffFormula(of: waiting(bolus: dec("4.2"), iob: dec("0.35"), handling: .count))
+        #expect(countIt == .bolusOffFormula(given: dec("4.55"), formula: 4, counted: true))
+        #expect(
+            countIt?.note
+                ==
+                "The bolus and the insulin on board came to 4.55\u{00A0}U, more than a 1 g/U step from the formula's 4.00\u{00A0}U, so the result would rest on your ISF instead of your carb ratio. Your usual dosing mode is back."
+        )
+    }
+
+    @Test("Trio's suggestion is in range by a pump increment or not, with insulin on board counted") func suggestion() {
         // 80% of 4 U.
         #expect(!CarbRatioTestEvaluator.suggestionInRange(dec("3.2"), carbs: 40, carbRatio: 10, increment: dec("0.05")))
         // 90%, and 110%.
         #expect(CarbRatioTestEvaluator.suggestionInRange(dec("3.6"), carbs: 40, carbRatio: 10, increment: dec("0.05")))
         #expect(CarbRatioTestEvaluator.suggestionInRange(dec("4.4"), carbs: 40, carbRatio: 10, increment: dec("0.05")))
+        // R2-4: inside the range the bolus may take (3.55 to 4.50), but not by an increment: "Enter 4.00 U".
+        #expect(!CarbRatioTestEvaluator.suggestionInRange(dec("3.55"), carbs: 40, carbRatio: 10, increment: dec("0.05")))
+        #expect(!CarbRatioTestEvaluator.suggestionInRange(dec("4.5"), carbs: 40, carbRatio: 10, increment: dec("0.05")))
         // 3.2 U with 0.5 U on board gives 3.7.
         #expect(
             CarbRatioTestEvaluator.suggestionInRange(

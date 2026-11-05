@@ -677,7 +677,9 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// the dose deadline, `ISFTestEvaluator.testBolus`), not coming within the pairing time of each other
     /// (`CarbRatioTestEvaluator.mealPairingEnd`): `mealUnpaired`, dated at the end of the pairing time, so a runner that
     /// hangs can't hold Basal Testing on with carbs it gives no insulin for, or a bolus Trio's forecast sees alone. With
-    /// the boluses unread, the pairing waits for a check that reads them. Nil to keep going.
+    /// the boluses unread, the pairing waits for a check that reads them, except for the tablets' carbs logged past the
+    /// pairing time: no bolus can be seen for them, so it ends the same way (`bolusesUnreadEnd`), dated `end`, since
+    /// whether a bolus came, and so when the test should have ended, can't be told. Nil to keep going.
     private func carbRatioMealEnding(
         of session: SettingsTestSession,
         entries: [SettingsTestCarbEntry],
@@ -693,18 +695,26 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
             return SettingsTestEnd(sessionID: session.id, cause: .carbsLogged, date: end)
         }
         guard let windowStart else { return nil }
-        let boluses: [ISFTestBolus]
-        do {
-            boluses = try await events.allBoluses(from: windowStart, to: end)
-        } catch {
-            warning(.settings, "SettingsTest: couldn't read boluses to pair the carb ratio test's meal", error: error)
-            return nil
-        }
         // The pick goes by date alone, so entries read without grams stand in with none.
         let carbsAt = CarbRatioTestEvaluator.mealCarbs(
             entries.map { CarbRatioTestCarbs(id: $0.id, date: $0.date, grams: 0) },
             since: windowStart
         )?.date
+        let boluses: [ISFTestBolus]
+        do {
+            boluses = try await events.allBoluses(from: windowStart, to: end)
+        } catch {
+            warning(.settings, "SettingsTest: couldn't read boluses to pair the carb ratio test's meal", error: error)
+            // The tablets' carbs logged past the pairing time with no bolus that can be seen: ended, the safe way. A bolus
+            // may have come, so it isn't dated back to the end of the pairing time.
+            guard CarbRatioTestEvaluator.bolusesUnreadEnd(
+                carbsAt: carbsAt,
+                bolusAt: nil,
+                bolusesRead: false,
+                now: end
+            ) != nil else { return nil }
+            return SettingsTestEnd(sessionID: session.id, cause: .mealUnpaired, date: end)
+        }
         let deadline = windowStart.addingTimeInterval(ISFTest.Config.doseAllowance)
         let bolusAt = ISFTestEvaluator.testBolus(boluses, since: windowStart, deadline: deadline)?.date
         guard let unpaired = CarbRatioTestEvaluator.mealPairingEnd(carbsAt: carbsAt, bolusAt: bolusAt, now: end),

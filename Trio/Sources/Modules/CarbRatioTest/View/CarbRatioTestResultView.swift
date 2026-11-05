@@ -74,7 +74,7 @@ extension CarbRatioTest {
                 return suspended
             }
             guard outcome.isConclusive, let start = test.startGlucose, let end = test.endGlucose,
-                  let given = state.unitsGivenText, let carbs = test.carbs
+                  let given = state.unitsGivenText, let carbs = CarbRatioTestEvaluator.judgedCarbs(of: test)
             else {
                 return String(localized: "Ended after \(CarbRatioTestEvaluator.elapsedText(for: test))")
             }
@@ -145,7 +145,8 @@ extension CarbRatioTest {
         /// doesn't aim there, so where an accurate carb ratio would have taken glucose is said beside them.
         private func expectedEndNote(for test: CarbRatioTestState) -> String? {
             guard let expected = state.expectedEndAwayFromStart,
-                  let judged = CarbRatioTestEvaluator.judgedUnits(of: test), let carbs = test.carbs
+                  let judged = CarbRatioTestEvaluator.judgedUnits(of: test),
+                  let carbs = CarbRatioTestEvaluator.judgedCarbs(of: test)
             else { return nil }
             let end = SettingsTestFormat.keepTogether(state.formatTarget(expected), unit: state.glucoseUnits.rawValue)
             let units = SettingsTestFormat.keepTogether(state.formatUnits(judged), unit: "U")
@@ -179,7 +180,8 @@ extension CarbRatioTest {
                  .invalid:
                 let text = CarbRatioTestEvaluator.noVerdictText(noVerdict, test: test)
                 // With Basal Testing on, left on or another test's, it doesn't say the usual dosing is back.
-                return CarbRatioTestEvaluator.modeWorded(text, modeBack: state.usualModeIsOn) ?? text
+                return CarbRatioTestEvaluator
+                    .modeWorded(text, modeBack: state.usualModeIsOn, usualMode: test.previousMode) ?? text
             }
         }
 
@@ -300,7 +302,7 @@ extension CarbRatioTest {
                   let bolus = test.bolusUnits,
                   let left = test.iobAtEnd,
                   let units = CarbRatioTestEvaluator.judgedUnits(of: test),
-                  let carbs = test.carbs,
+                  let carbs = CarbRatioTestEvaluator.judgedCarbs(of: test),
                   test.isf > 0
             else { return nil }
             return Working(
@@ -429,9 +431,16 @@ extension CarbRatioTest {
             let logged: String
             if let carbs = test.carbs {
                 let loggedGrams = SettingsTestFormat.keepTogether(state.formatGrams(carbs), unit: "g")
-                logged = carbs == test.tabletCarbs
-                    ? String(localized: "\(tablets), logged as \(loggedGrams) with the bolus.")
-                    : String(localized: "\(tablets). \(loggedGrams) logged with the bolus, which the result uses.")
+                if carbs == test.tabletCarbs {
+                    logged = String(localized: "\(tablets), logged as \(loggedGrams) with the bolus.")
+                } else if state.evaluation != nil {
+                    // Within a gram, the entry field's rounding: the result is judged on what was eaten.
+                    logged = String(
+                        localized: "\(tablets). \(loggedGrams) logged with the bolus; the result uses the tablets' \(grams)."
+                    )
+                } else {
+                    logged = String(localized: "\(tablets). \(loggedGrams) logged with the bolus.")
+                }
             } else {
                 logged = String(localized: "\(tablets). Their carbs weren't logged with the bolus.")
             }

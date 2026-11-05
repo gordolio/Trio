@@ -128,7 +128,7 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
     }
 
     /// Waiting out the chosen length from a 4 U bolus `bolusAgo` ago at 110 mg/dL, given 10 minutes after settling, with
-    /// no insulin on board at it and the tablets' 40 g logged with it (none when `carbs` is nil).
+    /// no insulin on board at it and the tablets' 40 g logged with it, the meal judged then (none when `carbs` is nil).
     private func waitingTest(
         bolusAgo: TimeInterval,
         carbs: Decimal? = 40,
@@ -145,6 +145,7 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
             state.carbs = carbs
             state.carbsAt = bolusAt
             state.carbsID = FakeSettingsTestData.carbEntryID(bolusAt)
+            state.mealJudgedAt = bolusAt
         }
         return state
     }
@@ -208,7 +209,7 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         count: Int = 10,
         length: TimeInterval = 3 * 3600,
         iob: Decimal? = 0,
-        choice: ISFTestIOBHandling = .wait
+        choice: ISFTestIOBHandling? = .wait
     ) -> CarbRatioTestBegin {
         CarbRatioTestBegin(brand: .dex4, count: count, length: length, glucose: 110, iob: iob, iobChoice: choice)
     }
@@ -301,6 +302,29 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(await rig.runner.begin(begin(iob: dec("0.5"), choice: .count)) == nil)
         #expect(rig.runner.state.test?.iobHandling == .count)
         await rig.runner.discard()
+    }
+
+    @Test(
+        "Begin saves no insulin on board handling when the Ready page showed no choice, whatever it finds"
+    ) func beginWithoutTheChoice() async {
+        let rig = makeRig(test: nil, session: nil, mode: .closed, data: crData())
+        defer { cleanUp(rig.storage) }
+        // L2: 0.5 U, over the line, where the screen offered no choice (a pick kept from an earlier pass isn't sent).
+        #expect(await rig.runner.begin(begin(iob: dec("0.5"), choice: nil)) == nil)
+        #expect(rig.runner.state.test?.iobHandling == nil)
+        await rig.runner.discard()
+    }
+
+    @Test("Begin keeps Trio's low threshold in Basal Testing, at least 72 mg/dL") func beginKeepsTheLowLine() async {
+        for (user, kept) in [(Decimal(65), Decimal(72)), (Decimal(80), Decimal(80))] {
+            let settings = FakeSettingsManager()
+            settings.preferences.threshold_setting = user
+            let rig = makeRig(test: nil, session: nil, mode: .closed, data: crData(), settings: settings)
+            #expect(await rig.runner.begin(begin()) == nil)
+            #expect(rig.runner.state.test?.lowThreshold == kept)
+            await rig.runner.discard()
+            cleanUp(rig.storage)
+        }
     }
 
     /// What Begin refuses, each with the one thing that makes it.
@@ -652,6 +676,8 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(waiting?.carbsAt == carbsAt)
         #expect(waiting?.carbsID == FakeSettingsTestData.carbEntryID(carbsAt))
         #expect(waiting?.pendingEnd == nil)
+        // R2-5: judged and held, so a verdict may rest on it.
+        #expect(waiting?.mealJudgedAt != nil)
         #expect(waiting?.plannedEnd == bolusAt.addingTimeInterval(4 * hour))
         // Narrowed to the entry in force at the bolus.
         #expect(waiting?.crEntries == allDay(10))
@@ -728,7 +754,7 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
             data.logCarbs(40, at: bolusAt)
             let rig = makeRig(test: test, session: session(of: test), data: data)
             await rig.runner.check()
-            let note = CarbRatioTestBolusCondition.bolusOffFormula(given: dec("3.2"), formula: 4).note
+            let note = CarbRatioTestBolusCondition.bolusOffFormula(given: dec("3.2"), formula: 4, counted: false).note
             #expect(rig.runner.state.test?.phase == .finished)
             #expect(rig.runner.state.test?.interference == note)
             #expect(rig.settings.settings.dosingMode == .closed)
@@ -747,7 +773,10 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         await rig.runner.check()
         #expect(rig.runner.state.test?.phase == .finished)
         #expect(rig.runner.state.test?.bolusUnits == 3)
-        #expect(rig.runner.state.test?.interference == CarbRatioTestBolusCondition.bolusOffFormula(given: 3, formula: 4).note)
+        #expect(
+            rig.runner.state.test?.interference == CarbRatioTestBolusCondition
+                .bolusOffFormula(given: 3, formula: 4, counted: false).note
+        )
     }
 
     @Test("End Test on a bolus cut short since the last check gives the off-the-formula note") func endEarlyBolusCutShort() async {
@@ -761,7 +790,10 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         await rig.runner.endEarly()
         #expect(rig.runner.state.test?.phase == .finished)
         #expect(rig.runner.state.test?.endReason == .interrupted)
-        #expect(rig.runner.state.test?.interference == CarbRatioTestBolusCondition.bolusOffFormula(given: 3, formula: 4).note)
+        #expect(
+            rig.runner.state.test?.interference == CarbRatioTestBolusCondition
+                .bolusOffFormula(given: 3, formula: 4, counted: false).note
+        )
     }
 
     @Test(
@@ -829,9 +861,11 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(abs(try #require(finished.endedAt).timeIntervalSince(deadline)) < 0.01)
         #expect(rig.settings.settings.dosingMode == .closed)
         #expect(rig.service.history(for: .carbRatio).isEmpty)
-        #expect(
-            rig.notifier.posted == [.ended(.carbRatio, sentence: CarbRatioTestEvaluator.bolusWithoutCarbsNote, modeBack: true)]
-        )
+        // R2-6: none logged as it ended, so its words say to log them if the tablets were eaten.
+        #expect(finished.carbsUnloggedAtEnd == true)
+        let sentence = CarbRatioTestEvaluator.bolusWithoutCarbsNote + " " + CarbRatioTestEvaluator.logCarbsSentence
+        #expect(CarbRatioTestEvaluator.noVerdictText(CarbRatioTestEvaluator.noVerdict(for: finished), test: finished) == sentence)
+        #expect(rig.notifier.posted == [.ended(.carbRatio, sentence: sentence, modeBack: true)])
     }
 
     @Test("Short of 15 minutes after the bolus, no carbs yet keeps the test running") func noCarbsYetKeepsRunning() async {
@@ -983,8 +1017,8 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
     }
 
     @Test(
-        "A low after the bolus at or below the start glucose says the ratio is too low, and above it says nothing",
-        arguments: [100, 120]
+        "A low after the bolus at or below the start glucose and Trio's low line says the ratio is too low; above either, nothing",
+        arguments: [70, 90, 120]
     ) func lowAfterTheBolus(_ atSuspend: Int) async throws {
         let test = waitingTest(bolusAgo: hour)
         let bolusAt = test.bolusAt!
@@ -1003,7 +1037,7 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(finished.endReason == .low)
         #expect(finished.endGlucose == atSuspend)
         #expect(rig.settings.settings.dosingMode == .closed)
-        if atSuspend <= 110 {
+        if atSuspend <= 72 {
             // 4 U given is no more than 40 ÷ 9 = 4.44 U, rounded up to 4.45.
             #expect(finished.outcome == .tooLow)
             let record = try #require(rig.service.history(for: .carbRatio).first)
@@ -1415,5 +1449,348 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(harness.service.activeSession?.expiresAt == late.addingTimeInterval(90 * minute + 3 * hour + 30 * minute))
         #expect(harness.service.savedSession()?.waitLength == 3 * hour)
         harness.service.end(kind: .carbRatio)
+    }
+
+    // MARK: - Fix wave 2
+
+    @Test(
+        "Carbs logged after the 15 minutes aren't called missing: the ending says the halves came too far apart"
+    ) func lateCarbsNote() async throws {
+        // A1: the bolus 17 minutes ago, the carbs logged 16 minutes after it, no check in between.
+        let test = dosingTest(settledAgo: 40 * minute)
+        let data = crData()
+        let bolusAt = Date().addingTimeInterval(-17 * minute)
+        data.boluses = [ISFTestBolus(date: bolusAt, units: 4)]
+        data.readings = readings(110, before: bolusAt)
+        data.arrows = [ISFTestArrowReading(date: bolusAt.addingTimeInterval(-minute), direction: .flat)]
+        data.determinations = [ISFTestDetermination(date: bolusAt.addingTimeInterval(-3 * minute), iob: 0, cob: 0)]
+        data.logCarbs(40, at: bolusAt.addingTimeInterval(16 * minute))
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        // The service ends it first (both halves seen, one late), then the runner finishes it.
+        await rig.service.checkSessionAndRunners()
+        let finished = try #require(rig.runner.state.test)
+        #expect(finished.phase == .finished)
+        #expect(finished.carbs == 40)
+        #expect(finished.interference == CarbRatioTestEvaluator.mealApartNote)
+        #expect(finished.carbsUnloggedAtEnd == nil)
+        #expect(rig.notifier.posted.last?.body == CarbRatioTestEvaluator.mealApartNote)
+        #expect(rig.notifier.posted.last?.body.contains("log their carbs") == false)
+    }
+
+    @Test("A bolus 16 minutes after the carbs isn't called a bolus that never came") func lateBolusNote() async throws {
+        // R2-2: carbs first, the bolus a minute past their 15 minutes, no check in between. Ended by the service's
+        // watchdog first, and by the runner itself with its session lost (Basal Testing on, so no watchdog ends it).
+        for watched in [true, false] {
+            let test = dosingTest(settledAgo: 40 * minute)
+            let data = doseStepData()
+            let carbsAt = Date().addingTimeInterval(-20 * minute)
+            data.logCarbs(40, at: carbsAt)
+            data.boluses = [ISFTestBolus(date: carbsAt.addingTimeInterval(16 * minute), units: 4)]
+            let rig = makeRig(test: test, session: watched ? session(of: test) : nil, data: data)
+
+            await rig.runner.check()
+            let finished = try #require(rig.runner.state.test)
+            #expect(finished.phase == .finished)
+            #expect(finished.interference == CarbRatioTestEvaluator.mealApartNote)
+            #expect(abs(try #require(finished.endedAt).timeIntervalSince(carbsAt.addingTimeInterval(15 * minute))) < 0.01)
+            #expect(rig.settings.settings.dosingMode == .closed)
+            cleanUp(rig.storage)
+        }
+    }
+
+    @Test(
+        "Carbs with no bolus, begun from Open Loop: the note says to cover them as usual, not that the mode does"
+    ) func openLoopCarbsWithoutBolus() async throws {
+        // A2: Open Loop never adds insulin.
+        var test = dosingTest(settledAgo: 30 * minute)
+        test.previousMode = .open
+        let data = doseStepData()
+        data.logCarbs(40, at: Date().addingTimeInterval(-16 * minute))
+        let openSession = SettingsTestSession(
+            id: test.sessionID ?? UUID(),
+            kind: .carbRatio,
+            startedAt: test.startedAt,
+            expiresAt: test.startedAt.addingTimeInterval(7 * hour),
+            restore: [.dosingMode(testMode: .basalTesting, previous: .open)],
+            bolusWindowStart: test.settledAt,
+            settles: true,
+            carbsAtBegin: test.carbsAtBegin,
+            waitLength: test.length
+        )
+        let rig = makeRig(test: test, session: openSession, data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.settings.settings.dosingMode == .open)
+        let finished = try #require(rig.runner.state.test)
+        let note = CarbRatioTestEvaluator.carbsWithoutBolusNote(modeBack: true, usualMode: .open)
+        #expect(finished.interference == note)
+        #expect(finished.interference?.contains("to cover them.") == false)
+        #expect(rig.notifier.posted.last?.body == note)
+    }
+
+    @Test(
+        "With Count It, the bolus is held to the formula once insulin on board at it is read, with the bolus and it counted"
+    ) func countItRangeOnceIOBIsRead() async throws {
+        // A3, R2-4: 4.20 U given with insulin on board at the bolus unread so far; Trio's loop before it had 0.35 U.
+        var test = waitingTest(bolusAgo: 20 * minute)
+        test.iobHandling = .count
+        test.bolusUnits = dec("4.2")
+        test.iobAtBolus = nil
+        let bolusAt = try #require(test.bolusAt)
+        let data = crData()
+        data.boluses = [ISFTestBolus(date: bolusAt, units: dec("4.2"))]
+        data.logCarbs(40, at: bolusAt)
+        data.readings = readings(110, before: Date())
+        data.determinations = [ISFTestDetermination(date: bolusAt.addingTimeInterval(-3 * minute), iob: dec("0.35"), cob: 0)]
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        let finished = try #require(rig.runner.state.test)
+        #expect(finished.iobAtBolus == dec("0.35"))
+        #expect(finished.phase == .finished)
+        // 4.55 U, past the 4.50 U the range takes with the increment.
+        #expect(
+            finished.interference
+                == CarbRatioTestBolusCondition.bolusOffFormula(given: dec("4.55"), formula: 4, counted: true).note
+        )
+    }
+
+    @Test("Wait for It holds the bolus alone to the formula, not the insulin on board with it") func waitForItJudgesTheBolus() async {
+        // R2-4: 4.20 U with 0.35 U on board at it: the bolus alone is in range.
+        var test = waitingTest(bolusAgo: 20 * minute)
+        test.iobHandling = .wait
+        test.bolusUnits = dec("4.2")
+        test.iobAtBolus = dec("0.35")
+        let data = crData()
+        data.boluses = [ISFTestBolus(date: test.bolusAt!, units: dec("4.2"))]
+        data.logCarbs(40, at: test.bolusAt!)
+        data.readings = readings(110, before: Date())
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.runner.state.test?.phase == .waiting)
+        #expect(rig.settings.settings.dosingMode == .basalTesting)
+        await rig.runner.discard()
+    }
+
+    @Test(
+        "The tablets' carbs logged over 15 minutes ago with the boluses unreadable end the test, the safe way"
+    ) func bolusesUnreadEnd() async throws {
+        // M1: no bolus can be seen to pair with them. Dated now: a bolus may have come. From the service's watchdog
+        // first, and from the runner itself with its session lost (Basal Testing on, so no watchdog ends it).
+        for watched in [true, false] {
+            let test = dosingTest(settledAgo: 30 * minute)
+            let data = doseStepData()
+            data.logCarbs(40, at: Date().addingTimeInterval(-16 * minute))
+            data.failingBoluses = true
+            let rig = makeRig(test: test, session: watched ? session(of: test) : nil, data: data)
+
+            await rig.runner.check()
+            let finished = try #require(rig.runner.state.test)
+            #expect(finished.phase == .finished)
+            #expect(finished.outcome == .invalid)
+            #expect(finished.interference == CarbRatioTestEvaluator.bolusesUnreadNote)
+            #expect(abs(try #require(finished.endedAt).timeIntervalSinceNow) < 5)
+            #expect(rig.settings.settings.dosingMode == .closed)
+            cleanUp(rig.storage)
+        }
+    }
+
+    @Test("Short of 15 minutes, carbs with the boluses unreadable keep the test going") func bolusesUnreadInTime() async {
+        let test = dosingTest(settledAgo: 30 * minute)
+        let data = doseStepData()
+        data.logCarbs(40, at: Date().addingTimeInterval(-10 * minute))
+        data.failingBoluses = true
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.runner.state.test?.phase == .dosing)
+        #expect(rig.settings.settings.dosingMode == .basalTesting)
+        await rig.runner.discard()
+    }
+
+    @Test(
+        "A suspend before the tablets could act gives no verdict, even with the carbs logged before the bolus"
+    ) func carbsFirstEarlyLow() async throws {
+        // R2-1: carbs 14 minutes before the bolus (settled 20 minutes before it), the tablets taken after it as the card
+        // says, and Basal Testing's suspend at the first loop after the bolus. The 3 readings after the carbs, 65 mg/dL,
+        // under the line and the start, are all from before the bolus, so before the tablets.
+        var test = waitingTest(bolusAgo: 3 * minute)
+        let bolusAt = try #require(test.bolusAt)
+        test.settledAt = bolusAt.addingTimeInterval(-20 * minute)
+        let carbsAt = bolusAt.addingTimeInterval(-14 * minute)
+        test.carbsAt = carbsAt
+        test.carbsID = FakeSettingsTestData.carbEntryID(carbsAt)
+        let data = crData()
+        data.boluses = [ISFTestBolus(date: bolusAt, units: 4)]
+        data.logCarbs(40, at: carbsAt)
+        data.readings = stride(from: -30.0, through: 15.0, by: 5.0).map {
+            BasalTestReading(date: carbsAt.addingTimeInterval($0 * minute), glucose: $0 > 0 ? 65 : 110)
+        }
+        data.determinations = [ISFTestDetermination(date: bolusAt.addingTimeInterval(-3 * minute), iob: 0, cob: 40)]
+        data.basalTestingSuspends(at: bolusAt.addingTimeInterval(minute), startedAt: test.startedAt)
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        let finished = try #require(rig.runner.state.test)
+        #expect(finished.endReason == .low)
+        // Only the reading at a minute after the bolus is after its later half: no glucose at the suspend.
+        #expect(finished.endGlucose == nil)
+        #expect(finished.outcome == .inconclusive)
+        #expect(rig.service.history(for: .carbRatio).isEmpty)
+    }
+
+    @Test("Grams logged within a gram of the tablets' are judged as the tablets'") func judgedOnTheTabletsGrams() async throws {
+        // R2-3: 39.5 g logged for the tablets' 40 g; 4 U acted and glucose ended at 132. On 40 g: 40 ÷ 4.44 = 9.01 g/U,
+        // accurate; on 39.5 g it would be 8.90, "too high".
+        let (data, completed) = completedData()
+        var test = completed
+        test.carbs = dec("39.5")
+        data.carbGrams[test.bolusAt!] = dec("39.5")
+        let plannedEnd = test.bolusAt!.addingTimeInterval(test.length)
+        data.readings = readings(110, before: test.bolusAt!) + readings(132, before: plannedEnd)
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        let finished = try #require(rig.runner.state.test)
+        #expect(finished.endReason == .completed)
+        #expect(finished.endGlucose == 132)
+        #expect(finished.outcome == .accurate)
+        // The record keeps both.
+        #expect(finished.carbs == dec("39.5"))
+        #expect(finished.tabletCarbs == 40)
+    }
+
+    @Test(
+        "A meal first seen whole as the test ends is judged then: held, it gives a verdict; failed, its note; unread, none"
+    ) func finishJudgesTheMeal() async throws {
+        // R2-5: the halves were saved but the meal's conditions never judged (a relaunch after a long gap, say).
+        func ended(_ change: (FakeSettingsTestData) -> Void) async throws -> CarbRatioTestState {
+            let (data, completed) = completedData()
+            var test = completed
+            test.mealJudgedAt = nil
+            data.arrows = [ISFTestArrowReading(date: test.bolusAt!.addingTimeInterval(-minute), direction: .flat)]
+            data.determinations.append(
+                ISFTestDetermination(date: test.bolusAt!.addingTimeInterval(-3 * minute), iob: 0, cob: 0)
+            )
+            change(data)
+            let rig = makeRig(test: test, session: session(of: test), data: data)
+            defer { cleanUp(rig.storage) }
+            await rig.runner.check()
+            return try #require(rig.runner.state.test)
+        }
+
+        let held = try await ended { _ in }
+        #expect(held.outcome == .accurate)
+        #expect(held.mealJudgedAt != nil)
+
+        let rising = try await ended { data in
+            data.arrows = [ISFTestArrowReading(date: data.boluses[0].date.addingTimeInterval(-minute), direction: .singleUp)]
+        }
+        #expect(rising.outcome == .invalid)
+        #expect(rising.interference == CarbRatioTestBolusCondition.glucoseMoving.note)
+
+        let unread = try await ended { data in data.failNext(.arrow) }
+        #expect(unread.outcome == .inconclusive)
+        #expect(unread.interferenceUnread == true)
+    }
+
+    @Test("An ending after the bolus never says to log carbs that are logged, or that can't be read") func logCarbsOnlyWhenNone(
+    ) async throws {
+        // R2-6: End Test with the tablets' carbs in.
+        do {
+            let test = waitingTest(bolusAgo: hour)
+            let data = crData()
+            data.boluses = [ISFTestBolus(date: test.bolusAt!, units: 4)]
+            data.logCarbs(40, at: test.bolusAt!)
+            let rig = makeRig(test: test, session: session(of: test), data: data)
+            await rig.runner.endEarly()
+            let finished = try #require(rig.runner.state.test)
+            #expect(finished.carbsUnloggedAtEnd == nil)
+            let text = CarbRatioTestEvaluator.noVerdictText(CarbRatioTestEvaluator.noVerdict(for: finished), test: finished)
+            #expect(!text.contains(CarbRatioTestEvaluator.logCarbsSentence))
+            cleanUp(rig.storage)
+        }
+        // End Test 10 minutes after the bolus, none logged: it says to log them.
+        do {
+            let test = waitingTest(bolusAgo: 10 * minute, carbs: nil)
+            let data = crData()
+            data.boluses = [ISFTestBolus(date: test.bolusAt!, units: 4)]
+            let rig = makeRig(test: test, session: session(of: test), data: data)
+            await rig.runner.endEarly()
+            let finished = try #require(rig.runner.state.test)
+            #expect(finished.carbsUnloggedAtEnd == true)
+            let text = CarbRatioTestEvaluator.noVerdictText(CarbRatioTestEvaluator.noVerdict(for: finished), test: finished)
+            #expect(text.hasSuffix(CarbRatioTestEvaluator.logCarbsSentence))
+            cleanUp(rig.storage)
+        }
+        // None logged, but the carbs can't be read as it ends: it doesn't say to log them.
+        let test = waitingTest(bolusAgo: 10 * minute, carbs: nil)
+        let data = crData()
+        data.boluses = [ISFTestBolus(date: test.bolusAt!, units: 4)]
+        data.failingCarbs = true
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+        await rig.runner.endEarly()
+        let finished = try #require(rig.runner.state.test)
+        #expect(finished.carbsUnloggedAtEnd == nil)
+    }
+
+    @Test(
+        "The tablets' carbs logged over 15 minutes ago with the boluses unreadable end a carb ratio test from the watchdog"
+    ) func watchdogBolusesUnread() async {
+        // M1: dated at the check, since a bolus may have come.
+        let session = crSession(age: 37 * minute)
+        let data = FakeSettingsTestData()
+        data.logCarbs(40, at: session.startedAt.addingTimeInterval(21 * minute))
+        data.failingBoluses = true
+        let harness = watchdog(session, data: data)
+        defer { cleanUp(harness.storage) }
+
+        await harness.service.endIfLowOrInterrupted()
+        #expect(harness.service.activeSession == nil)
+        #expect(harness.settings.settings.dosingMode == .closed)
+        let ended = harness.service.lastEnd()
+        #expect(ended?.cause == .mealUnpaired)
+        #expect(abs(ended?.date.timeIntervalSinceNow ?? .infinity) < 5)
+
+        // Short of 15 minutes it waits for a check that reads them.
+        let early = crSession(age: 30 * minute)
+        let earlyData = FakeSettingsTestData()
+        earlyData.logCarbs(40, at: early.startedAt.addingTimeInterval(21 * minute))
+        earlyData.failingBoluses = true
+        let earlyHarness = watchdog(early, data: earlyData)
+        defer { cleanUp(earlyHarness.storage) }
+        await earlyHarness.service.endIfLowOrInterrupted()
+        #expect(earlyHarness.service.activeSession?.id == early.id)
+        #expect(earlyHarness.service.lastEnd() == nil)
+        earlyHarness.service.end(kind: .carbRatio)
+    }
+
+    @Test(
+        "The watchdog's end for unread boluses, after a meal paired in time, isn't worded as halves apart"
+    ) func serviceEndForUnreadBoluses() async throws {
+        // A test waiting 40 minutes from a paired meal, ended by the service for boluses it couldn't read.
+        let test = waitingTest(bolusAgo: 40 * minute)
+        let data = crData()
+        data.boluses = [ISFTestBolus(date: test.bolusAt!, units: 4)]
+        data.logCarbs(40, at: test.bolusAt!)
+        data.failingBoluses = true
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.service.checkSessionAndRunners()
+        #expect(rig.service.lastEnd()?.cause == .mealUnpaired)
+        let finished = try #require(rig.runner.state.test)
+        #expect(finished.phase == .finished)
+        #expect(finished.interference == CarbRatioTestEvaluator.historyUnreadNote)
     }
 }

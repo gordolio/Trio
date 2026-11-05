@@ -177,7 +177,11 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
             iobLine: CarbRatioTestEvaluator.iobLine(dose: expected, carbRatio: carbRatio),
             cobLine: cobLine
         )
-        test.iobHandling = CarbRatioTestEvaluator.iobHandling(for: decision, chosen: begin.iobChoice)
+        // Only a choice the screen showed: one Begin finds that the screen didn't (a schedule edge between them) isn't the
+        // user's to have made, so the test waits for insulin on board, the docs' way.
+        test.iobHandling = begin.iobChoice.flatMap { CarbRatioTestEvaluator.iobHandling(for: decision, chosen: $0) }
+        // Trio's own low threshold in Basal Testing, which a low must reach to count as "End up low".
+        test.lowThreshold = settingsManager.preferences.clamped(for: .basalTesting).threshold_setting
         test.crEntries = crEntries
         // The ISF schedule over the same hours.
         test.isfEntries = CarbRatioTestEvaluator.coveredAtBegin(reads.isfEntries(), startedAt: now, length: length)
@@ -358,7 +362,11 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
         // mode changed by the service is never seen without the reason.
         let (mode, serviceEnd) = await MainActor.run { (settingsManager.settings.dosingMode, service?.lastEnd()) }
         // The service's record of a meal not paired: it ended the session before the ISF test's rules could read it.
-        if let ending = CarbRatioTestEvaluator.serviceMealEnd(of: current, serviceEnd: serviceEnd) {
+        if let ending = CarbRatioTestEvaluator.serviceMealEnd(
+            of: current,
+            serviceEnd: serviceEnd,
+            bolusesRead: meal.boluses
+        ) {
             await finish(for: testID, reason: ending.reason, at: ending.at, note: ending.note)
             return
         }
@@ -378,8 +386,9 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
             return
         }
         // Only once nothing above ended the test, so a low or the service's ending keeps its own words, and only from a
-        // check that read both halves.
-        if meal.boluses, meal.carbs, let ending = await mealPairingEnd(of: testID, now: now) {
+        // check that read the carbs: with the boluses read too, the pairing; without, the tablets' carbs past the pairing
+        // time with no bolus that can be seen.
+        if meal.carbs, let ending = await mealPairingEnd(of: testID, bolusesRead: meal.boluses, now: now) {
             debug(.settings, "CarbRatioTestRunner: the meal's carbs and bolus didn't come together, ending the test")
             await finish(for: testID, reason: ending.reason, at: ending.at, note: ending.note)
             return
@@ -442,14 +451,23 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
     }
 
     /// How a test whose meal's halves didn't come within the pairing time of each other ends
-    /// (`CarbRatioTestEvaluator.mealPairingEnd`), with the same guards as a dead end: nil for a test that moved on, an
-    /// ending saved or a finish claimed meanwhile, and once the service ended its session or another runs (the service's
-    /// own record says why then, `serviceMealEnd`).
-    private func mealPairingEnd(of testID: UUID, now: Date) async -> CarbRatioTestEvaluator.Ending? {
+    /// (`CarbRatioTestEvaluator.mealPairingEnd`), or, with the boluses unread this check (`bolusesRead`), one whose
+    /// tablets' carbs were logged past it with no bolus seen (`bolusesUnreadEnd`). With the same guards as a dead end:
+    /// nil for a test that moved on, an ending saved or a finish claimed meanwhile, and once the service ended its
+    /// session or another runs (the service's own record says why then, `serviceMealEnd`).
+    private func mealPairingEnd(of testID: UUID, bolusesRead: Bool, now: Date) async -> CarbRatioTestEvaluator.Ending? {
         await MainActor.run {
             guard let test = state.test, test.id == testID, test.pendingEnd == nil, !isFinishing,
                   !sessionEnded(for: test)
             else { return nil }
+            guard bolusesRead else {
+                return CarbRatioTestEvaluator.bolusesUnreadEnd(
+                    carbsAt: test.carbsAt,
+                    bolusAt: test.bolusAt,
+                    bolusesRead: false,
+                    now: now
+                )
+            }
             return CarbRatioTestEvaluator.mealPairingEnd(carbsAt: test.carbsAt, bolusAt: test.bolusAt, now: now)
         }
     }
@@ -729,6 +747,34 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
         var carbs = true
     }
 
+    /// What the meal is judged on (`CarbRatioTestEvaluator.failedMealCondition`), read at its moment.
+    struct MealReadings {
+        /// The mean of the newest 3 readings at or before the meal. Nil when none recent enough.
+        let start: Int?
+        /// The newest reading at or before the meal, with its arrow.
+        let arrow: ISFTestArrowReading?
+        /// Trio's determinations from 12 minutes before the meal to the bolus: carbs on board before the meal, insulin on
+        /// board just before the bolus.
+        let determinations: [ISFTestDetermination]
+    }
+
+    /// Reads what the meal of the tablets' carbs (`carbsAt`) and the bolus (`bolusAt`) is judged on, at its moment, the
+    /// earlier of the two. Throws when a read does: nothing is judged then.
+    func readMeal(carbsAt: Date, bolusAt: Date) async throws -> MealReadings {
+        let mealAt = min(carbsAt, bolusAt)
+        let readings = try await reads.fetchGlucose(from: mealAt.addingTimeInterval(-Self.startReadingsLookback), to: mealAt)
+        let arrow = try await reads.fetchArrowReading(atOrBefore: mealAt)
+        let determinations = try await reads.fetchDeterminations(
+            from: mealAt.addingTimeInterval(-BasalTest.Config.endReadingMaxAge - CarbRatioTest.Config.savedDateTolerance),
+            to: bolusAt.addingTimeInterval(CarbRatioTest.Config.savedDateTolerance)
+        )
+        return MealReadings(
+            start: BasalTestEvaluator.endGlucose(from: readings, endingAt: mealAt),
+            arrow: arrow,
+            determinations: determinations
+        )
+    }
+
     /// Looks for the meal's two halves from the end of settling, while either is still to come: the test bolus, the
     /// first bolus from any source up to the deadline, and the tablets' carbs, the first carb entry from then on
     /// (`CarbRatioTestEvaluator.mealCarbs`). Each is saved as it is found. The bolus moves the test on to the wait, with
@@ -780,24 +826,12 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
 
         // What the meal is judged on, once both halves are in, in time. A read that throws decides nothing; only one that
         // works and finds nothing recent enough leaves its condition unread, which ends the test.
-        var judged: (start: Int?, arrow: ISFTestArrowReading?, determinations: [ISFTestDetermination])?
+        var judged: MealReadings?
         if let bolusAt, let carbsAt,
            CarbRatioTestEvaluator.mealPairingEnd(carbsAt: carbsAt, bolusAt: bolusAt, now: .distantFuture) == nil
         {
-            let mealAt = min(carbsAt, bolusAt)
             do {
-                let readings = try await reads.fetchGlucose(
-                    from: mealAt.addingTimeInterval(-Self.startReadingsLookback),
-                    to: mealAt
-                )
-                let arrow = try await reads.fetchArrowReading(atOrBefore: mealAt)
-                let determinations = try await reads.fetchDeterminations(
-                    from: mealAt.addingTimeInterval(
-                        -BasalTest.Config.endReadingMaxAge - CarbRatioTest.Config.savedDateTolerance
-                    ),
-                    to: bolusAt.addingTimeInterval(CarbRatioTest.Config.savedDateTolerance)
-                )
-                judged = (BasalTestEvaluator.endGlucose(from: readings, endingAt: mealAt), arrow, determinations)
+                judged = try await readMeal(carbsAt: carbsAt, bolusAt: bolusAt)
             } catch {
                 warning(
                     .settings,
@@ -853,6 +887,8 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
                     determinations: judged.determinations,
                     handling: latest.iobHandling
                 )
+                // Judged and held: a verdict may rest on it (`mealJudgedAt`).
+                if failed == nil { latest.mealJudgedAt = Date() }
             }
             if let failed {
                 // Saved with the meal before anything else, so a relaunch finishes this ending.

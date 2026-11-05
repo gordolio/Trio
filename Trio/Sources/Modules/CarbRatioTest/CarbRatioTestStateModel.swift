@@ -958,9 +958,22 @@ extension CarbRatioTest {
             test.map { CarbRatioTestEvaluator.canDose(of: $0, doseInputs) } ?? false
         }
 
+        /// With the tablets' carbs logged in a test that counts insulin on board Trio hasn't read: no dose can be shown,
+        /// since it would leave the insulin on board in, but Treatments still opens for the bolus, with nothing filled in,
+        /// where Trio's calculator takes it off.
+        var countedDoseAwaitsIOB: Bool {
+            test?.carbsLoggedAwaitingBolus == true && dosesCountIOB && noDoseReason == .iobUnread
+        }
+
+        /// Whether Open Treatments opens: while the step offers the dose, and with the tablets' carbs logged in a test
+        /// whose counted dose waits for insulin on board (`countedDoseAwaitsIOB`). Never once the time for the bolus is up.
+        var canOpenTreatments: Bool {
+            canDose || countedDoseAwaitsIOB
+        }
+
         /// Why Open Treatments is off, in the words the Dose step shows for it. Nil while it is on.
         var doseHoldText: String? {
-            guard !canDose else { return nil }
+            guard !canOpenTreatments else { return nil }
             return (noDoseReason ?? .noSettings).sentence
         }
 
@@ -1010,13 +1023,15 @@ extension CarbRatioTest {
             docsDose.map { ISFTestEvaluator.suggestion(for: $0, percentage: recommendedBolusFraction) }
         }
 
-        /// The insulin on board the units given count with the bolus: the counted dose's, or the one read now.
+        /// The insulin on board the units judged count with the bolus: with Count It, the counted dose's; none otherwise,
+        /// where the bolus alone is judged (`CarbRatioTestEvaluator.bolusOffFormula`).
         private var suggestionIOB: Decimal {
-            (dosesCountIOB ? doseIOB : currentIOB) ?? 0
+            dosesCountIOB ? (doseIOB ?? 0) : 0
         }
 
-        /// Whether Trio's `suggestion`, with the insulin on board the units given count, is within the doses a docs step
-        /// either side of the formula's gives (`CarbRatioTestEvaluator.suggestionInRange`). False without a test.
+        /// Whether Trio's `suggestion`, with the insulin on board the units judged count, sits inside the range the test
+        /// accepts by at least a pump increment, which is the doses a docs step either side of the formula's gives
+        /// (`CarbRatioTestEvaluator.suggestionInRange`): only then may the note say "Either is fine". False without a test.
         func suggestionInRange(_ suggestion: Decimal) -> Bool {
             guard let test, let settings = doseSettings else { return false }
             return CarbRatioTestEvaluator.suggestionInRange(
@@ -1168,7 +1183,8 @@ extension CarbRatioTest {
         /// dose for the carbs logged, so ending where it started isn't what an accurate ratio gives. Nil otherwise.
         var expectedEndAwayFromStart: Decimal? {
             guard let test, evaluation?.shownRatio != nil, let band = CarbRatioTestEvaluator.resultBand(of: test),
-                  let start = test.startGlucose, !band.contains(start), let carbs = test.carbs,
+                  let start = test.startGlucose, !band.contains(start),
+                  let carbs = CarbRatioTestEvaluator.judgedCarbs(of: test),
                   let units = CarbRatioTestEvaluator.judgedUnits(of: test), test.carbRatio > 0
             else { return nil }
             return Decimal(start) + test.isf * (carbs / test.carbRatio - units)
@@ -1457,7 +1473,8 @@ extension CarbRatioTest {
             showStartConfirmation = true
         }
 
-        /// What Begin starts the test with, from what the Check screen shows. Nil without a recent glucose or tablets.
+        /// What Begin starts the test with, from what the Check screen shows. Nil without a recent glucose or tablets. The
+        /// insulin on board choice goes only when its page showed (`checkPages`): a pick kept from an earlier pass isn't one.
         var beginRequest: CarbRatioTestBegin? {
             guard let glucose = doseGlucose, let count = tabletCount else { return nil }
             return CarbRatioTestBegin(
@@ -1466,7 +1483,7 @@ extension CarbRatioTest {
                 length: selectedLength,
                 glucose: glucose,
                 iob: currentIOB,
-                iobChoice: iobChoice
+                iobChoice: checkPages.contains(.iob) ? iobChoice : nil
             )
         }
 
@@ -1591,7 +1608,7 @@ extension CarbRatioTest {
         /// A tap the step drew before its gate shut (a reading that aged since, say) says why (`doseHoldText`).
         @MainActor func openTreatments() {
             guard !isEnding else { return }
-            guard canDose, let test else {
+            guard canOpenTreatments, let test else {
                 errorMessage = doseHoldText
                 return
             }
