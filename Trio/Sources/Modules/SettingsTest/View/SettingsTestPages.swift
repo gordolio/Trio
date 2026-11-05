@@ -71,6 +71,8 @@ struct SettingsTestPageFooter<Primary: View>: View {
     let back: (() -> Void)?
     let primary: Primary
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     init(blocker: String?, back: (() -> Void)?, @ViewBuilder primary: () -> Primary) {
         self.blocker = blocker
         self.back = back
@@ -78,22 +80,43 @@ struct SettingsTestPageFooter<Primary: View>: View {
     }
 
     var body: some View {
-        if let blocker {
-            Label {
-                Text(blocker)
-                    .fixedSize(horizontal: false, vertical: true)
-            } icon: {
-                Image(systemName: "exclamationmark.circle.fill")
-                    .foregroundStyle(.orange)
-            }
-            .font(.footnote)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        // At accessibility sizes the page says why at the end of its content (`SettingsTestPageBlocker`): pinned here,
+        // its lines left a small phone's page almost no room.
+        if let blocker, !dynamicTypeSize.isAccessibilitySize {
+            SettingsTestPageBlocker.label(blocker)
         }
         primary
         if let back {
             Button("Back", action: back)
                 .buttonStyle(.testSecondary)
         }
+    }
+}
+
+/// Why a page's main button is off, at the end of the page's content, at accessibility sizes only: the footer says it at
+/// other sizes (`SettingsTestPageFooter`).
+struct SettingsTestPageBlocker: View {
+    let blocker: String?
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        if let blocker, dynamicTypeSize.isAccessibilitySize {
+            Self.label(blocker)
+                .padding(.horizontal, 4)
+        }
+    }
+
+    static func label(_ blocker: String) -> some View {
+        Label {
+            Text(blocker)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.circle.fill")
+                .foregroundStyle(.orange)
+        }
+        .font(.footnote)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -108,37 +131,54 @@ struct SettingsTestTabletBrandPicker: View {
 
     var body: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            // At accessibility sizes the label and the longest choice don't fit one line: the menu goes under the label,
-            // as wide as the card. Its own label is text that wraps and grows, since a menu picker's keeps one line's
-            // height and cuts a wrapped choice off.
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Brand")
-                    .font(.body)
-                Menu {
-                    picker
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(Self.label(for: selection))
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.footnote)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .accessibilityLabel(Text("Brand, \(Self.label(for: selection))"))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            stacked
         } else {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Brand")
-                    .font(.body)
-                Spacer(minLength: 8)
-                picker
+            // On one line while the label and the choice fit beside each other. Where they don't (xxxLarge text with
+            // Bold, or Display Zoom, on a small phone), one line broke "Brand" mid-word and cut the choice's wrapped
+            // second line.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Brand")
+                        .font(.body)
+                    Spacer(minLength: 8)
                     // On one line: the label beside it is short, and a wrapped choice read as two.
-                    .fixedSize()
+                    menu(lines: 1)
+                        .fixedSize()
+                }
+                stacked
             }
         }
+    }
+
+    /// The menu under the label, as wide as the card: at accessibility sizes the label and the longest choice don't fit
+    /// one line.
+    private var stacked: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Brand")
+                .font(.body)
+            menu(lines: nil)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The menu of brands with the choice as its label, as text that wraps and grows (unless held to `lines`): a menu
+    /// picker's own label keeps one line's height, and at xxxLarge with Bold Text it wrapped inside the one-line row
+    /// and was cut, so the row couldn't tell it no longer fit.
+    private func menu(lines: Int?) -> some View {
+        Menu {
+            picker
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(Self.label(for: selection))
+                    .lineLimit(lines)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.footnote)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityLabel(Text("Brand, \(Self.label(for: selection))"))
     }
 
     private var picker: some View {
