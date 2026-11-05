@@ -1,0 +1,129 @@
+import SwiftUI
+
+// A test's start as a short wizard: one question per page inside its Check step, each page with Next (or Begin) and
+// Back. The carb ratio test uses it first; the basal and ISF Check screens can move onto it later.
+
+// MARK: - Order
+
+/// Which page of a test's start comes after or before another, among the pages that apply now (a page can be left out,
+/// e.g. a question that only applies to some starts). Pure, so a state model keeps which page shows and its tests can
+/// check the order.
+enum SettingsTestPageFlow {
+    /// The page after `current` among `pages`, nil on the last.
+    static func page<Page: Equatable>(after current: Page, in pages: [Page]) -> Page? {
+        guard let index = pages.firstIndex(of: current), index + 1 < pages.count else { return nil }
+        return pages[index + 1]
+    }
+
+    /// The page before `current` among `pages`, nil on the first.
+    static func page<Page: Equatable>(before current: Page, in pages: [Page]) -> Page? {
+        guard let index = pages.firstIndex(of: current), index > 0 else { return nil }
+        return pages[index - 1]
+    }
+
+    /// The page to show for `current`: itself while it applies, otherwise the nearest one before it in `order` (every page
+    /// in order) that does, or the first page. So a page that stops applying while it shows hands over to the one before.
+    static func shown<Page: Equatable>(_ current: Page, in pages: [Page], order: [Page]) -> Page {
+        if pages.contains(current) { return current }
+        guard let index = order.firstIndex(of: current) else { return pages.first ?? current }
+        return order[..<index].last(where: { pages.contains($0) }) ?? pages.first ?? current
+    }
+
+    /// Where `page` sits among `pages`, "2 of 5". Empty when it isn't among them.
+    static func position<Page: Equatable>(of page: Page, in pages: [Page]) -> String {
+        guard let index = pages.firstIndex(of: page) else { return "" }
+        return String(localized: "\(index + 1) of \(pages.count)")
+    }
+}
+
+// MARK: - Heading
+
+/// A page's heading after the first: its question as a title, and where it sits among the pages.
+struct SettingsTestPageHeading: View {
+    let title: String
+    /// "2 of 5" (`SettingsTestPageFlow.position`).
+    let position: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if !position.isEmpty {
+                Text(position)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(title)
+                .font(.title2.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+    }
+}
+
+// MARK: - Footer
+
+/// What sits under a page: why the main button is off, when it is (where the eye goes to tap it), the main button
+/// (Next, or the start's own), and Back, unless the page is the first.
+struct SettingsTestPageFooter<Primary: View>: View {
+    let blocker: String?
+    let back: (() -> Void)?
+    let primary: Primary
+
+    init(blocker: String?, back: (() -> Void)?, @ViewBuilder primary: () -> Primary) {
+        self.blocker = blocker
+        self.back = back
+        self.primary = primary()
+    }
+
+    var body: some View {
+        if let blocker {
+            Label {
+                Text(blocker)
+                    .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.orange)
+            }
+            .font(.footnote)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        primary
+        if let back {
+            Button("Back", action: back)
+                .buttonStyle(.testSecondary)
+        }
+    }
+}
+
+// MARK: - Choices
+
+/// The glucose tablet brand, on one row: its label, and a menu of the brands with their grams a tablet, so the choice
+/// takes one line of the page.
+struct SettingsTestTabletBrandPicker: View {
+    @Binding var selection: GlucoseTabletBrand
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("Brand")
+                .font(.body)
+            Spacer(minLength: 8)
+            Picker("Brand", selection: $selection) {
+                ForEach(GlucoseTabletBrand.allCases) { brand in
+                    Text(Self.label(for: brand)).tag(brand)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            // On one line: the label beside it is short, and a wrapped choice read as two.
+            .fixedSize()
+        }
+    }
+
+    /// "Dex4, 4 g each".
+    static func label(for brand: GlucoseTabletBrand) -> String {
+        let grams = brand.carbsPerTablet.formatted(.number.precision(.fractionLength(0 ... 2)))
+        return String(localized: "\(brand.displayName), \(grams) g each")
+    }
+}

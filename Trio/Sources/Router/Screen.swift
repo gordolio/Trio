@@ -57,6 +57,7 @@ enum Screen: Identifiable, Hashable {
     case settingsTests
     case basalTest
     case isfTest
+    case carbRatioTest
     case aiAssistantsConfig
 
     var id: Int { String(reflecting: self).hashValue }
@@ -187,6 +188,8 @@ extension Screen {
             BasalTest.RootView(resolver: resolver)
         case .isfTest:
             ISFTest.RootView(resolver: resolver)
+        case .carbRatioTest:
+            CarbRatioTest.RootView(resolver: resolver)
         case .aiAssistantsConfig:
             AIAssistantsConfig.RootView(resolver: resolver)
         }

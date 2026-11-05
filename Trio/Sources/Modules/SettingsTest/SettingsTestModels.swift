@@ -39,8 +39,8 @@ enum SettingsTestKind: String, JSON, CaseIterable, Identifiable {
     var availability: SettingsTestAvailability {
         switch self {
         case .basal,
+             .carbRatio,
              .isf: return .available
-        case .carbRatio: return .beingRebuilt
         }
     }
 }
@@ -57,6 +57,18 @@ extension SettingsTestKind {
         if case .ready = gate { return nil }
         let text = ISFTestEvaluator.basalGateText(gate, now: now, locale: locale)
         return String(localized: "\(text). You can still start.")
+    }
+
+    /// What the hub says on the carb ratio row when the newest ISF test doesn't look accurate on an unchanged ISF
+    /// schedule, or nil when it does. The same words as the carb ratio test's Check screen (`ISFGate.text`), then a line
+    /// saying it is a warning only: the test is never locked.
+    static func carbRatioGateNote(
+        for gate: SettingsTestSchedule.ISFGate,
+        now: Date = Date(),
+        locale: Locale = .autoupdatingCurrent
+    ) -> String? {
+        if case .ready = gate { return nil }
+        return String(localized: "\(gate.text(now: now, locale: locale)). You can still start.")
     }
 
     /// An insulin sensitivity in mg/dL per unit as the hub lists it, in the user's units, e.g. "50 mg/dL/U". The unit
@@ -84,7 +96,7 @@ extension SettingsTestKind {
         case (.isf, .keep): return String(localized: "Looked accurate \(when)")
         case (.isf, .increase): return String(localized: "ISF looked too low \(when)")
         case (.isf, .decrease): return String(localized: "ISF looked too high \(when)")
-        // The carb ratio test is being rebuilt and lists no periods, so these are never shown.
+        // A ratio that looked too high means glucose ended high: the docs say decrease it.
         case (.carbRatio, .keep): return String(localized: "Looked accurate \(when)")
         case (.carbRatio, .increase): return String(localized: "Carb ratio looked too low \(when)")
         case (.carbRatio, .decrease): return String(localized: "Carb ratio looked too high \(when)")
@@ -112,6 +124,31 @@ extension SettingsTestKind {
              .preflightFailed,
              .preflightPassed:
             return false
+        }
+    }
+}
+
+extension SettingsTestSchedule.ISFGate {
+    /// What the newest ISF test says, in the carb ratio test's Check screen's words, as `ISFTestEvaluator.basalGateText`
+    /// says it of the newest basal test.
+    func text(now: Date = Date(), locale: Locale = .autoupdatingCurrent) -> String {
+        switch self {
+        case let .ready(lastAccurate):
+            let formatter = RelativeDateTimeFormatter()
+            formatter.locale = locale
+            formatter.dateTimeStyle = .named
+            let when = formatter.localizedString(for: lastAccurate, relativeTo: now)
+            return String(localized: "Last ISF test looked accurate, \(when)")
+        case .noAccurateTest:
+            return String(localized: "No accurate ISF test yet")
+        case .changedSince:
+            return String(localized: "ISF changed since the last test")
+        case let .lastWasNot(direction, _):
+            switch direction {
+            case .increase: return String(localized: "The last ISF test said ISF looks too low")
+            case .decrease: return String(localized: "The last ISF test said ISF looks too high")
+            case .keep: return String(localized: "No accurate ISF test yet")
+            }
         }
     }
 }
@@ -271,16 +308,20 @@ struct SettingsTestSession: JSON, Equatable, Identifiable {
     /// When a session that switched to Basal Testing first saw another mode picked. Nil while it hasn't, and in a
     /// session saved before this was kept.
     var leftTestModeAt: Date?
-    /// For an ISF test, when its bolus window began: the end of settling, from which the test bolus is looked for. Nil
-    /// while it settles, and in a session saved before this was kept.
+    /// For an ISF or carb ratio test, when its bolus window began: the end of settling, from which the test bolus is
+    /// looked for. Nil while it settles, and in a session saved before this was kept.
     var bolusWindowStart: Date?
-    /// True for an ISF session begun with settling. Nil for other tests, and for an ISF session saved before settling
-    /// was kept, whose bolus window starts at Start.
+    /// True for a session begun with settling: an ISF one, and every carb ratio one its runner begins. Nil for other
+    /// tests, and for an ISF session saved before settling was kept, whose bolus window starts at Start.
     var settles: Bool?
     /// The carb entries there at Begin, dated in the day before it (`SettingsTestCarbRule.keptAtBegin`), so one logged
     /// during the test with an earlier time ends it. Nil in a session saved before they were kept, and in one begun
     /// without them, which reads carbs from Begin only.
     var carbsAtBegin: [String]?
+    /// How long a test with a bolus runs after it: a carb ratio test's chosen length (`CarbRatioTest.Config.lengths`).
+    /// Nil for the ISF test, whose wait is the docs' 4 hours (`ISFTest.Config.docsWait`), for other tests, and in a
+    /// session saved before this was kept.
+    var waitLength: TimeInterval?
 
     /// Where the bolus window starts in effect: the end of settling once it is kept, nil while a session that settles
     /// still does, and Start for a session from before settling was kept.
@@ -308,6 +349,10 @@ enum SettingsTestEndCause: String, JSON, Equatable {
     case modeChanged
     /// The pump was suspended, gave an alarm, or had its site or reservoir changed during the test.
     case pumpInterrupted
+    /// A carb ratio test only: the meal's two halves, the tablets' carbs and the bolus, didn't come within
+    /// `CarbRatioTest.Config.mealPairing` of each other (`CarbRatioTestEvaluator.mealPairingEnd`). Dated at the end of
+    /// the pairing time from the first half. The other tests never get it, and read it as they read `noBolus`.
+    case mealUnpaired
 }
 
 /// What the service keeps when it ends a test on its own, so the test's runner finishes it for the same reason. By then
@@ -346,8 +391,9 @@ struct SettingsTestRecord: JSON, Equatable, Identifiable {
     var coveredEntries: [SettingsTestScheduleEntry]? = nil
     /// The bolus the test gave, in units. Nil for a test with no bolus, and for one saved before this was kept.
     var bolusUnits: Decimal? = nil
-    /// The grams of fast carbs taken as tablets to raise glucose before the bolus. Nil when none were taken, and for a
-    /// test saved before this was kept. Not logged as carbs.
+    /// The grams of fast carbs taken as tablets: for an ISF test, to raise glucose before the bolus, not logged as carbs;
+    /// for a carb ratio test, the tablets' planned grams, which the carbs logged (`testCarbs`) matched. Nil when none
+    /// were taken, and for a test saved before this was kept.
     var tabletCarbs: Decimal? = nil
     /// How an ISF test handled insulin on board over its line at Begin, `ISFTestIOBHandling.rawValue` ("wait" or
     /// "count"). Nil when there was no choice to make, for other tests, and for a test saved before this was kept.
@@ -359,6 +405,9 @@ struct SettingsTestRecord: JSON, Equatable, Identifiable {
     /// counted, less what Trio reported still on board at the end of the 4 hours. Nil for a low, which isn't judged on
     /// them, for other tests, and for a test saved before this was kept.
     var judgedUnits: Decimal? = nil
+    /// The grams the carb ratio test's bolus covered: the carb entry logged with it, which the result was judged on
+    /// (`CarbRatioTestState.carbs`). Nil for other tests, and for a test saved before this was kept.
+    var testCarbs: Decimal? = nil
 }
 
 // The carb ratio wizard uses the shared step bar.

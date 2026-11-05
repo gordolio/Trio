@@ -519,6 +519,7 @@ extension Treatments {
                 Text("\(state.determinationFailureMessage)")
             }
             .aiRequestTreatments(state: state, recalculate: handleDebouncedInput)
+            .settingsTestTreatments(state: state, recalculate: handleDebouncedInput)
         }
 
         var progressText: ProgressText {

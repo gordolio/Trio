@@ -426,9 +426,10 @@ enum BasalTestEvaluator {
             case .basalStopped: return .unexplainedSuspend(at: serviceEnd.date)
             case .carbsUnreadable: return .carbsUnreadable(at: serviceEnd.date)
             case .extraBolus: return .bolusGiven(at: serviceEnd.date)
-            // A basal session never gets this cause. If one did, the service brought the usual mode back, so the fast
+            // A basal session never gets these causes. If one did, the service brought the usual mode back, so the fast
             // didn't run to its end.
-            case .noBolus: return .modeChanged(at: nil)
+            case .mealUnpaired,
+                 .noBolus: return .modeChanged(at: nil)
             // Another mode was picked during the fast, so the rest of it didn't run in Basal Testing. It ends when that
             // mode was first picked.
             case .modeChanged:
