@@ -99,7 +99,7 @@ extension ISFTest {
                 .init(
                     step: .settle,
                     detail: Text(
-                        "Trio switches to Basal Testing, so SMBs stop. The test waits for Trio's first loop in it and \(readings) CGM readings after that. If you chose Wait for It, it also waits, up to an hour, for insulin on board to drop under the line."
+                        "Trio switches to Basal Testing, so SMBs stop. The test waits for Trio's first loop in it and \(readings) CGM readings after that. If you chose Wait for It, it also waits, up to an hour, for insulin on board to come within the line of zero."
                     )
                 ),
                 .init(
@@ -111,7 +111,7 @@ extension ISFTest {
                 .init(
                     step: .dose,
                     detail: Text(
-                        "The step works out the correction from your target and ISF and waits for a flat CGM arrow. You open Treatments and give that dose there, within \(doseMinutes) minutes."
+                        "The step works out the correction from your target and ISF and waits for a flat CGM arrow, or a recent reading with none. You open Treatments and give that dose there, within \(doseMinutes) minutes."
                     )
                 ),
                 .init(
