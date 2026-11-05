@@ -104,21 +104,51 @@ struct SettingsTestPageFooter<Primary: View>: View {
 struct SettingsTestTabletBrandPicker: View {
     @Binding var selection: GlucoseTabletBrand
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text("Brand")
-                .font(.body)
-            Spacer(minLength: 8)
-            Picker("Brand", selection: $selection) {
-                ForEach(GlucoseTabletBrand.allCases) { brand in
-                    Text(Self.label(for: brand)).tag(brand)
+        if dynamicTypeSize.isAccessibilitySize {
+            // At accessibility sizes the label and the longest choice don't fit one line: the menu goes under the label,
+            // as wide as the card. Its own label is text that wraps and grows, since a menu picker's keeps one line's
+            // height and cuts a wrapped choice off.
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Brand")
+                    .font(.body)
+                Menu {
+                    picker
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(Self.label(for: selection))
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.footnote)
+                            .accessibilityHidden(true)
+                    }
                 }
+                .accessibilityLabel(Text("Brand, \(Self.label(for: selection))"))
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            // On one line: the label beside it is short, and a wrapped choice read as two.
-            .fixedSize()
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Brand")
+                    .font(.body)
+                Spacer(minLength: 8)
+                picker
+                    // On one line: the label beside it is short, and a wrapped choice read as two.
+                    .fixedSize()
+            }
         }
+    }
+
+    private var picker: some View {
+        Picker("Brand", selection: $selection) {
+            ForEach(GlucoseTabletBrand.allCases) { brand in
+                Text(Self.label(for: brand)).tag(brand)
+            }
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
     }
 
     /// "Dex4, 4 g each".

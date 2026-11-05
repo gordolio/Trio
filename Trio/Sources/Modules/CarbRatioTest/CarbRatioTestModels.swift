@@ -146,11 +146,14 @@ enum CarbRatioTestNoDose: Equatable {
     /// The tablets' carbs are logged and the time for the bolus after them is up
     /// (`CarbRatioTestState.bolusDeadline`): the test is ending (`CarbRatioTestEvaluator.mealPairingEnd`).
     case mealTimeUp
+    /// The dose the step would offer is over Max Bolus, as read now, so Treatments can't give it: Max Bolus was lowered
+    /// after Begin, which held the tablets to it at the lowest carb ratio the test can meet (`lowestCarbRatio`).
+    case overMaxBolus
 
     /// Whether the Dose step is waiting for something a later check can bring, rather than at a dead end. Carbs and
     /// insulin on board only come down while the test runs, since other carbs and boluses end it, so each is a wait.
-    /// Only missing settings are a dead end, which the runner ends the test at with `sentence`. The meal's time up is
-    /// the pairing's ending to make, in its own words, so the step only waits for it.
+    /// Only missing settings and a dose over Max Bolus are dead ends, which the runner ends the test at with `sentence`.
+    /// The meal's time up is the pairing's ending to make, in its own words, so the step only waits for it.
     var isWaiting: Bool {
         switch self {
         case .carbsOnBoard,
@@ -161,7 +164,8 @@ enum CarbRatioTestNoDose: Equatable {
              .mealTimeUp,
              .noRecentReading,
              .notLevel: return true
-        case .noSettings: return false
+        case .noSettings,
+             .overMaxBolus: return false
         }
     }
 
@@ -191,6 +195,8 @@ enum CarbRatioTestNoDose: Equatable {
         case .mealTimeUp:
             let minutes = Int(CarbRatioTest.Config.mealPairing / 60)
             return String(localized: "The \(minutes) minutes for the bolus are up, so the test is ending.")
+        case .overMaxBolus:
+            return String(localized: "The bolus for the tablets is more than your Max Bolus, so Treatments can't give it.")
         }
     }
 }
@@ -321,6 +327,9 @@ struct CarbRatioTestDoseInputs: Equatable {
     var increment: Decimal
     /// The moment these are judged at.
     var now: Date
+    /// Max Bolus as read now, which the dose offered must not pass. Nil when it can't be read: Treatments still holds the
+    /// bolus to it.
+    var maxBolus: Decimal? = nil
 
     /// The same inputs as the ISF test reads them, for the rules both tests share (`ISFTestEvaluator.doseGlucose`,
     /// `glucoseIsLevel`).
@@ -661,6 +670,12 @@ enum CarbRatioTestEvaluator {
             if carbs <= maxCarbs, let dose = dose(carbs: carbs, carbRatio: carbRatio), dose <= maxBolus { return count }
         }
         return 0
+    }
+
+    /// The lowest carb ratio a test can meet: the one now, and every schedule entry the hours it can run cover
+    /// (`coveredAtBegin`). The tablets' dose is largest at it, so Max Bolus is checked against it.
+    static func lowestCarbRatio(_ carbRatio: Decimal, covered entries: [SettingsTestScheduleEntry]?) -> Decimal {
+        ([carbRatio] + (entries ?? []).map(\.value).filter { $0 > 0 }).min() ?? carbRatio
     }
 
     /// The tablet count the Check screen shows: `wanted` kept between 1 and `maxTablets`. Nil when not even one tablet
@@ -1200,6 +1215,8 @@ enum CarbRatioTestEvaluator {
         }
         // Past the time for the bolus after the tablets' carbs, the test is ending: nothing is offered.
         if let deadline = test.bolusDeadline, inputs.now >= deadline { return .mealTimeUp }
+        // A dose Treatments would refuse is no dose to offer.
+        if let maxBolus = inputs.maxBolus, let shown = doseShown(of: test, inputs), shown > maxBolus { return .overMaxBolus }
         if !test.carbsLoggedAwaitingBolus {
             guard let cob = inputs.cob else { return .carbsUnread }
             if cobBlocks(cob: cob, line: cobLine(carbs: test.tabletCarbs, carbRatio: settings.carbRatio)) {
@@ -1488,7 +1505,7 @@ enum CarbRatioTestEvaluator {
         case .noBolus:
             let minutes = Int(CarbRatioTest.Config.doseAllowance / 60)
             return String(
-                localized: "The test needs your bolus within \(minutes) minutes of starting. Trio didn't see one, so there was nothing to judge."
+                localized: "The test needs your bolus within \(minutes) minutes after settling. Trio didn't see one, so there was nothing to judge."
             )
         case .interrupted:
             return test.interference

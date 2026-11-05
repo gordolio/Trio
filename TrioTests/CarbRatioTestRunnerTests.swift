@@ -296,7 +296,9 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
     }
 
     @Test("Over the line, insulin on board offers the choice Begin saves") func beginSavesTheChoice() async {
-        let rig = makeRig(test: nil, session: nil, mode: .closed, data: crData())
+        let data = crData()
+        data.iob = dec("0.5")
+        let rig = makeRig(test: nil, session: nil, mode: .closed, data: data)
         defer { cleanUp(rig.storage) }
         // 0.5 U: over the 0.36 U line, under the 4 U dose.
         #expect(await rig.runner.begin(begin(iob: dec("0.5"), choice: .count)) == nil)
@@ -307,7 +309,9 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
     @Test(
         "Begin saves no insulin on board handling when the Ready page showed no choice, whatever it finds"
     ) func beginWithoutTheChoice() async {
-        let rig = makeRig(test: nil, session: nil, mode: .closed, data: crData())
+        let data = crData()
+        data.iob = dec("0.5")
+        let rig = makeRig(test: nil, session: nil, mode: .closed, data: data)
         defer { cleanUp(rig.storage) }
         // L2: 0.5 U, over the line, where the screen offered no choice (a pick kept from an earlier pass isn't sent).
         #expect(await rig.runner.begin(begin(iob: dec("0.5"), choice: nil)) == nil)
@@ -335,8 +339,10 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         case noISF
         case noCarbRatio
         case overMaxBolus
+        case overMaxBolusLater
         case overMaxCarbs
         case iobOverDose
+        case iobOverDoseNow
         case carbsOnBoard
         case carbRatioUnderMinimum
         case carbRatioUnderMinimumLater
@@ -369,13 +375,24 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
             // 3 U allows 7 tablets (28 g, 2.8 U), not 10.
             data.maxBolusSetting = 3
             expected = .tabletsOverLimits
+        case .overMaxBolusLater:
+            // 4 U allows 10 tablets at the 10 g/U now (4 U), but 5 at the 5 g/U the hours kept reach (0.8 U a tablet).
+            data.maxBolusSetting = 4
+            data.carbRatioSchedule = allDay(5)
+            expected = .tabletsOverLimits
         case .overMaxCarbs:
             // 30 g allows 7 tablets.
             data.maxCarbsSetting = 30
             expected = .tabletsOverLimits
         case .iobOverDose:
-            // More than the whole 4 U dose.
+            // More than the whole 4 U dose, as the Check screen read it, and Trio has none now to read.
+            data.iob = nil
             start.iob = dec("4.5")
+            expected = .iobOverDose
+        case .iobOverDoseNow:
+            // Risen past the whole dose since the Check screen read none.
+            data.iob = dec("4.5")
+            start.iob = 0
             expected = .iobOverDose
         case .carbsOnBoard:
             // 3.6 g from Trio's latest loop: at the line.
@@ -586,6 +603,36 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(rig.notifier.posted == [.carbRatioStep(.settledToDose)])
     }
 
+    @Test("The Dose step's offer works the counted dose out with the increment Begin saved") func savedIncrementOffer() async {
+        var test = dosingTest(settledAgo: 10 * minute)
+        test.iobHandling = .count
+        test.doseNoticeDue = true
+        let data = doseStepData()
+        // 3.7 U on board: 4 − 3.70 = 0.30 U, over the saved 0.05 U increment, under a live 0.5 U one.
+        data.determinations = [ISFTestDetermination(date: Date().addingTimeInterval(-2 * minute), iob: dec("3.7"), cob: 0)]
+        let settings = FakeSettingsManager()
+        settings.preferences.bolusIncrement = dec("0.5")
+        let rig = makeRig(test: test, session: session(of: test), data: data, settings: settings)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.runner.state.test?.phase == .dosing)
+        #expect(rig.notifier.posted == [.carbRatioStep(.settledToDose)])
+    }
+
+    @Test("A dose over Max Bolus, lowered since Begin, ends the test with the step's sentence") func doseOverMaxBolus() async {
+        let test = dosingTest(settledAgo: 10 * minute)
+        let data = doseStepData()
+        data.maxBolusSetting = 3
+        let rig = makeRig(test: test, session: session(of: test), data: data)
+        defer { cleanUp(rig.storage) }
+
+        await rig.runner.check()
+        #expect(rig.runner.state.test?.phase == .finished)
+        #expect(rig.runner.state.test?.interference == CarbRatioTestNoDose.overMaxBolus.sentence)
+        #expect(rig.settings.settings.dosingMode == .closed)
+    }
+
     @Test(
         "Once the tablets' carbs are logged ahead of the bolus, the Dose step asks for the bolus alone, by 15 minutes after them"
     ) func carbsLoggedAheadOfTheBolus() async throws {
@@ -611,9 +658,9 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(dosing.bolusDeadline == carbsAt.addingTimeInterval(15 * minute))
         // The rising arrow and the tablets' own carbs on board don't take the bolus back.
         #expect(dosing.doseOfferedAt != nil)
-        // The meal has begun: "Carb Ratio Dose Ready" is no longer owed.
+        // "Carb Ratio Dose Ready" stays owed until the bolus, so it prompts it: it goes now, the dose being offered.
+        #expect(rig.notifier.posted == [.carbRatioStep(.settledToDose)])
         #expect(dosing.doseNoticeDue == nil)
-        #expect(rig.notifier.posted.isEmpty)
         #expect(rig.settings.settings.dosingMode == .basalTesting)
     }
 
@@ -683,6 +730,8 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(waiting?.crEntries == allDay(10))
         #expect(rig.settings.settings.dosingMode == .basalTesting)
         #expect(rig.service.activeSession != nil)
+        // The service keeps the test bolus with the session, for the watchdog (C1).
+        #expect(rig.service.activeSession?.testBolusAt == bolusAt)
         #expect(rig.notifier.withdrawn.contains(Withdrawal(kind: .carbRatio, slot: .step)))
         #expect(rig.notifier.posted.isEmpty)
 
@@ -1105,9 +1154,14 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         let rig = makeRig(test: test, session: session(of: test), data: data)
         defer { cleanUp(rig.storage) }
 
+        #expect(rig.service.activeSession?.testBolusAt == nil)
         await rig.runner.check()
         #expect(rig.runner.state.test?.phase == .waiting)
         #expect(rig.settings.settings.dosingMode == .basalTesting)
+        // A session that didn't learn the test bolus (the app closed as it was found) is told it on the next check, as
+        // the test saved it.
+        let told = rig.service.activeSession?.testBolusAt
+        #expect(abs((told ?? .distantPast).timeIntervalSince(test.bolusAt!)) < CarbRatioTest.Config.savedDateTolerance)
     }
 
     @Test("End Test from the screen gives no result and posts no notice") func endEarlyPostsNothing() async {
@@ -1773,6 +1827,50 @@ private func dec(_ string: String) -> Decimal { Decimal(string: string)! }
         #expect(earlyHarness.service.activeSession?.id == early.id)
         #expect(earlyHarness.service.lastEnd() == nil)
         earlyHarness.service.end(kind: .carbRatio)
+    }
+
+    @Test(
+        "With the test bolus recorded with the session, boluses unreadable 20 minutes after the carbs don't end the test"
+    ) func watchdogBolusRecorded() async {
+        // C1: the meal paired in time, and the runner recorded its bolus with the session; only a later bolus read fails.
+        var session = crSession(age: 41 * minute)
+        let carbsAt = session.startedAt.addingTimeInterval(21 * minute)
+        session.testBolusAt = carbsAt.addingTimeInterval(minute)
+        let data = FakeSettingsTestData()
+        data.logCarbs(40, at: carbsAt)
+        data.failingBoluses = true
+        let harness = watchdog(session, data: data)
+        defer { cleanUp(harness.storage) }
+
+        await harness.service.endIfLowOrInterrupted()
+        #expect(harness.service.activeSession?.id == session.id)
+        #expect(harness.service.lastEnd() == nil)
+        #expect(harness.settings.settings.dosingMode == .basalTesting)
+        harness.service.end(kind: .carbRatio)
+    }
+
+    @Test("The service keeps the carb ratio test's bolus with its session, once") func setTestBolus() async {
+        let session = crSession(age: 25 * minute)
+        let harness = watchdog(session, data: FakeSettingsTestData())
+        defer { cleanUp(harness.storage) }
+        let bolusAt = Date(timeIntervalSince1970: (Date().timeIntervalSince1970 - 60).rounded(.down))
+
+        // Another kind's isn't touched.
+        harness.service.setTestBolus(kind: .isf, at: bolusAt)
+        #expect(harness.service.activeSession?.testBolusAt == nil)
+        harness.service.setTestBolus(kind: .carbRatio, at: bolusAt)
+        #expect(harness.service.activeSession?.testBolusAt == bolusAt)
+        // Saved with the session, so a relaunch knows it too.
+        let saved = harness.storage.retrieve("trio/settings_test_session.json", as: SettingsTestSession.self)
+        #expect(saved?.testBolusAt == bolusAt)
+        // Set once.
+        harness.service.setTestBolus(kind: .carbRatio, at: Date())
+        #expect(harness.service.activeSession?.testBolusAt == bolusAt)
+        // A check that copied the session before it was set decides nothing on the copy.
+        var copy = session
+        copy.testBolusAt = nil
+        #expect(!BaseSettingsTestService.isUnchanged(copy, live: harness.service.activeSession))
+        harness.service.end(kind: .carbRatio)
     }
 
     @Test(

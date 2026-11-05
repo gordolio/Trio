@@ -22,9 +22,10 @@ extension CarbRatioTest {
 
         private var content: some View {
             SettingsTestScreen(paintsBackground: false) {
-                // The tablets' carbs came first: the bolus is all that's left, against the meal's clock.
-                if let test = state.test, test.carbsLoggedAwaitingBolus {
-                    carbsLoggedCard(test: test)
+                // The tablets' carbs came first: the bolus is all that's left, against the meal's clock. Only with a dose due;
+                // otherwise the card below says what the step waits for.
+                if let card = state.carbsLoggedCard {
+                    carbsLoggedCard(card)
                 }
                 switch state.noDoseReason {
                 case nil:
@@ -86,10 +87,11 @@ extension CarbRatioTest {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     deadlineText
-                case .noSettings:
+                case .noSettings,
+                     .overMaxBolus:
                     // A dead end that offers only Cancel Test: there is no bolus to give.
                     SettingsTestCard {
-                        noDoseText(.noSettings)
+                        noDoseText(state.noDoseReason ?? .noSettings)
                     }
                 }
             } footer: {
@@ -140,25 +142,13 @@ extension CarbRatioTest {
             }
         }
 
-        /// The tablets' carbs are logged and the bolus hasn't come: the bolus now, with the minutes left of the meal's 15,
-        /// then the tablets. Treatments opens with nothing filled in, since the carbs are in.
-        private func carbsLoggedCard(test: CarbRatioTestState) -> some View {
-            // With Count It, only the counted dose: the formula's would leave the insulin on board in.
-            let dose = state.dosesCountIOB ? state.docsDose : (state.docsDose ?? state.formulaDose)
-            let minutes = test.minutesLeftForBolus(at: Date()) ?? 0
-            let pairing = Int(Config.mealPairing / 60)
-            let time = test.bolusDeadline?.formatted(date: .omitted, time: .shortened) ?? ""
-            let timeUp = state.noDoseReason == .mealTimeUp
-            return SettingsTestCard {
+        /// The tablets' carbs are logged and a bolus is due (`StateModel.carbsLoggedCard`): the bolus now, with the minutes
+        /// left of the meal's 15, then the tablets. Treatments opens with nothing filled in, since the carbs are in. With
+        /// Count It and insulin on board unread, no dose, and the row saying what it waits for.
+        private func carbsLoggedCard(_ card: (headline: String, detail: String)) -> some View {
+            SettingsTestCard {
                 Label {
-                    if let dose, !timeUp {
-                        let units = SettingsTestFormat.keepTogether(state.formatUnits(dose), unit: "U")
-                        Text("The tablets' carbs are logged. Give the bolus now: \(Text(verbatim: units).bold()).")
-                    } else if timeUp {
-                        Text("The tablets' carbs are logged, and the time for the bolus is up.")
-                    } else {
-                        Text("The tablets' carbs are logged. Give the bolus now.")
-                    }
+                    Text(card.headline)
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -171,14 +161,10 @@ extension CarbRatioTest {
                             text: String(localized: "Waiting for Trio to read insulin on board, so the dose can take it off.")
                         )
                 }
-                if !timeUp {
-                    Text(
-                        "\(minutes) of \(pairing) minutes left, until \(time). Enter only the bolus in Treatments: the carbs are in. Then take the tablets."
-                    )
+                Text(card.detail)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                }
             }
         }
 
@@ -273,9 +259,9 @@ extension CarbRatioTest {
             }
         }
 
-        /// The time the bolus must come by. Not once the carbs are logged, whose card says the meal's own.
+        /// The time the bolus must come by. Not while the carbs-logged card shows, which says the meal's own.
         @ViewBuilder private var deadlineText: some View {
-            if state.test?.carbsLoggedAwaitingBolus != true, let deadline = state.doseDeadlineText {
+            if state.carbsLoggedCard == nil, let deadline = state.doseDeadlineText {
                 Text(deadline)
                     .font(.footnote)
                     .foregroundStyle(.secondary)

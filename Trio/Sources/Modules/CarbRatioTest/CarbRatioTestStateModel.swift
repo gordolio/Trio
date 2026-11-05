@@ -256,7 +256,8 @@ extension CarbRatioTest {
                 doseIOB: doseIOB,
                 cob: doseCOB,
                 increment: bolusIncrement,
-                now: Date()
+                now: Date(),
+                maxBolus: settingsNow.maxBolus
             )
         }
 
@@ -286,10 +287,22 @@ extension CarbRatioTest {
             guard let maxBolus = settingsNow.maxBolus, let maxCarbs = settingsNow.maxCarbs else { return Config.maxTabletCount }
             return CarbRatioTestEvaluator.maxTablets(
                 brand: selectedBrand,
-                carbRatio: ratio,
+                carbRatio: lowestCarbRatio ?? ratio,
                 maxBolus: maxBolus,
                 maxCarbs: maxCarbs
             )
+        }
+
+        /// The lowest carb ratio the longest test begun now can meet (`CarbRatioTestEvaluator.lowestCarbRatio`), where the
+        /// tablets' dose is largest, so the count fits Max Bolus whatever length is picked. Nil without a carb ratio.
+        var lowestCarbRatio: Decimal? {
+            guard let ratio = settingsNow.carbRatio else { return nil }
+            let covered = CarbRatioTestEvaluator.coveredAtBegin(
+                settingsNow.carbRatioEntries,
+                startedAt: Date(),
+                length: Config.lengths.max() ?? selectedLength
+            )
+            return CarbRatioTestEvaluator.lowestCarbRatio(ratio, covered: covered)
         }
 
         /// The tablets the test takes: the count picked, kept between 1 and `maxTablets`. Nil when not even one fits.
@@ -574,24 +587,42 @@ extension CarbRatioTest {
             )
         }
 
-        /// Whether the carb ratio now, or in the hours a test begun now can run on (`CarbRatioTestEvaluator.coveredAtBegin`
-        /// with the length picked), is under the lowest the test can judge (`Config.minimumTestedCarbRatio`), as Begin
-        /// refuses it (`SettingsTestBeginError.carbRatioUnderMinimum`).
-        var carbRatioUnderMinimum: Bool {
+        /// Whether the carb ratio now, or in the hours a test of `length` begun now can run on
+        /// (`CarbRatioTestEvaluator.coveredAtBegin`), is under the lowest the test can judge
+        /// (`Config.minimumTestedCarbRatio`), as Begin refuses it (`SettingsTestBeginError.carbRatioUnderMinimum`).
+        func carbRatioUnderMinimum(for length: TimeInterval) -> Bool {
             guard let ratio = settingsNow.carbRatio else { return false }
             let minimum = Config.minimumTestedCarbRatio
             let covered = CarbRatioTestEvaluator.coveredAtBegin(
                 settingsNow.carbRatioEntries,
                 startedAt: Date(),
-                length: selectedLength
+                length: length
             ) ?? []
             return ratio < minimum || covered.contains { $0.value < minimum }
         }
 
-        /// Shown only when the carb ratio is under the lowest the test can judge: Begin is held up, with the docs' minimum.
+        /// The length the carb ratio's minimum is checked over: the shortest one on the pages before How long, so a problem
+        /// that picking 3 h clears doesn't hold up Next before that page can be reached; the one picked from How long on,
+        /// so How long's Next and Begin wait for it.
+        var minimumCheckLength: TimeInterval {
+            let beforeLength: Set<CheckPage> = [.checks, .tablets]
+            guard beforeLength.contains(shownCheckPage) else { return selectedLength }
+            return Config.lengths.min() ?? selectedLength
+        }
+
+        /// Whether the carb ratio's minimum holds up the page shown (`minimumCheckLength`).
+        var carbRatioUnderMinimum: Bool {
+            carbRatioUnderMinimum(for: minimumCheckLength)
+        }
+
+        /// Shown only when the carb ratio is under the lowest the test can judge: Begin is held up, with the docs' minimum,
+        /// and, when the shortest length stays clear of it, how to.
         private var carbRatioMinimumCheck: Check? {
             guard carbRatioUnderMinimum else { return nil }
-            let sentence = SettingsTestBeginError.carbRatioUnderMinimum.message
+            var sentence = SettingsTestBeginError.carbRatioUnderMinimum.message
+            if let shortest = Config.lengths.min(), shortest < selectedLength, !carbRatioUnderMinimum(for: shortest) {
+                sentence += " " + String(localized: "Watching for \(lengthText(shortest)) keeps the test clear of it.")
+            }
             return Check(
                 id: "carbRatioMinimum",
                 title: String(localized: "Carb ratio of 2 g/U or more"),
@@ -900,8 +931,10 @@ extension CarbRatioTest {
             test.map { CarbRatioTestEvaluator.doseSettings(of: $0, at: Date()) }
         }
 
-        /// The pump's bolus increment: the pump can't give less, so a counted dose under it is none.
+        /// The pump's bolus increment: the pump can't give less, so a counted dose under it is none. The one Begin saved,
+        /// which the running check and the verdict judge the bolus by; the live one before a test.
         private var bolusIncrement: Decimal {
+            if let test { return test.bolusIncrement }
             let manager: SettingsManager? = settingsManager
             return manager?.preferences.bolusIncrement ?? 0
         }
@@ -965,6 +998,30 @@ extension CarbRatioTest {
             test?.carbsLoggedAwaitingBolus == true && dosesCountIOB && noDoseReason == .iobUnread
         }
 
+        /// What the Dose step's card says with the tablets' carbs logged and the bolus awaited: the dose due, or, with Count
+        /// It and insulin on board unread (`countedDoseAwaitsIOB`), the bolus without a dose, which Trio's calculator works
+        /// out; then the minutes left. Nil while no dose is due (`noDoseReason`), when the step's own card says what it
+        /// waits for, and the time up (its sentence says the test is ending). Never the formula's dose for a counted one.
+        var carbsLoggedCard: (headline: String, detail: String)? {
+            guard let test, test.carbsLoggedAwaitingBolus, noDoseReason == nil || countedDoseAwaitsIOB else { return nil }
+            let headline: String
+            if noDoseReason == nil, let dose = docsDose {
+                let units = SettingsTestFormat.keepTogether(formatUnits(dose), unit: "U")
+                headline = String(localized: "The tablets' carbs are logged. Give the bolus now: \(units).")
+            } else {
+                headline = String(localized: "The tablets' carbs are logged. Give the bolus now.")
+            }
+            let minutes = test.minutesLeftForBolus(at: Date()) ?? 0
+            let pairing = Int(Config.mealPairing / 60)
+            let time = test.bolusDeadline?.formatted(date: .omitted, time: .shortened) ?? ""
+            return (
+                headline,
+                String(
+                    localized: "\(minutes) of \(pairing) minutes left, until \(time). Enter only the bolus in Treatments: the carbs are in. Then take the tablets."
+                )
+            )
+        }
+
         /// Whether Open Treatments opens: while the step offers the dose, and with the tablets' carbs logged in a test
         /// whose counted dose waits for insulin on board (`countedDoseAwaitsIOB`). Never once the time for the bolus is up.
         var canOpenTreatments: Bool {
@@ -1002,12 +1059,14 @@ extension CarbRatioTest {
                 )
         }
 
-        /// The time the bolus must come by, worded as the app's limit it is, not a treatment rule.
+        /// The time the bolus must come by, worded as the app's limit it is, not a treatment rule: the dose deadline, which
+        /// runs from the end of settling, or, with the tablets' carbs logged, the meal's own time if that is sooner. A
+        /// clock time only, since the minutes run from settling's end, not from Begin.
         var doseDeadlineText: String? {
             guard let test else { return nil }
-            let minutes = Int(Config.doseAllowance / 60)
-            let time = test.doseDeadline.formatted(date: .omitted, time: .shortened)
-            return String(localized: "The test needs your bolus within \(minutes) minutes of starting, by \(time).")
+            let deadline = test.bolusDeadline.map { min($0, test.doseDeadline) } ?? test.doseDeadline
+            let time = deadline.formatted(date: .omitted, time: .shortened)
+            return String(localized: "The test needs your bolus by \(time).")
         }
 
         /// The Recommended Bolus Percentage as a fraction, e.g. 0.8.
@@ -1202,6 +1261,33 @@ extension CarbRatioTest {
             return iob > 0
                 ? String(localized: "\(units) was still on board at the end: about \(amount) still to come off.")
                 : String(localized: "Trio had held back \(units) of basal at the end: about \(amount) still to come back up.")
+        }
+
+        /// The Result's tablets card: the tablets and their grams, then what was logged with the bolus. That the result
+        /// uses the tablets' grams is said only when it does: grams logged within the 1 g rule (`carbsDiffer`) of a test
+        /// with a verdict. A test the grams made invalid, or one with no verdict, says only what was logged. Nil without a
+        /// test.
+        var resultTabletsText: String? {
+            guard let test else { return nil }
+            let brand = test.brand?.displayName ?? test.tabletBrand
+            let grams = SettingsTestFormat.keepTogether(formatGrams(test.tabletCarbs), unit: "g")
+            let tablets = test.tabletCount == 1
+                ? String(localized: "1 tablet of \(brand) (\(grams))")
+                : String(localized: "\(test.tabletCount) tablets of \(brand) (\(grams))")
+            guard let carbs = test.carbs else {
+                return String(localized: "\(tablets). Their carbs weren't logged with the bolus.")
+            }
+            let loggedGrams = SettingsTestFormat.keepTogether(formatGrams(carbs), unit: "g")
+            if carbs == test.tabletCarbs {
+                return String(localized: "\(tablets), logged as \(loggedGrams) with the bolus.")
+            }
+            let judgedOnPlanned = !CarbRatioTestEvaluator.carbsDiffer(logged: carbs, planned: test.tabletCarbs)
+                && test.outcome?.isConclusive == true
+            guard judgedOnPlanned else {
+                return String(localized: "\(tablets). \(loggedGrams) logged with the bolus.")
+            }
+            // Within a gram, the entry field's rounding: the result is judged on what was eaten.
+            return String(localized: "\(tablets). \(loggedGrams) logged with the bolus; the result uses the tablets' \(grams).")
         }
 
         /// Whether the test ended on Trio's suspend on its forecast with glucose still above where it started, which isn't
@@ -1411,10 +1497,6 @@ extension CarbRatioTest {
                 carbRatioEntries: reads.carbRatioEntries()
             )
             let gate = readISFGate()
-            await MainActor.run {
-                show(settings)
-                isfGate = gate
-            }
             let windowStart = await MainActor.run { test?.bolusWindowStart }
             do {
                 let readings = try await reads.fetchRecentGlucose(minutes: Self.recentReadingsMinutes)
@@ -1438,11 +1520,18 @@ extension CarbRatioTest {
                 await MainActor.run {
                     guard number > newestRefreshShown else { return }
                     newestRefreshShown = number
+                    show(settings)
+                    isfGate = gate
                     show(data)
                 }
             } catch {
                 await MainActor.run {
                     guard number > newestRefreshShown else { return }
+                    newestRefreshShown = number
+                    show(settings)
+                    isfGate = gate
+                    // Unread, not the last read: the Dose step waits for one rather than gate on an old value.
+                    readIOB = nil
                     errorMessage = "Couldn't read your data: \(error.localizedDescription)"
                 }
             }

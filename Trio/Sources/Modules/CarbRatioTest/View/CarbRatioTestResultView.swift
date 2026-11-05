@@ -422,30 +422,9 @@ extension CarbRatioTest {
         // MARK: - Tablets
 
         /// "10 tablets of Dex4 (40 g), logged as 40 g with the bolus".
-        private func tabletsCard(for test: CarbRatioTestState) -> some View {
-            let brand = test.brand?.displayName ?? test.tabletBrand
-            let grams = SettingsTestFormat.keepTogether(state.formatGrams(test.tabletCarbs), unit: "g")
-            let tablets = test.tabletCount == 1
-                ? String(localized: "1 tablet of \(brand) (\(grams))")
-                : String(localized: "\(test.tabletCount) tablets of \(brand) (\(grams))")
-            let logged: String
-            if let carbs = test.carbs {
-                let loggedGrams = SettingsTestFormat.keepTogether(state.formatGrams(carbs), unit: "g")
-                if carbs == test.tabletCarbs {
-                    logged = String(localized: "\(tablets), logged as \(loggedGrams) with the bolus.")
-                } else if state.evaluation != nil {
-                    // Within a gram, the entry field's rounding: the result is judged on what was eaten.
-                    logged = String(
-                        localized: "\(tablets). \(loggedGrams) logged with the bolus; the result uses the tablets' \(grams)."
-                    )
-                } else {
-                    logged = String(localized: "\(tablets). \(loggedGrams) logged with the bolus.")
-                }
-            } else {
-                logged = String(localized: "\(tablets). Their carbs weren't logged with the bolus.")
-            }
-            return SettingsTestCard {
-                Text(logged)
+        private func tabletsCard(for _: CarbRatioTestState) -> some View {
+            SettingsTestCard {
+                Text(state.resultTabletsText ?? "")
                     .font(.subheadline)
                     .fixedSize(horizontal: false, vertical: true)
             }

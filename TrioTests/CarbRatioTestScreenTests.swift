@@ -101,9 +101,12 @@ private final class RecordingCarbRatioTestRunner: CarbRatioTestRunning {
 
 /// What the carb ratio screen reads, as a test sets it.
 private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
+    struct Failure: Error {}
     var data: CarbRatioTest.StateModel.ScreenData
     var settings: CarbRatioTest.StateModel.ScreenSettings
     var isfSchedule: [SettingsTestScheduleEntry] = []
+    /// Whether the glucose read throws, as a refresh that fails.
+    var failing = false
 
     init(_ data: CarbRatioTest.StateModel.ScreenData, settings: CarbRatioTest.StateModel.ScreenSettings) {
         self.data = data
@@ -115,7 +118,11 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
     func target(at _: Date) -> Decimal? { settings.target }
     func carbRatio(at _: Date) -> Decimal? { settings.carbRatio }
     func carbRatioEntries() -> [SettingsTestScheduleEntry] { settings.carbRatioEntries }
-    func fetchRecentGlucose(minutes _: Int) async throws -> [BasalTestReading] { data.readings }
+    func fetchRecentGlucose(minutes _: Int) async throws -> [BasalTestReading] {
+        if failing { throw Failure() }
+        return data.readings
+    }
+
     func currentIOB() -> Decimal? { data.iob }
     func currentCOB() async throws -> Decimal? { data.cob }
     func doseCOB(windowStart _: Date?) async -> Decimal? { data.doseCOB }
@@ -125,6 +132,74 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
     func hasCgmAndPump() -> Bool { data.hasDevices }
     func maxBolus() -> Decimal? { settings.maxBolus }
     func maxCarbs() -> Decimal? { settings.maxCarbs }
+}
+
+/// The fake's reads, with the first carb ratio read held until `release` and giving 10 g/U, and every later one 12 g/U at
+/// once, so a refresh that began first can publish its settings after one that began later.
+private final class HeldSettingsReads: CarbRatioTestScreenReads, @unchecked Sendable {
+    let base: FakeCarbRatioScreenReads
+    private let lock = NSLock()
+    private let gate = DispatchSemaphore(value: 0)
+    private var calls = 0
+    private var _holding = false
+
+    init(_ base: FakeCarbRatioScreenReads) { self.base = base }
+
+    var isHolding: Bool { lock.withLock { _holding } }
+    func release() { gate.signal() }
+
+    func carbRatio(at _: Date) -> Decimal? {
+        let call = lock.withLock { () -> Int in
+            calls += 1
+            if calls == 1 { _holding = true }
+            return calls
+        }
+        guard call == 1 else { return 12 }
+        _ = gate.wait(timeout: .now() + 5)
+        lock.withLock { _holding = false }
+        return 10
+    }
+
+    func isfEntries() -> [SettingsTestScheduleEntry] { base.isfEntries() }
+    func isf(at date: Date) -> Decimal? { base.isf(at: date) }
+    func target(at date: Date) -> Decimal? { base.target(at: date) }
+    func carbRatioEntries() -> [SettingsTestScheduleEntry] { base.carbRatioEntries() }
+    func fetchRecentGlucose(minutes: Int) async throws -> [BasalTestReading] { try await base
+        .fetchRecentGlucose(minutes: minutes) }
+
+    func currentIOB() -> Decimal? { base.currentIOB() }
+    func currentCOB() async throws -> Decimal? { try await base.currentCOB() }
+    func doseCOB(windowStart: Date?) async -> Decimal? { await base.doseCOB(windowStart: windowStart) }
+    func hasActiveAdjustment() async throws -> Bool { try await base.hasActiveAdjustment() }
+    func hasPumpSetTempBasal() -> Bool { base.hasPumpSetTempBasal() }
+    func pumpDelivery() -> ISFTestPumpDelivery? { base.pumpDelivery() }
+    func hasCgmAndPump() -> Bool { base.hasCgmAndPump() }
+    func maxBolus() -> Decimal? { base.maxBolus() }
+    func maxCarbs() -> Decimal? { base.maxCarbs() }
+}
+
+/// A carb ratio schedule in `Calendar.current`'s minutes of the day: `now` from an hour ago until `later` starts
+/// `startsAfter` from now, then `later` for the rest of the day.
+private func scheduleChanging(
+    to later: Decimal,
+    after startsAfter: TimeInterval,
+    now: Decimal = 10
+) -> [SettingsTestScheduleEntry] {
+    func minuteOfDay(_ date: Date) -> Int {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+    }
+    let from = minuteOfDay(Date().addingTimeInterval(-3600))
+    let change = minuteOfDay(Date().addingTimeInterval(startsAfter))
+    // `now` runs from `from` to `change`, wrapping past midnight.
+    func value(at minute: Int) -> Decimal {
+        let inside = from < change ? (minute >= from && minute < change) : (minute >= from || minute < change)
+        return inside ? now : later
+    }
+    let bounds = Array(Set([0, from, change, 1440])).sorted()
+    return zip(bounds, bounds.dropFirst())
+        .filter { $0 < $1 }
+        .map { SettingsTestScheduleEntry(startMinutes: $0, endMinutes: $1, value: value(at: $0)) }
 }
 
 // MARK: - The screen
@@ -871,6 +946,211 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
         #expect(runner.actions == ["countAndGoOn", "discard", "acknowledgeResult", "endEarly"])
     }
 
+    // MARK: CodeRabbit's review
+
+    @Test(
+        "A carb ratio under 2 g/U only a 4 h test reaches holds up How long, not the checks, and 3 h clears it"
+    ) func minimumOnTheLengthPage() {
+        let state = checkScreen()
+        // 1.5 g/U from 7.5 hours on: the hours a 4 h test can reach (Begin + 1 h + 3 h + 4 h) cover it, a 3 h one's don't.
+        var later = settings()
+        later.carbRatioEntries = scheduleChanging(to: dec("1.5"), after: 450 * minute)
+        state.show(later)
+        #expect(state.selectedLength == 4 * 3600)
+        #expect(state.carbRatioUnderMinimum(for: 4 * 3600))
+        #expect(!state.carbRatioUnderMinimum(for: 3 * 3600))
+        // The checks read the shortest length's hours: Next goes on, to the page that can clear it.
+        #expect(state.canGoOn)
+        state.nextCheckPage()
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .length)
+        // How long reads the length picked: Next goes off, saying how to clear it.
+        #expect(!state.canGoOn)
+        #expect(state.failingChecks.map(\.id) == ["carbRatioMinimum"])
+        #expect(
+            state.startBlocker == SettingsTestBeginError.carbRatioUnderMinimum.message
+                + " Watching for 3 h keeps the test clear of it."
+        )
+        state.selectedLength = 3 * 3600
+        #expect(state.canGoOn)
+        state.nextCheckPage()
+        #expect(state.shownCheckPage == .ready)
+        #expect(state.readyToStart)
+        // Back to 4 h: Begin is held up on Ready too.
+        state.selectedLength = 4 * 3600
+        #expect(!state.readyToStart)
+    }
+
+    @Test("The Dose step works the counted dose out with the increment Begin saved") func savedIncrement() {
+        // Count It with 3.7 U on board: 4 − 3.70 = 0.30 U, under a live increment of 0.5 U but over the saved 0.05 U.
+        var test = carbRatioTest(.dosing, handling: .count)
+        test.bolusIncrement = dec("0.05")
+        let (state, _, _) = doseStep(test, doseIOB: dec("3.7"))
+        state.settingsManager.preferences.bolusIncrement = dec("0.5")
+        state.show(screenData(readings(110)))
+        #expect(state.docsDose == dec("0.3"))
+        #expect(state.noDoseReason == nil)
+        #expect(state.canDose)
+    }
+
+    @Test(
+        "The tablets fit Max Bolus at the lowest carb ratio a test can meet, and the Dose step offers no dose over it"
+    ) func tabletsAtTheLowestRatio() {
+        let state = checkScreen()
+        // 4 U: 10 Dex4 tablets at the 10 g/U now (0.4 U each), but 5 at the 5 g/U from 5 hours on (0.8 U each).
+        var lower = settings(maxBolus: 4)
+        lower.carbRatioEntries = scheduleChanging(to: 5, after: 300 * minute)
+        state.show(lower)
+        #expect(state.lowestCarbRatio == 5)
+        #expect(state.maxTablets == 5)
+        #expect(state.tabletCount == 5)
+        // The dose shown stays the one now: 20 g ÷ 10.
+        #expect(state.checkDose == 2)
+
+        // A Dose step whose 4 U is over a Max Bolus lowered to 3 U since Begin: a dead end, not offered.
+        let (dose, _, _) = doseStep(carbRatioTest(.dosing), doseIOB: nil)
+        dose.show(screenData(readings(110)))
+        dose.show(settings(maxBolus: 3))
+        #expect(dose.noDoseReason == .overMaxBolus)
+        #expect(dose.noDoseReason?.isWaiting == false)
+        #expect(!dose.canDose)
+        dose.show(settings(maxBolus: 4))
+        #expect(dose.canDose)
+    }
+
+    @Test("The Dose step's deadline is a clock time: the dose deadline, or the meal's sooner one") func deadlineText() throws {
+        let (state, _, _) = doseStep(carbRatioTest(.dosing), doseIOB: nil)
+        let test = try #require(state.test)
+        let time = test.doseDeadline.formatted(date: .omitted, time: .shortened)
+        #expect(state.doseDeadlineText == "The test needs your bolus by \(time).")
+        // The tablets' carbs logged 3 minutes ago: the bolus is due 12 minutes from now, sooner than the dose deadline.
+        var logged = test
+        logged.carbsAt = Date().addingTimeInterval(-3 * minute)
+        logged.carbs = 40
+        state.apply(CarbRatioTestRunnerState(test: logged))
+        let meal = try #require(logged.bolusDeadline).formatted(date: .omitted, time: .shortened)
+        #expect(state.doseDeadlineText == "The test needs your bolus by \(meal).")
+    }
+
+    @Test("An older refresh doesn't show its settings over a newer one's") func olderRefreshSettings() async {
+        let state = checkScreen()
+        state.testService = makeTestService().service
+        let held = HeldSettingsReads(FakeCarbRatioScreenReads(screenData(readings(110)), settings: settings()))
+        state.screenReads = held
+        let first = Task { await state.refresh() }
+        #expect(await eventually { held.isHolding })
+        // The newer refresh reads 12 g/U and shows it while the older one still reads.
+        await state.refresh()
+        #expect(state.settingsNow.carbRatio == 12)
+        held.release()
+        await first.value
+        #expect(state.settingsNow.carbRatio == 12)
+    }
+
+    @Test("A refresh that fails leaves insulin on board unread, so the Dose step waits for a read") func failedRefreshClearsIOB() async {
+        let state = checkScreen()
+        state.testService = makeTestService().service
+        let reads = FakeCarbRatioScreenReads(screenData(readings(110), iob: dec("0.2")), settings: settings())
+        state.screenReads = reads
+        state.apply(CarbRatioTestRunnerState(test: carbRatioTest(.dosing)))
+        await state.refresh()
+        #expect(state.currentIOB == dec("0.2"))
+        #expect(state.canDose)
+
+        reads.failing = true
+        await state.refresh()
+        #expect(state.currentIOB == nil)
+        #expect(state.noDoseReason == .iobUnread)
+        #expect(!state.canDose)
+        #expect(state.errorMessage != nil)
+    }
+
+    @Test(
+        "The carbs-logged card shows only with a dose due, never the formula's dose for a counted one"
+    ) func carbsLoggedCard() throws {
+        func logged(_ handling: ISFTestIOBHandling?, minutesAgo: Double = 3) -> CarbRatioTestState {
+            var test = carbRatioTest(.dosing, handling: handling)
+            test.carbsAt = Date().addingTimeInterval(-minutesAgo * minute)
+            test.carbs = 40
+            return test
+        }
+        let units = SettingsTestFormat.keepTogether("4.00", unit: "U")
+
+        // A dose due: the dose, the minutes left and the time.
+        let due = doseStep(logged(nil), doseIOB: nil).state
+        due.show(screenData(readings(110)))
+        let time = try #require(due.test?.bolusDeadline).formatted(date: .omitted, time: .shortened)
+        #expect(due.carbsLoggedCard?.headline == "The tablets' carbs are logged. Give the bolus now: \(units).")
+        #expect(
+            due.carbsLoggedCard?.detail
+                ==
+                "12 of 15 minutes left, until \(time). Enter only the bolus in Treatments: the carbs are in. Then take the tablets."
+        )
+
+        // Count It with 4.2 U on board covering the 4 U: no dose due, so no card; the step's own says it waits.
+        let covered = doseStep(logged(.count), doseIOB: dec("4.2")).state
+        #expect(covered.noDoseReason == .iobCoversDose)
+        #expect(covered.carbsLoggedCard == nil)
+        // The meal's deadline goes in the line under the step's card instead.
+        let coveredTime = try #require(covered.test?.bolusDeadline).formatted(date: .omitted, time: .shortened)
+        #expect(covered.doseDeadlineText == "The test needs your bolus by \(coveredTime).")
+
+        // Count It with insulin on board unread (A3): the bolus without a dose, never the formula's 4 U.
+        let unread = doseStep(logged(.count), doseIOB: nil).state
+        #expect(unread.countedDoseAwaitsIOB)
+        #expect(unread.carbsLoggedCard?.headline == "The tablets' carbs are logged. Give the bolus now.")
+
+        // Insulin on board over the line in a Wait for It test: no dose due, no card.
+        let over = doseStep(logged(.wait), doseIOB: nil).state
+        over.show(screenData(readings(110), iob: dec("0.5")))
+        #expect(over.noDoseReason == .iobOverLine)
+        #expect(over.carbsLoggedCard == nil)
+
+        // C3, the time up: only the step's sentence that the test is ending, not a second card.
+        let timeUp = doseStep(logged(nil, minutesAgo: 16), doseIOB: nil).state
+        timeUp.show(screenData(readings(110)))
+        #expect(timeUp.noDoseReason == .mealTimeUp)
+        #expect(timeUp.carbsLoggedCard == nil)
+    }
+
+    @Test(
+        "The tablets card says the result uses the tablets' grams only for a verdict on grams logged within a gram"
+    ) func resultTabletsText() {
+        let state = CarbRatioTest.StateModel()
+        state.settingsManager = FakeSettingsManager()
+        func finished(logged: Decimal?, outcome: CarbRatioTestOutcome, interference: String? = nil) -> CarbRatioTestState {
+            var test = carbRatioTest(.finished)
+            test.bolusAt = Date().addingTimeInterval(-4 * 3600)
+            test.carbs = logged
+            test.carbsAt = logged == nil ? nil : test.bolusAt
+            test.endedAt = Date()
+            test.endReason = interference == nil ? .completed : .interrupted
+            test.interference = interference
+            test.outcome = outcome
+            return test
+        }
+        func grams(_ text: String) -> String { SettingsTestFormat.keepTogether(text, unit: "g") }
+        let tablets = "10 tablets of Dex4 (\(grams("40")))"
+
+        state.apply(CarbRatioTestRunnerState(test: finished(logged: 40, outcome: .accurate)))
+        #expect(state.resultTabletsText == "\(tablets), logged as \(grams("40")) with the bolus.")
+        // 39.5 g, within a gram, with a verdict: judged on the tablets' 40 g.
+        state.apply(CarbRatioTestRunnerState(test: finished(logged: dec("39.5"), outcome: .tooHigh)))
+        #expect(
+            state.resultTabletsText
+                == "\(tablets). \(grams("39.5")) logged with the bolus; the result uses the tablets' \(grams("40"))."
+        )
+        // 30 g, which made the test invalid: only what was logged.
+        let differ = CarbRatioTestBolusCondition.carbsDiffer(logged: 30, planned: 40).note
+        state.apply(CarbRatioTestRunnerState(test: finished(logged: 30, outcome: .invalid, interference: differ)))
+        #expect(state.resultTabletsText == "\(tablets). \(grams("30")) logged with the bolus.")
+        // Within a gram, but no verdict for another reason: nothing about what a result used.
+        state.apply(CarbRatioTestRunnerState(test: finished(logged: dec("39.5"), outcome: .invalid, interference: "x")))
+        #expect(state.resultTabletsText == "\(tablets). \(grams("39.5")) logged with the bolus.")
+        state.apply(CarbRatioTestRunnerState(test: finished(logged: nil, outcome: .invalid, interference: "x")))
+        #expect(state.resultTabletsText == "\(tablets). Their carbs weren't logged with the bolus.")
+    }
+
     @Test("The steps sheet lists every step of the test, in order") func stepsSheet() {
         #expect(CarbRatioTest.CheckView.steps().map(\.step) == CarbRatioTest.Step.allCases)
     }
@@ -938,6 +1218,86 @@ private final class FakeCarbRatioScreenReads: CarbRatioTestScreenReads {
         #expect(state.carbs == 12)
         #expect(recalculated == 0)
         #expect(!prefill.isPending)
+    }
+
+    @Test("The sheet keeps the tablets' decimals while it is up, filled or not, and its own formatter after") func gramFormatter(
+    ) async throws {
+        let router = SettingsTestFakeRouter()
+        let prefill = SettingsTestTreatmentsPrefill(router: { router }, aiRequestFills: { false }, testCarbsLogged: { false })
+        #expect(prefill.gramFormatter == nil)
+        // 10 TruePlus tablets.
+        prefill.prepare(carbs: dec("37.5"))
+        router.mainModalScreen.send(.treatmentView)
+        let formatter = try #require(prefill.gramFormatter)
+        formatter.locale = Locale(identifier: "en_US")
+        #expect(formatter.string(from: NSDecimalNumber(decimal: dec("37.5"))) == "37.5")
+        #expect(formatter.number(from: "37.5")?.decimalValue == dec("37.5"))
+        let state = sheet()
+        prefill.sheetAppeared(state: state, recalculate: {})
+        #expect(state.carbs == dec("37.5"))
+        // Filled, and still up: the field keeps showing 37.5, not 38.
+        #expect(!prefill.isPending)
+        #expect(prefill.gramFormatter != nil)
+        prefill.sheetDisappeared()
+        #expect(prefill.gramFormatter != nil)
+        // Closed: back to the sheet's own.
+        router.mainModalScreen.send(nil)
+        #expect(await eventuallyOnMain { prefill.gramFormatter == nil })
+    }
+
+    @Test("Carbs logged while the limits load aren't filled in") func carbsLoggedWhileLimitsLoad() async throws {
+        var logged = false
+        let prefill = SettingsTestTreatmentsPrefill(
+            router: { SettingsTestFakeRouter() },
+            aiRequestFills: { false },
+            testCarbsLogged: { logged }
+        )
+        prefill.prepare(carbs: 40)
+        let state = sheet(maxCarbs: 0)
+        var recalculated = 0
+        prefill.sheetAppeared(state: state, recalculate: { recalculated += 1 })
+        // Logged meanwhile, from another sheet.
+        logged = true
+        state.maxCarbs = 250
+        #expect(await eventuallyOnMain { !prefill.isPending })
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(state.carbs == 0)
+        #expect(recalculated == 0)
+    }
+
+    @Test("A late limits callback from a closed sheet fills nothing, and the newer sheet still gets its fill") func staleSheet() async {
+        let router = SettingsTestFakeRouter()
+        let prefill = SettingsTestTreatmentsPrefill(router: { router }, aiRequestFills: { false }, testCarbsLogged: { false })
+        // The first sheet appears while its limits load, then closes.
+        prefill.prepare(carbs: 40)
+        let old = sheet(maxCarbs: 0)
+        prefill.sheetAppeared(state: old, recalculate: {})
+        prefill.sheetDisappeared()
+        #expect(!prefill.isPending)
+        // A newer request's sheet appears, its limits loading too.
+        prefill.prepare(carbs: dec("37.5"))
+        let new = sheet(maxCarbs: 0)
+        prefill.sheetAppeared(state: new, recalculate: {})
+        // The closed sheet's limits load late: its callback fills nothing.
+        old.maxCarbs = 250
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(old.carbs == 0)
+        #expect(prefill.isPending)
+        new.maxCarbs = 250
+        #expect(await eventuallyOnMain { new.carbs == dec("37.5") })
+    }
+
+    @Test("The test's carbs count as logged before and after its bolus") func carbsLoggedAnyTime() {
+        var test = carbRatioTest(.dosing)
+        #expect(!SettingsTestTreatmentsPrefill.testCarbsLogged(in: test))
+        test.carbsAt = Date().addingTimeInterval(-3 * minute)
+        #expect(SettingsTestTreatmentsPrefill.testCarbsLogged(in: test))
+        // The bolus recorded too: still logged, so a pending sheet isn't filled in again.
+        test.bolusAt = Date().addingTimeInterval(-minute)
+        test.phase = .waiting
+        #expect(!test.carbsLoggedAwaitingBolus)
+        #expect(SettingsTestTreatmentsPrefill.testCarbsLogged(in: test))
+        #expect(!SettingsTestTreatmentsPrefill.testCarbsLogged(in: nil))
     }
 
     @Test("The fill is dropped when the sheet closes, or the router leaves it before it appeared") func dropsOnClose() async {

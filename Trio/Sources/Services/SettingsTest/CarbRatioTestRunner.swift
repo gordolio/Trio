@@ -137,13 +137,13 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
         guard carbRatio >= minimum, (crEntries ?? []).allSatisfy({ $0.value >= minimum }) else {
             return .carbRatioUnderMinimum
         }
-        // Never past what Max Bolus and Max Carbs allow, as the Check screen's count; unread, Treatments still holds the
-        // bolus and the carbs to them.
+        // Never past what Max Bolus and Max Carbs allow, as the Check screen's count, at the lowest carb ratio the hours
+        // kept can meet, where the dose is largest; unread, Treatments still holds the bolus and the carbs to them.
         if let maxBolus = reads.maxBolus(), let maxCarbs = reads.maxCarbs(),
            CarbRatioTestEvaluator.tabletCount(
                begin.count,
                brand: begin.brand,
-               carbRatio: carbRatio,
+               carbRatio: CarbRatioTestEvaluator.lowestCarbRatio(carbRatio, covered: crEntries),
                maxBolus: maxBolus,
                maxCarbs: maxCarbs
            ) != begin.count
@@ -153,7 +153,9 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
         let tabletCarbs = begin.brand.totalCarbs(for: begin.count)
         guard begin.count >= 1, let expected = CarbRatioTestEvaluator.unroundedDose(carbs: tabletCarbs, carbRatio: carbRatio)
         else { return .tabletsOverLimits }
-        let decision = CarbRatioTestEvaluator.iobDecision(iob: begin.iob, expectedDose: expected, carbRatio: carbRatio)
+        // As it is now, since it can have risen since the Check screen read it; the screen's read when Trio has none.
+        let iobNow = reads.currentIOB() ?? begin.iob
+        let decision = CarbRatioTestEvaluator.iobDecision(iob: iobNow, expectedDose: expected, carbRatio: carbRatio)
         if decision == .blocked { return .iobOverDose }
         let cobLine = CarbRatioTestEvaluator.cobLine(carbs: tabletCarbs, carbRatio: carbRatio)
         if CarbRatioTestEvaluator.cobBlocks(cob: cob, line: cobLine) { return .carbsOnBoard }
@@ -551,6 +553,7 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
         }
         let iob = reads.currentIOB()
         let cob = await reads.fetchDoseCOB(windowStart: test.bolusWindowStart)
+        let maxBolus = reads.maxBolus()
         return await MainActor.run {
             CarbRatioTestDoseInputs(
                 readings: readings,
@@ -558,8 +561,10 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
                 iob: iob,
                 doseIOB: state.doseIOB,
                 cob: cob,
-                increment: settingsManager.preferences.bolusIncrement,
-                now: Date()
+                // The increment Begin saved, which the running check and the verdict judge the bolus by.
+                increment: test.bolusIncrement,
+                now: Date(),
+                maxBolus: maxBolus
             )
         }
     }
@@ -665,14 +670,19 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
     }
 
     /// Makes sure the service knows where the bolus window starts, for a test past settling whose session doesn't: one
-    /// the app closed on as it settled.
+    /// the app closed on as it settled. The same for the test bolus, for one the app closed on as it was found.
     private func shareBolusWindowStart(of testID: UUID) async {
         await MainActor.run {
             guard let test = state.test, test.id == testID, test.phase != .finished, let start = test.bolusWindowStart,
                   let service, let session = service.activeSession, session.kind == .carbRatio,
-                  session.id == test.sessionID, session.bolusWindowStart == nil
+                  session.id == test.sessionID
             else { return }
-            service.setBolusWindowStart(kind: .carbRatio, at: start)
+            if session.bolusWindowStart == nil {
+                service.setBolusWindowStart(kind: .carbRatio, at: start)
+            }
+            if let bolusAt = test.bolusAt, service.activeSession?.testBolusAt == nil {
+                service.setTestBolus(kind: .carbRatio, at: bolusAt)
+            }
         }
     }
 
@@ -871,8 +881,11 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
                 latest.carbsAt = carbs.date
                 latest.carbsID = carbs.id
             }
-            // The meal has begun: the Dose step's notice is no longer owed.
-            latest.doseNoticeDue = nil
+            // The bolus is in: the Dose step's notice is no longer owed. Carbs logged first leave it owed, since it is what
+            // prompts the bolus in the time left for it.
+            if latest.bolusAt != nil {
+                latest.doseNoticeDue = nil
+            }
             var failed: CarbRatioTestBolusCondition?
             if let judged, let mealBolusAt = latest.bolusAt, let mealCarbsAt = latest.carbsAt, let logged = latest.carbs {
                 latest.startGlucose = judged.start
@@ -904,6 +917,10 @@ final class CarbRatioTestRunner: SettingsTestRunner, CarbRatioTestRunning {
                 )
             }
             save(latest)
+            // The watchdog then knows the meal has its bolus, so a bolus read that fails later doesn't end it.
+            if newBolus, let bolusAt = latest.bolusAt, sessionIsLive(for: latest) {
+                service?.setTestBolus(kind: .carbRatio, at: bolusAt)
+            }
             if newBolus, failed == nil {
                 debug(.settings, "CarbRatioTestRunner: found the test bolus, waiting out the test")
                 // With the save, as the step notices are posted with theirs.

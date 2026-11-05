@@ -1101,7 +1101,8 @@ private func finishedTest(
         #expect(CarbRatioTestEvaluator.noVerdict(for: noBolus) == .noBolus)
         #expect(
             CarbRatioTestEvaluator.noVerdictText(.noBolus, test: noBolus)
-                == "The test needs your bolus within 90 minutes of starting. Trio didn't see one, so there was nothing to judge."
+                ==
+                "The test needs your bolus within 90 minutes after settling. Trio didn't see one, so there was nothing to judge."
         )
         var spoiled = finishedTest(reason: .interrupted)
         spoiled.interference = CarbRatioTestEvaluator.noCarbsNote

@@ -322,6 +322,10 @@ struct SettingsTestSession: JSON, Equatable, Identifiable {
     /// Nil for the ISF test, whose wait is the docs' 4 hours (`ISFTest.Config.docsWait`), for other tests, and in a
     /// session saved before this was kept.
     var waitLength: TimeInterval?
+    /// For a carb ratio test, when its test bolus came, once its runner has recorded it (`SettingsTestService.setTestBolus`),
+    /// so the watchdog doesn't end a meal that has its bolus for boluses it can't read. Nil before, for other tests, and in
+    /// a session saved before this was kept.
+    var testBolusAt: Date?
 
     /// Where the bolus window starts in effect: the end of settling once it is kept, nil while a session that settles
     /// still does, and Start for a session from before settling was kept.

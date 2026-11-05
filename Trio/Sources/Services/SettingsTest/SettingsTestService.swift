@@ -49,6 +49,11 @@ protocol SettingsTestService: AnyObject {
     /// expire before the wait is up. Never shorter.
     func setBolusWindowStart(kind: SettingsTestKind, at date: Date)
 
+    /// Keeps when the running session's test bolus came, if the one running is of this kind: a carb ratio test's, once
+    /// its runner has found it. Persisted with the session, so the watchdog knows the meal has its bolus
+    /// (`carbRatioMealEnding`).
+    func setTestBolus(kind: SettingsTestKind, at date: Date)
+
     /// The last session the service ended on its own, for a low, for carbs logged or unreadable, for basal stopped
     /// without Trio asking, or for an ISF or a carb ratio test's second bolus or no bolus, and why. Kept until the next
     /// one.
@@ -529,6 +534,13 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
+    func setTestBolus(kind: SettingsTestKind, at date: Date) {
+        guard var session = activeSession, session.kind == kind, session.testBolusAt == nil else { return }
+        session.testBolusAt = date
+        storage.save(session, as: SettingsTestStorage.sessionPath)
+        sessionSubject.send(session)
+    }
+
     /// Ends a running test in Basal Testing when something spoiled it, since it began: Trio suspended insulin for a low
     /// (any test), carbs were logged (a basal, an ISF or a carb ratio test, whose own tablets' carbs are let through), a
     /// carb ratio test's tablets' carbs and bolus didn't come within the pairing time of each other (`mealUnpaired`), or,
@@ -618,11 +630,11 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
-    /// Whether the session a check copied before its reads is still the one running, with the same bolus window start,
-    /// so what the check found from the copy still holds.
+    /// Whether the session a check copied before its reads is still the one running, with the same bolus window start
+    /// and test bolus, so what the check found from the copy still holds. (Only a carb ratio session gets a test bolus.)
     static func isUnchanged(_ copy: SettingsTestSession, live: SettingsTestSession?) -> Bool {
         guard let live else { return false }
-        return live.id == copy.id && live.bolusWindowStart == copy.bolusWindowStart
+        return live.id == copy.id && live.bolusWindowStart == copy.bolusWindowStart && live.testBolusAt == copy.testBolusAt
     }
 
     /// Whether `session` runs a test with a bolus, which settles before it, so the watchdog reads its suspend as
@@ -706,10 +718,11 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         } catch {
             warning(.settings, "SettingsTest: couldn't read boluses to pair the carb ratio test's meal", error: error)
             // The tablets' carbs logged past the pairing time with no bolus that can be seen: ended, the safe way. A bolus
-            // may have come, so it isn't dated back to the end of the pairing time.
+            // may have come, so it isn't dated back to the end of the pairing time. Not once the runner has recorded the
+            // test bolus with the session: the meal has its bolus.
             guard CarbRatioTestEvaluator.bolusesUnreadEnd(
                 carbsAt: carbsAt,
-                bolusAt: nil,
+                bolusAt: session.testBolusAt,
                 bolusesRead: false,
                 now: end
             ) != nil else { return nil }
