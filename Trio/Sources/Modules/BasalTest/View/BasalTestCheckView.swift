@@ -72,6 +72,8 @@ extension BasalTest {
         /// Whether the passed checks are shown one by one.
         @State private var showsPassedChecks = false
 
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
         var body: some View {
             SettingsTestScreen(paintsBackground: false) {
                 SettingsTestHeader(
@@ -107,6 +109,8 @@ extension BasalTest {
                         SettingsTestValueRow(title: check.title, value: check.value ?? check.detail ?? "", info: check.info)
                     }
                 }
+
+                SettingsTestPageBlocker(blocker: state.startBlocker)
             } footer: {
                 NextFooter(state: state, showsBack: false)
             }
@@ -121,20 +125,39 @@ extension BasalTest {
                 passing: state.passingChecks.count,
                 total: state.blockingChecks.count
             )
+            let icon = Image(systemName: SettingsTestCheckState.passed.icon)
+                .font(.title3)
+                .foregroundStyle(SettingsTestCheckState.passed.color)
+            let text = Text(summary)
+                .font(.subheadline.weight(.semibold))
+            let chevron = Image(systemName: showsPassedChecks ? "chevron.up" : "chevron.down")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             return Button {
                 withAnimation { showsPassedChecks.toggle() }
             } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Image(systemName: SettingsTestCheckState.passed.icon)
-                        .font(.title3)
-                        .foregroundStyle(SettingsTestCheckState.passed.color)
-                    Text(summary)
-                        .font(.subheadline.weight(.semibold))
-                    Spacer(minLength: 0)
-                    Image(systemName: showsPassedChecks ? "chevron.up" : "chevron.down")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        // The tick and the chevron on a line above the summary, so it has the card's width: between them,
+                        // "checks" broke mid-word at AX5 Bold on a small phone.
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                icon
+                                Spacer(minLength: 0)
+                                chevron
+                            }
+                            text
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            icon
+                            text
+                            Spacer(minLength: 0)
+                            chevron
+                        }
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -173,6 +196,8 @@ extension BasalTest {
                         SettingsTestDocsQuote(text: Docs.testTimesOfDaySeparately)
                     }
                 }
+
+                SettingsTestPageBlocker(blocker: state.startBlocker)
             } footer: {
                 NextFooter(state: state)
             }
@@ -243,6 +268,8 @@ extension BasalTest {
                     )
                     bullet(Text("Your usual dosing mode returns when the test ends."))
                 }
+
+                SettingsTestPageBlocker(blocker: state.startBlocker)
             } footer: {
                 SettingsTestPageFooter(blocker: state.startBlocker, back: { state.previousCheckPage() }) {
                     Button {
