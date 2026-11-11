@@ -319,6 +319,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
                 }
 
                 session.commitConfiguration()
+                disableSensorOrientationCompensation()
                 if let device = cameraInput?.device {
                     DispatchQueue.main.async { self.followRotation(of: device) }
                 }
@@ -332,6 +333,14 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
 
     private func cameraDevice(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
         AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+    }
+
+    /// Some front cameras (all of iPhone Duo's) rotate a photo's pixels to match older iPhones' sensors.
+    /// That moves them out of the camera's own coordinates, which the scan-frame crop uses. The rotation
+    /// coordinator already turns photos upright, and Apple says to switch this off once you use it.
+    private func disableSensorOrientationCompensation() {
+        guard #available(iOS 26.0, *), captureOutput.isCameraSensorOrientationCompensationSupported else { return }
+        captureOutput.isCameraSensorOrientationCompensationEnabled = false
     }
 
     /// Cameras don't all sit the same way in the phone: iPhone Duo's inner camera is a quarter turn off
@@ -430,6 +439,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
             }
 
             session.commitConfiguration()
+            disableSensorOrientationCompensation()
         }
     }
 
