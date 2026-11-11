@@ -122,6 +122,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
     private var previewRotationObservation: NSKeyValueObservation?
     private var isSessionConfigured = false
     private var isCapturing = false
+    private var isSwitchingCamera = false
     private var captureCropRect: CGRect?
 
     private lazy var shutterButton: UIButton = {
@@ -358,7 +359,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
     }
 
     @objc private func capturePhoto() {
-        guard !isCapturing, session.isRunning else { return }
+        guard !isCapturing, !isSwitchingCamera, session.isRunning else { return }
         isCapturing = true
         shutterButton.isEnabled = false
         captureFeedback.prepare()
@@ -399,10 +400,18 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
     }
 
     @objc private func flipCamera() {
-        guard !isCapturing else { return }
+        guard !isCapturing, !isSwitchingCamera else { return }
+        isSwitchingCamera = true
+        shutterButton.isEnabled = false
 
         sessionQueue.async { [weak self] in
-            guard let self, let currentInput = cameraInput else { return }
+            guard let self else { return }
+            // Even if the switch fails, re-enable capture with the rotation of whichever camera stays connected.
+            defer {
+                let device = cameraInput?.device
+                DispatchQueue.main.async { self.finishCameraSwitch(following: device) }
+            }
+            guard let currentInput = cameraInput else { return }
 
             let newPosition: AVCaptureDevice.Position = cameraPosition == .back ? .front : .back
             guard let device = cameraDevice(position: newPosition),
@@ -421,10 +430,16 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
             }
 
             session.commitConfiguration()
-            if let device = cameraInput?.device {
-                DispatchQueue.main.async { self.followRotation(of: device) }
-            }
         }
+    }
+
+    /// Capture waits for this, so a photo can't use the previous camera's rotation.
+    private func finishCameraSwitch(following device: AVCaptureDevice?) {
+        if let device {
+            followRotation(of: device)
+        }
+        isSwitchingCamera = false
+        shutterButton.isEnabled = true
     }
 
     /// Flashes the scan frame, freezes the preview on the captured frame, and taps a haptic,
