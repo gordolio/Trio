@@ -396,8 +396,10 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
             {
                 connection.videoRotationAngle = angle
             }
-            if cameraPosition == .front, connection.isVideoMirroringSupported {
-                connection.isVideoMirrored = true
+            if connection.isVideoMirroringSupported {
+                // Setting isVideoMirrored throws while the connection adjusts it automatically.
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = cameraPosition == .front
             }
         }
 
