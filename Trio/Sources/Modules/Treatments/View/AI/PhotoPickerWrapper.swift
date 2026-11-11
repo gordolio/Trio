@@ -118,8 +118,11 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
 
     private var cameraInput: AVCaptureDeviceInput?
     private var cameraPosition: AVCaptureDevice.Position = .back
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    private var previewRotationObservation: NSKeyValueObservation?
     private var isSessionConfigured = false
     private var isCapturing = false
+    private var isSwitchingCamera = false
     private var captureCropRect: CGRect?
 
     private lazy var shutterButton: UIButton = {
@@ -204,7 +207,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
             safeTop: view.safeAreaInsets.top,
             safeBottom: view.safeAreaInsets.bottom
         )
-        updateVideoRotation()
+        applyPreviewRotation()
     }
 
     override func viewSafeAreaInsetsDidChange() {
@@ -316,6 +319,9 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
                 }
 
                 session.commitConfiguration()
+                if let device = cameraInput?.device {
+                    DispatchQueue.main.async { self.followRotation(of: device) }
+                }
             }
 
             if !session.isRunning {
@@ -328,34 +334,38 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
         AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
     }
 
-    private var videoRotationAngle: CGFloat {
-        switch view.window?.windowScene?.interfaceOrientation {
-        case .landscapeLeft:
-            return 0
-        case .landscapeRight:
-            return 180
-        case .portraitUpsideDown:
-            return 270
-        default:
-            return 90
+    /// Cameras don't all sit the same way in the phone: iPhone Duo's inner camera is a quarter turn off
+    /// from the others. So the rotation comes from AVFoundation, which knows each camera's mount,
+    /// not from the screen orientation. A coordinator follows one camera, so a camera switch makes a new one.
+    private func followRotation(of device: AVCaptureDevice) {
+        guard rotationCoordinator?.device !== device else { return }
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: previewLayer)
+        rotationCoordinator = coordinator
+        previewRotationObservation = coordinator.observe(\.videoRotationAngleForHorizonLevelPreview) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.applyPreviewRotation() }
         }
+        applyPreviewRotation()
     }
 
-    private func updateVideoRotation() {
-        guard let connection = previewLayer.connection else { return }
-        let angle = videoRotationAngle
-        if connection.isVideoRotationAngleSupported(angle) {
-            connection.videoRotationAngle = angle
-        }
+    private func applyPreviewRotation() {
+        // The coordinator reports 0° until the preview is on screen, so wait for a window.
+        guard view.window != nil,
+              let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelPreview,
+              let connection = previewLayer.connection,
+              connection.isVideoRotationAngleSupported(angle),
+              connection.videoRotationAngle != angle
+        else { return }
+        connection.videoRotationAngle = angle
     }
 
     @objc private func capturePhoto() {
-        guard !isCapturing, session.isRunning else { return }
+        guard !isCapturing, !isSwitchingCamera, session.isRunning else { return }
         isCapturing = true
         shutterButton.isEnabled = false
         captureFeedback.prepare()
 
         // Convert the scan frame while the preview is live; it freezes once the photo is taken.
+        // The result is in the sensor's unrotated coordinates, the same space as the photo's pixels.
         captureCropRect = previewLayer.metadataOutputRectConverted(
             fromLayerRect: FoodScannerLayout.scanRegion(
                 in: view.bounds.size,
@@ -372,8 +382,9 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
         }
 
         if let connection = captureOutput.connection(with: .video) {
-            let angle = videoRotationAngle
-            if connection.isVideoRotationAngleSupported(angle) {
+            if let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelCapture,
+               connection.isVideoRotationAngleSupported(angle)
+            {
                 connection.videoRotationAngle = angle
             }
             if cameraPosition == .front, connection.isVideoMirroringSupported {
@@ -389,10 +400,18 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
     }
 
     @objc private func flipCamera() {
-        guard !isCapturing else { return }
+        guard !isCapturing, !isSwitchingCamera else { return }
+        isSwitchingCamera = true
+        shutterButton.isEnabled = false
 
         sessionQueue.async { [weak self] in
-            guard let self, let currentInput = cameraInput else { return }
+            guard let self else { return }
+            // Even if the switch fails, re-enable capture with the rotation of whichever camera stays connected.
+            defer {
+                let device = cameraInput?.device
+                DispatchQueue.main.async { self.finishCameraSwitch(following: device) }
+            }
+            guard let currentInput = cameraInput else { return }
 
             let newPosition: AVCaptureDevice.Position = cameraPosition == .back ? .front : .back
             guard let device = cameraDevice(position: newPosition),
@@ -411,8 +430,16 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
             }
 
             session.commitConfiguration()
-            DispatchQueue.main.async { self.updateVideoRotation() }
         }
+    }
+
+    /// Capture waits for this, so a photo can't use the previous camera's rotation.
+    private func finishCameraSwitch(following device: AVCaptureDevice?) {
+        if let device {
+            followRotation(of: device)
+        }
+        isSwitchingCamera = false
+        shutterButton.isEnabled = true
     }
 
     /// Flashes the scan frame, freezes the preview on the captured frame, and taps a haptic,
@@ -455,7 +482,7 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
         }
 
         guard let captureCropRect,
-              let croppedImage = image.cropped(toNormalizedRect: captureCropRect)
+              let croppedImage = image.cropped(toSensorRect: captureCropRect)
         else {
             onCapture?(image)
             return
@@ -485,9 +512,12 @@ private final class FoodCameraViewController: UIViewController, AVCapturePhotoCa
 
 /// Extension to compress UIImage for API transmission
 extension UIImage {
-    fileprivate func cropped(toNormalizedRect normalizedCropRect: CGRect) -> UIImage? {
-        let normalized = normalizedOrientation()
-        guard let cgImage = normalized.cgImage else { return nil }
+    /// Crops to a normalized rect in the camera sensor's unrotated coordinates, the space
+    /// `metadataOutputRectConverted(fromLayerRect:)` returns. AVCapturePhotoOutput leaves a photo's pixels
+    /// in that space and records the rotation as its Exif orientation, so this crops the stored pixels
+    /// first, then turns the result upright.
+    func cropped(toSensorRect normalizedCropRect: CGRect) -> UIImage? {
+        guard let cgImage else { return nil }
 
         let imageBounds = CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height)
         let pixelCropRect = CGRect(
@@ -503,7 +533,7 @@ extension UIImage {
               let cropped = cgImage.cropping(to: pixelCropRect)
         else { return nil }
 
-        return UIImage(cgImage: cropped, scale: 1, orientation: .up)
+        return UIImage(cgImage: cropped, scale: 1, orientation: imageOrientation).normalizedOrientation()
     }
 
     private func normalizedOrientation() -> UIImage {
