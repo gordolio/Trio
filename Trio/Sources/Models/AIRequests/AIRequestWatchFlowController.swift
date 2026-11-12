@@ -60,9 +60,6 @@ import Observation
     @ObservationIgnored var onAnotherFlowStarted: () -> Void = {}
     /// The watch's bolus increment, which upstream's Confirm screen floors its dose to.
     @ObservationIgnored var bolusIncrement: Decimal = 0.05
-    /// The bolus on upstream's Confirm screen, the Double it floors to show its dose. Read as its bolus send is caught,
-    /// before upstream zeroes it. Without it, the amount upstream passes is used.
-    @ObservationIgnored var screenBolus: (() -> Double)?
 
     @ObservationIgnored private var send: ([String: Any]) -> Void
     @ObservationIgnored private var log: (String) -> Void
@@ -188,9 +185,10 @@ import Observation
     }
 
     /// Catches upstream's bolus send while a request is open, sends the confirmation with the carbs caught before it,
-    /// and returns `true`. The dose sent is the one upstream's Confirm screen shows. Returns `false` without a request,
-    /// for upstream to send it itself.
-    func interceptBolus(_ amount: Decimal) -> Bool {
+    /// and returns `true`. The dose sent is the one upstream's Confirm screen shows: `shownBolus`, the Double it floors,
+    /// when given, and otherwise the amount upstream passes. Returns `false` without a request, for upstream to send it
+    /// itself.
+    func interceptBolus(_ amount: Decimal, shownBolus: Double? = nil) -> Bool {
         guard case let .active(details) = phase, !holdsSends else { return drops("bolus") }
         let carbsSent = recordedCarbs != nil
         let carbs: Decimal?
@@ -204,7 +202,7 @@ import Observation
             carbs = 0
         }
         onIntercepted()
-        let bolus = screenBolus?() ?? Double(truncating: amount as NSNumber)
+        let bolus = shownBolus ?? Double(truncating: amount as NSNumber)
         confirm(details, units: shownDose(bolus), carbs: carbs, carbsSent: carbsSent)
         return true
     }

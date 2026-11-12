@@ -99,10 +99,6 @@ private struct AIRequestFlowModifier: ViewModifier {
         controller.onIntercepted = { [state] in
             state.showCommsAnimation = true
         }
-        // The confirm sends the dose Confirm shows, from the Double it floors.
-        controller.screenBolus = { [state] in
-            state.bolusAmount
-        }
         // A flow the wearer starts on top of the request's screens starts as upstream's own do, not from the request's
         // carbs and dose: the bolus screen otherwise shows the request's dose until the phone's recommendation comes.
         controller.onAnotherFlowStarted = { [state] in
@@ -115,6 +111,9 @@ private struct AIRequestFlowModifier: ViewModifier {
         state.recommendedBolus = details.units
         state.bolusAmount = bolus
         state.confirmationProgress = 0
+        // Starts the entry's 2 min clock, as upstream's input screens do when they appear: the request opens straight on
+        // Confirm, and an entry never marked edited is refused as stale.
+        state.markEntryEdited()
         continueToBolus = true
 
         var path = NavigationPath()
