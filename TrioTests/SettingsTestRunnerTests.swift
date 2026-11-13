@@ -729,7 +729,7 @@ private final class GatedRunner: SettingsTestRunner {
     @Test("Each test opens its own screen") func screensByKind() {
         #expect(SettingsTestKind.basal.testScreen == .basalTest)
         #expect(SettingsTestKind.isf.testScreen == .isfTest)
-        #expect(SettingsTestKind.carbRatio.testScreen == nil)
+        #expect(SettingsTestKind.carbRatio.testScreen == .carbRatioTest)
     }
 
     @Test("A tap still waiting when Trio goes to the background is dropped, and opens nothing later") func droppedInBackground(
@@ -980,9 +980,9 @@ private final class GatedRunner: SettingsTestRunner {
         #expect(!opener.isShowing(.isf))
     }
 
-    @Test("The carb ratio test has no screen to open yet") func carbRatioNoScreen() {
-        #expect(!opener.open(.carbRatio))
-        #expect(opener.pending == nil)
+    @Test("The carb ratio test opens its own screen") func carbRatioScreen() {
+        #expect(opener.open(.carbRatio))
+        #expect(router.mainModalScreen.value == .carbRatioTest)
     }
 
     // MARK: A tap before the router exists (a launch from closed)

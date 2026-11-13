@@ -20,14 +20,16 @@ protocol SettingsTestService: AnyObject {
     /// Starts a session. Call this *before* making the temporary change, so there is a way back
     /// the moment the change takes effect. Restore actions only apply if the change is in effect.
     /// Returns nil, changing nothing, while another session is running: its way back must not be overwritten.
-    /// `settles` marks an ISF session that settles before its bolus window starts (`setBolusWindowStart`).
-    /// `carbsAtBegin` are the carb entries Begin kept (`SettingsTestCarbRule.keptAtBegin`), nil for none.
+    /// `settles` marks a session that settles before its bolus window starts (`setBolusWindowStart`): an ISF or a carb
+    /// ratio test's. `carbsAtBegin` are the carb entries Begin kept (`SettingsTestCarbRule.keptAtBegin`), nil for none.
+    /// `waitLength` is how long a carb ratio test runs after its bolus, nil for the ISF test's 4 hours.
     @discardableResult func begin(
         kind: SettingsTestKind,
         expiresIn: TimeInterval,
         restoring: [SettingsTestRestoreAction],
         settles: Bool,
-        carbsAtBegin: [String]?
+        carbsAtBegin: [String]?,
+        waitLength: TimeInterval?
     ) -> SettingsTestSession?
 
     /// The session as saved, read back from disk: what a relaunch would find. Nil when none is.
@@ -40,14 +42,21 @@ protocol SettingsTestService: AnyObject {
     /// Ends the session if it ran past its deadline. Safe to call at any time.
     func endIfExpired()
 
-    /// Keeps when the running session's bolus window began, if the one running is of this kind: for an ISF test, the
-    /// end of its settling, from which the watchdog looks for the test bolus. Persisted with the session. The session
-    /// then lasts at least until the latest its test can end from there, the time for the bolus, the docs' 4 hours and
-    /// the grace after them, so a late end of settling can't have it expire before the 4 hours are up. Never shorter.
+    /// Keeps when the running session's bolus window began, if the one running is of this kind: for an ISF or a carb
+    /// ratio test, the end of its settling, from which the watchdog looks for the test bolus. Persisted with the session.
+    /// The session then lasts at least until the latest its test can end from there, the time for the bolus, its wait
+    /// (the docs' 4 hours, or the session's `waitLength`) and the grace after it, so a late end of settling can't have it
+    /// expire before the wait is up. Never shorter.
     func setBolusWindowStart(kind: SettingsTestKind, at date: Date)
 
+    /// Keeps when the running session's test bolus came, if the one running is of this kind: a carb ratio test's, once
+    /// its runner has found it. Persisted with the session, so the watchdog knows the meal has its bolus
+    /// (`carbRatioMealEnding`).
+    func setTestBolus(kind: SettingsTestKind, at date: Date)
+
     /// The last session the service ended on its own, for a low, for carbs logged or unreadable, for basal stopped
-    /// without Trio asking, or for an ISF test's second bolus or no bolus, and why. Kept until the next one.
+    /// without Trio asking, or for an ISF or a carb ratio test's second bolus or no bolus, and why. Kept until the next
+    /// one.
     func lastEnd() -> SettingsTestEnd?
 
     func archive(_ record: SettingsTestRecord)
@@ -58,6 +67,24 @@ protocol SettingsTestService: AnyObject {
 }
 
 extension SettingsTestService {
+    /// A session with the ISF test's 4 hours after its bolus, if it has one.
+    @discardableResult func begin(
+        kind: SettingsTestKind,
+        expiresIn: TimeInterval,
+        restoring: [SettingsTestRestoreAction],
+        settles: Bool,
+        carbsAtBegin: [String]?
+    ) -> SettingsTestSession? {
+        begin(
+            kind: kind,
+            expiresIn: expiresIn,
+            restoring: restoring,
+            settles: settles,
+            carbsAtBegin: carbsAtBegin,
+            waitLength: nil
+        )
+    }
+
     /// A session that doesn't settle, with no carb entries kept.
     @discardableResult func begin(
         kind: SettingsTestKind,
@@ -389,7 +416,8 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     var activeSession: SettingsTestSession? { sessionSubject.value }
     var sessionPublisher: AnyPublisher<SettingsTestSession?, Never> { sessionSubject.eraseToAnyPublisher() }
 
-    /// What the watchdog reads to end a basal or ISF test on a low, basal stopped, carbs, or a second bolus or none.
+    /// What the watchdog reads to end a basal, ISF or carb ratio test on a low, basal stopped, carbs, or a second bolus
+    /// or none.
     private let events: SettingsTestEvents
 
     /// `events` and `runtime` are for tests; the app reads Core Data and builds the runtime itself.
@@ -438,7 +466,8 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         expiresIn: TimeInterval,
         restoring: [SettingsTestRestoreAction],
         settles: Bool,
-        carbsAtBegin: [String]?
+        carbsAtBegin: [String]?,
+        waitLength: TimeInterval?
     ) -> SettingsTestSession? {
         guard activeSession == nil else { return nil }
         let session = SettingsTestSession(
@@ -446,7 +475,8 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
             expiresAt: Date().addingTimeInterval(expiresIn),
             restore: restoring,
             settles: settles ? true : nil,
-            carbsAtBegin: carbsAtBegin
+            carbsAtBegin: carbsAtBegin,
+            waitLength: waitLength
         )
         storage.save(session, as: SettingsTestStorage.sessionPath)
         sessionSubject.send(session)
@@ -490,7 +520,7 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         guard var session = activeSession, session.kind == kind else { return }
         session.bolusWindowStart = date
         let latestEnd = date.addingTimeInterval(
-            ISFTest.Config.doseAllowance + ISFTest.Config.docsWait + ISFTest.Config.expiryGrace
+            ISFTest.Config.doseAllowance + (session.waitLength ?? ISFTest.Config.docsWait) + ISFTest.Config.expiryGrace
         )
         let extended = latestEnd > session.expiresAt
         if extended {
@@ -504,13 +534,22 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
+    func setTestBolus(kind: SettingsTestKind, at date: Date) {
+        guard var session = activeSession, session.kind == kind, session.testBolusAt == nil else { return }
+        session.testBolusAt = date
+        storage.save(session, as: SettingsTestStorage.sessionPath)
+        sessionSubject.send(session)
+    }
+
     /// Ends a running test in Basal Testing when something spoiled it, since it began: Trio suspended insulin for a low
-    /// (any test), carbs were logged (a basal or an ISF test), or, for an ISF test only, a second bolus was
-    /// given after its own, or none came in the time allowed for one. Those are the things the test screens say end the
-    /// test. The watchdog calls this, so any one of them brings the usual dosing back at once, before the test's runner
+    /// (any test), carbs were logged (a basal, an ISF or a carb ratio test, whose own tablets' carbs are let through), a
+    /// carb ratio test's tablets' carbs and bolus didn't come within the pairing time of each other (`mealUnpaired`), or,
+    /// for a test with a bolus only (`watchesTestBolus`), a second bolus was given after its own, or none came in the
+    /// time allowed for one. Those are the things the test screens say end the test.
+    /// The watchdog calls this, so any one of them brings the usual dosing back at once, before the test's runner
     /// finishes it. Basal stopped without Trio asking, by a zero temp set on the pump, ends it too: the test is spoiled,
-    /// and it isn't kept as a low. So do carbs that can't be read, in a basal or an ISF test: Basal Testing gives no
-    /// insulin for food, so it mustn't stay on unchecked. Why and when is kept (`lastEnd()`), so the runner finishes the
+    /// and it isn't kept as a low. So do carbs that can't be read, in a basal, an ISF or a carb ratio test: Basal
+    /// Testing gives no insulin for food, so it mustn't stay on unchecked. Why and when is kept (`lastEnd()`), so the runner finishes the
     /// result for the same reason, with the usual mode already back. A second bolus is dated at that bolus, and no bolus
     /// at the end of the time allowed, so the runner can tell whether they came before the planned end. A suspend is
     /// looked for first, then carbs, then boluses; a suspend that can't be read doesn't stop the others being
@@ -523,10 +562,10 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
     /// before carbs. Carbs are those dated from Begin on, and those dated in the day before it that weren't there at Begin
     /// (`SettingsTestCarbRule`).
     ///
-    /// An ISF test whose 4 hours from its bolus, and the grace after them, are over is ended too, with no reason kept,
-    /// as on expiry: nothing spoiled it, so the runner finishes it as completed. Its session lasts until the latest the 4
-    /// hours could end, so without this Basal Testing could stay on for up to the time allowed for the bolus after a test
-    /// that had run its course.
+    /// A test with a bolus whose wait from it (the ISF test's 4 hours, a carb ratio test's chosen length), and the grace
+    /// after it, is over is ended too, with no reason kept, as on expiry: nothing spoiled it, so the runner finishes it as
+    /// completed. Its session lasts until the latest the wait could end, so without this Basal Testing could stay on for
+    /// up to the time allowed for the bolus after a test that had run its course.
     func endIfLowOrInterrupted() async {
         guard let session = activeSession, session.restore.contains(where: \.switchesToBasalTesting) else { return }
         let watching = session.leftTestModeAt == nil
@@ -536,12 +575,13 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         let until = session.leftTestModeAt.map { min($0, now) } ?? now
         let suspend: BasalTestEvaluator.SuspendReading
         do {
-            // An ISF test settles first, so a zero temp only Closed Loop asked for as it began isn't its low.
-            suspend = session.kind == .isf
+            // An ISF or a carb ratio test settles first, so a zero temp only Closed Loop asked for as it began isn't its
+            // low.
+            suspend = Self.watchesTestBolus(session)
                 ? try await events.isfSuspendReading(startedAt: session.startedAt, to: until)
                 : try await events.suspendReading(from: session.startedAt, to: until)
         } catch {
-            // Carbs are still read: Basal Testing gives no insulin for food, so carbs must end it even then. So are an ISF
+            // Carbs are still read: Basal Testing gives no insulin for food, so carbs must end it even then. So are a
             // test's boluses, so a second one or none still brings the usual dosing back.
             warning(.settings, "SettingsTest: couldn't read temp basals to watch the \(session.kind.rawValue) test", error: error)
             suspend = .unreadable
@@ -563,11 +603,13 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         } else if let interruptedAt = await pumpInterruption(of: session, until: now) {
             debug(.settings, "SettingsTest: the pump was suspended, alarmed or changed, ending the \(session.kind.rawValue) test")
             ending = SettingsTestEnd(sessionID: session.id, cause: .pumpInterrupted, date: interruptedAt)
-        } else if session.kind == .basal || session.kind == .isf, let cause = await carbsEnding(of: session, until: now) {
-            // Only the basal and ISF tests tell the user that logging carbs ends them.
-            debug(.settings, "SettingsTest: \(cause.rawValue), ending the \(session.kind.rawValue) test")
-            ending = SettingsTestEnd(sessionID: session.id, cause: cause, date: now)
-        } else if session.kind == .isf, let bolusCheck = await isfBolusCheck(for: session, now: now) {
+        } else if session.kind == .basal || Self.watchesTestBolus(session),
+                  let carbsEnd = await carbsEnding(of: session, until: now)
+        {
+            // Only the basal, ISF and carb ratio tests tell the user that logging carbs ends them.
+            debug(.settings, "SettingsTest: \(carbsEnd.cause.rawValue), ending the \(session.kind.rawValue) test")
+            ending = carbsEnd
+        } else if Self.watchesTestBolus(session), let bolusCheck = await bolusCheck(for: session, now: now) {
             switch bolusCheck {
             case let .spoiled(bolusEnd): ending = bolusEnd
             case .waitOver: ending = nil
@@ -588,11 +630,19 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
-    /// Whether the session a check copied before its reads is still the one running, with the same bolus window start,
-    /// so what the check found from the copy still holds.
+    /// Whether the session a check copied before its reads is still the one running, with the same bolus window start
+    /// and test bolus, so what the check found from the copy still holds. (Only a carb ratio session gets a test bolus.)
     static func isUnchanged(_ copy: SettingsTestSession, live: SettingsTestSession?) -> Bool {
         guard let live else { return false }
-        return live.id == copy.id && live.bolusWindowStart == copy.bolusWindowStart
+        return live.id == copy.id && live.bolusWindowStart == copy.bolusWindowStart && live.testBolusAt == copy.testBolusAt
+    }
+
+    /// Whether `session` runs a test with a bolus, which settles before it, so the watchdog reads its suspend as
+    /// settling's (`isfSuspendReading`) and watches its bolus (`bolusCheck`): an ISF test, and a carb ratio test, whose
+    /// runner begins every session it runs settling. A carb ratio session that doesn't settle was begun by no runner, and
+    /// is watched as before the carb ratio test ran in the service: for a low, basal stopped and the pump only.
+    static func watchesTestBolus(_ session: SettingsTestSession) -> Bool {
+        session.kind == .isf || (session.kind == .carbRatio && session.settles == true)
     }
 
     /// When the pump was first suspended, alarmed or changed since `session` began (`pumpInterruptions`). Nil when it
@@ -611,42 +661,100 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
         }
     }
 
-    /// What carbs say about `session`: they end it if any were logged that spoil it (`SettingsTestCarbRule.spoil`), from
-    /// Begin on or dated before it and logged since, and also if they can't be read, so the usual dosing comes back. Nil
-    /// to keep going.
-    private func carbsEnding(of session: SettingsTestSession, until end: Date) async -> SettingsTestEndCause? {
+    /// What carbs say about `session`, ended at `end` (now): they end it if any were logged that spoil it
+    /// (`SettingsTestCarbRule.spoil`), from Begin on or dated before it and logged since, and also if they can't be read,
+    /// so the usual dosing comes back; both dated now. A carb ratio test's are its meal's (`carbRatioMealEnding`). Nil to
+    /// keep going.
+    private func carbsEnding(of session: SettingsTestSession, until end: Date) async -> SettingsTestEnd? {
         do {
             let entries = try await events.carbEntries(
                 from: SettingsTestCarbRule.readFrom(startedAt: session.startedAt, kept: session.carbsAtBegin),
                 to: end
             )
+            if session.kind == .carbRatio {
+                return await carbRatioMealEnding(of: session, entries: entries, until: end)
+            }
             return SettingsTestCarbRule.spoil(entries, startedAt: session.startedAt, kept: session.carbsAtBegin)
-                ? .carbsLogged
+                ? SettingsTestEnd(sessionID: session.id, cause: .carbsLogged, date: end)
                 : nil
         } catch {
             warning(.settings, "SettingsTest: couldn't read carbs to watch the \(session.kind.rawValue) test", error: error)
-            return .carbsUnreadable
+            return SettingsTestEnd(sessionID: session.id, cause: .carbsUnreadable, date: end)
         }
     }
 
-    /// What the boluses say ends a running ISF test.
-    private enum ISFBolusCheck {
+    /// What a carb ratio test's meal says about `session` (`carbsEnding`, with the carb `entries` read): carbs besides
+    /// the tablets' end it, dated `end` (`CarbRatioTestEvaluator.carbsSpoil`). So do the meal's halves, the tablets'
+    /// carbs (`CarbRatioTestEvaluator.mealCarbs`) and the test bolus (the first bolus from the bolus window's start to
+    /// the dose deadline, `ISFTestEvaluator.testBolus`), not coming within the pairing time of each other
+    /// (`CarbRatioTestEvaluator.mealPairingEnd`): `mealUnpaired`, dated at the end of the pairing time, so a runner that
+    /// hangs can't hold Basal Testing on with carbs it gives no insulin for, or a bolus Trio's forecast sees alone. With
+    /// the boluses unread, the pairing waits for a check that reads them, except for the tablets' carbs logged past the
+    /// pairing time: no bolus can be seen for them, so it ends the same way (`bolusesUnreadEnd`), dated `end`, since
+    /// whether a bolus came, and so when the test should have ended, can't be told. Nil to keep going.
+    private func carbRatioMealEnding(
+        of session: SettingsTestSession,
+        entries: [SettingsTestCarbEntry],
+        until end: Date
+    ) async -> SettingsTestEnd? {
+        let windowStart = session.bolusWindowStartInEffect
+        if CarbRatioTestEvaluator.carbsSpoil(
+            entries,
+            startedAt: session.startedAt,
+            kept: session.carbsAtBegin,
+            windowStart: windowStart
+        ) {
+            return SettingsTestEnd(sessionID: session.id, cause: .carbsLogged, date: end)
+        }
+        guard let windowStart else { return nil }
+        // The pick goes by date alone, so entries read without grams stand in with none.
+        let carbsAt = CarbRatioTestEvaluator.mealCarbs(
+            entries.map { CarbRatioTestCarbs(id: $0.id, date: $0.date, grams: 0) },
+            since: windowStart
+        )?.date
+        let boluses: [ISFTestBolus]
+        do {
+            boluses = try await events.allBoluses(from: windowStart, to: end)
+        } catch {
+            warning(.settings, "SettingsTest: couldn't read boluses to pair the carb ratio test's meal", error: error)
+            // The tablets' carbs logged past the pairing time with no bolus that can be seen: ended, the safe way. A bolus
+            // may have come, so it isn't dated back to the end of the pairing time. Not once the runner has recorded the
+            // test bolus with the session: the meal has its bolus.
+            guard CarbRatioTestEvaluator.bolusesUnreadEnd(
+                carbsAt: carbsAt,
+                bolusAt: session.testBolusAt,
+                bolusesRead: false,
+                now: end
+            ) != nil else { return nil }
+            return SettingsTestEnd(sessionID: session.id, cause: .mealUnpaired, date: end)
+        }
+        let deadline = windowStart.addingTimeInterval(ISFTest.Config.doseAllowance)
+        let bolusAt = ISFTestEvaluator.testBolus(boluses, since: windowStart, deadline: deadline)?.date
+        guard let unpaired = CarbRatioTestEvaluator.mealPairingEnd(carbsAt: carbsAt, bolusAt: bolusAt, now: end),
+              let at = unpaired.at
+        else { return nil }
+        return SettingsTestEnd(sessionID: session.id, cause: .mealUnpaired, date: at)
+    }
+
+    /// What the boluses say ends a running test with a bolus (`watchesTestBolus`).
+    private enum BolusCheck {
         /// Something spoiled it, kept for the runner.
         case spoiled(SettingsTestEnd)
-        /// The 4 hours from its bolus and the grace after them are over, and nothing spoiled it.
+        /// The wait from its bolus and the grace after it are over, and nothing spoiled it.
         case waitOver
     }
 
-    /// What the boluses end an ISF test for, if they do. While it settles (no `bolusWindowStartInEffect`: a session that
-    /// settles, with no window start kept yet; one from before settling was kept starts it at Start) there is no test
-    /// bolus to come after, and an SMB from the mode before landing then is no second one, so only the latest a bolus
-    /// window could close, Start plus the time for settling and the dose, ends it for no bolus, dated then. Once the
-    /// window has begun: a second bolus from its start on (`allBoluses`, whatever its SMB flag), dated at that bolus,
-    /// or, once the time allowed for the test's bolus has run out, none in that time, dated at the deadline. The first
-    /// bolus is the test's own; a second one spoils the drop the test measures per unit. Then, with nothing spoiled, the
-    /// end of the 4 hours from the test's bolus and the grace after them. Nil to keep going, also when the boluses can't
-    /// be read: no bolus can't be told from one not seen, and the session's expiry still brings the usual dosing back.
-    private func isfBolusCheck(for session: SettingsTestSession, now: Date) async -> ISFBolusCheck? {
+    /// What the boluses end an ISF or a carb ratio test for, if they do. While it settles (no
+    /// `bolusWindowStartInEffect`: a session that settles, with no window start kept yet; one from before settling was
+    /// kept starts it at Start) there is no test bolus to come after, and an SMB from the mode before landing then is no
+    /// second one, so only the latest a bolus window could close, Start plus the time for settling and the dose, ends it
+    /// for no bolus, dated then. Once the window has begun: a second bolus from its start on (`allBoluses`, whatever its
+    /// SMB flag), dated at that bolus, or, once the time allowed for the test's bolus has run out, none in that time,
+    /// dated at the deadline. The first bolus is the test's own; a second one spoils what the test measures per unit.
+    /// Then, with nothing spoiled, the end of the wait from the test's bolus (the session's `waitLength`, or the ISF
+    /// test's 4 hours) and the grace after it. Nil to keep going, also when the boluses can't be read: no bolus can't be
+    /// told from one not seen, and the session's expiry still brings the usual dosing back.
+    private func bolusCheck(for session: SettingsTestSession, now: Date) async -> BolusCheck? {
         guard let windowStart = session.bolusWindowStartInEffect else {
             let deadline = session.startedAt.addingTimeInterval(ISFTest.Config.settleAllowance + ISFTest.Config.doseAllowance)
             guard now >= deadline else { return nil }
@@ -672,7 +780,8 @@ final class BaseSettingsTestService: SettingsTestService, Injectable {
             debug(.settings, "SettingsTest: no bolus came in time, ending the \(session.kind.rawValue) test")
             return .spoiled(SettingsTestEnd(sessionID: session.id, cause: .noBolus, date: deadline))
         }
-        if let testBolus, now >= testBolus.date.addingTimeInterval(ISFTest.Config.docsWait + ISFTest.Config.expiryGrace) {
+        let wait = session.waitLength ?? ISFTest.Config.docsWait
+        if let testBolus, now >= testBolus.date.addingTimeInterval(wait + ISFTest.Config.expiryGrace) {
             debug(.settings, "SettingsTest: the \(session.kind.rawValue) test's wait is over, restoring settings")
             return .waitOver
         }

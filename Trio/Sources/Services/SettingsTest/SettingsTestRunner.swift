@@ -128,9 +128,10 @@ struct SettingsTestRuntime {
     var checkTriggers: AnyPublisher<Void, Never>
     var triggerDebounce: DispatchQueue.SchedulerTimeType.Stride = .seconds(2)
 
-    /// The app's own runtime: the basal and ISF runners, posting through one notifier and reading through their screens'
-    /// providers, and a check on every change of the data a running test reads. The providers resolve only data services
-    /// that never resolve this one, and build nothing but Core Data contexts, so the service's init stays light.
+    /// The app's own runtime: the basal, ISF and carb ratio runners, posting through one notifier and reading through
+    /// their screens' providers, and a check on every change of the data a running test reads. The providers resolve
+    /// only data services that never resolve this one, and build nothing but Core Data contexts, so the service's init
+    /// stays light.
     static func app(resolver: Resolver) -> SettingsTestRuntime {
         SettingsTestRuntime(
             makeRunners: { context in
@@ -146,6 +147,13 @@ struct SettingsTestRuntime {
                     ISFTestRunner(
                         service: context.service,
                         reads: ISFTest.Provider(resolver: resolver),
+                        storage: context.storage,
+                        settingsManager: context.settingsManager,
+                        notifier: notifier
+                    ),
+                    CarbRatioTestRunner(
+                        service: context.service,
+                        reads: CarbRatioTest.Provider(resolver: resolver),
                         storage: context.storage,
                         settingsManager: context.settingsManager,
                         notifier: notifier
@@ -188,11 +196,25 @@ enum SettingsTestBeginError: Error, Equatable {
     /// A basal fast: carbs Begin read are dated under the docs' 2 hours before it (`BasalTest.Config.fastBeforeStart`),
     /// logged after the Check screen last read them. `readyAt` is 2 hours after the newest.
     case recentCarbs(readyAt: Date)
-    /// An ISF test that starts by raising glucose with tablets, with no carb ratio to count them from.
+    /// An ISF test that starts by raising glucose with tablets, or a carb ratio test, with no carb ratio to count the
+    /// tablets from.
     case carbRatioUnreadable
     /// An override or a temp target is running, started after the Check screen last read them: both change basal and
     /// sensitivity, so the test wouldn't show what the settings do on their own.
     case adjustmentActive
+    /// A carb ratio test with carbs on board at or over its line (`CarbRatioTestEvaluator.cobBlocks`), a docs rule: "Zero
+    /// or minimal COB from previous meals".
+    case carbsOnBoard
+    /// A carb ratio test with more insulin on board than its whole dose (`CarbRatioTestEvaluator.iobDecision` is
+    /// `.blocked`), which the Check screen holds Begin for.
+    case iobOverDose
+    /// A carb ratio test whose tablets need a bolus over Max Bolus, or carbs over Max Carbs
+    /// (`CarbRatioTestEvaluator.tabletCount`), as those were when Begin read them.
+    case tabletsOverLimits
+    /// A carb ratio test with a carb ratio under `CarbRatioTest.Config.minimumTestedCarbRatio` now, or in the hours its
+    /// bolus could come at: a ratio a docs step (1 g/U) under it would be under the docs' "Minimum: 1.0 g/U", so the test
+    /// couldn't judge it.
+    case carbRatioUnderMinimum
 
     var message: String {
         switch self {
@@ -218,6 +240,22 @@ enum SettingsTestBeginError: Error, Equatable {
             return String(localized: "Trio couldn't read your carb ratio, so it can't count the tablets.")
         case .adjustmentActive:
             return String(localized: "An override or temp target is running. End it first, then try again.")
+        case .carbsOnBoard:
+            return String(
+                localized: "Trio counts more carbs on board than the test allows. Wait for them to come down, then try again."
+            )
+        case .iobOverDose:
+            return String(
+                localized: "Your insulin on board is more than the test's whole dose. Wait for it to come down, then try again."
+            )
+        case .tabletsOverLimits:
+            return String(
+                localized: "That many tablets needs more than your Max Bolus or Max Carbs allows. Choose fewer, then try again."
+            )
+        case .carbRatioUnderMinimum:
+            return String(
+                localized: "A carb ratio under 2 g/U can't be tested in 1 g/U steps: the docs' minimum is 1.0 g/U."
+            )
         }
     }
 }

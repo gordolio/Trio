@@ -104,6 +104,30 @@ struct SettingsTestNotice: Equatable {
             )
         }
     }
+
+    /// A step of a running carb ratio test that waits on the user. A tap opens nothing until the test has a screen
+    /// (`SettingsTestKind.testScreen`).
+    static func carbRatioStep(_ step: CarbRatioTestStepNotice) -> SettingsTestNotice {
+        switch step {
+        case .settledToDose:
+            return SettingsTestNotice(
+                kind: .carbRatio,
+                slot: .step,
+                title: String(localized: "Carb Ratio Dose Ready"),
+                body: String(localized: "Settling is done. Tap to see your tablets and dose.")
+            )
+        case .timeUp:
+            // The ISF test's words for the same question.
+            return SettingsTestNotice(
+                kind: .carbRatio,
+                slot: .step,
+                title: String(localized: "Carb Ratio Test Waiting"),
+                body: String(
+                    localized: "Insulin on board is still over the line after an hour. Tap to count it and go on, or cancel."
+                )
+            )
+        }
+    }
 }
 
 /// What a runner posts its notices through.
@@ -113,6 +137,10 @@ protocol SettingsTestNotifying: AnyObject {
     /// Withdraws, pending and delivered, the fixed-time notifications the screens scheduled before the update
     /// (`SettingsTestNotifier.legacyIdentifiers`), posting nothing: for every ending, including those that post no notice.
     func withdrawLegacy()
+    /// Withdraws, pending and delivered, the old carb ratio wizard's notifications
+    /// (`SettingsTestNotifier.oldCarbRatioWizardIdentifiers`), so one left from a test of its can't fire during a carb
+    /// ratio test begun since.
+    func withdrawOldCarbRatioWizard()
 }
 
 /// The calls the notifier makes, so tests can record them. `UNUserNotificationCenter` conforms in an empty extension.
@@ -169,5 +197,13 @@ final class SettingsTestNotifier: SettingsTestNotifying {
     func withdrawLegacy() {
         center.removePendingNotificationRequests(withIdentifiers: Self.legacyIdentifiers)
         center.removeDeliveredNotifications(withIdentifiers: Self.legacyIdentifiers)
+    }
+
+    /// The old carb ratio wizard's notifications (`CalibrationModeService`): "ready to test" and "results ready".
+    static let oldCarbRatioWizardIdentifiers = ["Trio.calibrationReadyToTest", "Trio.calibrationResultsReady"]
+
+    func withdrawOldCarbRatioWizard() {
+        center.removePendingNotificationRequests(withIdentifiers: Self.oldCarbRatioWizardIdentifiers)
+        center.removeDeliveredNotifications(withIdentifiers: Self.oldCarbRatioWizardIdentifiers)
     }
 }
