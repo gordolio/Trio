@@ -291,27 +291,39 @@ struct SettingsTestFormulaCard: View {
         }
     }
 
-    /// One term to a line, the operators in a column at the leading edge, then the "=" (or "≈") and the result. Each
-    /// line wraps rather than shrinks, and a value keeps its unit beside it.
+    /// One term to a line, the operators in a column at the leading edge, then the "=" (or "≈") and the result. A value
+    /// keeps its unit and any closing bracket beside it.
     private func stacked(_ parts: [SettingsTestFormulaPart], result: SettingsTestFormulaTerm) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(Self.stackedLines(parts).enumerated()), id: \.offset) { _, line in
-                stackedRow(leading: line.leading, text: stackedTerm(line.term, isResult: false, trailing: line.trailing))
+                stackedRow(leading: line.leading, term: line.term, isResult: false, trailing: line.trailing)
             }
-            stackedRow(leading: Self.relation(for: result), text: stackedTerm(result, isResult: true, trailing: ""))
+            stackedRow(leading: Self.relation(for: result), term: result, isResult: true, trailing: "")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func stackedRow(leading: String, text: Text) -> some View {
+    /// The term on one line while it fits; otherwise its label on a line of its own (wrapping if it must) and its value,
+    /// unit and closing bracket on the next, shrinking rather than breaking: wrapped as one text at AX5 with Bold, the
+    /// bracket was left alone on a line.
+    private func stackedRow(leading: String, term: SettingsTestFormulaTerm, isResult: Bool, trailing: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(verbatim: leading)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize()
                 .frame(minWidth: operatorColumn, alignment: .leading)
-            text
-                .fixedSize(horizontal: false, vertical: true)
+            ViewThatFits(in: .horizontal) {
+                stackedTerm(term, isResult: isResult, trailing: trailing)
+                    .fixedSize()
+                VStack(alignment: .leading, spacing: 2) {
+                    stackedLabel(term, isResult: isResult)
+                        .fixedSize(horizontal: false, vertical: true)
+                    stackedValue(term, isResult: isResult, trailing: trailing)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                }
+            }
             Spacer(minLength: 0)
         }
     }
@@ -319,14 +331,22 @@ struct SettingsTestFormulaCard: View {
     /// "Current 212 mg/dL": the label, the value and its unit, in the grid's fonts and colours, so a value from the
     /// settings stays blue and a result neutral bold. The unit never breaks away from its value.
     private func stackedTerm(_ term: SettingsTestFormulaTerm, isResult: Bool, trailing: String) -> Text {
-        let highlighted = !isResult && term.fromSettings
-        let label = Text(term.label)
+        stackedLabel(term, isResult: isResult) + Text(verbatim: " ") + stackedValue(term, isResult: isResult, trailing: trailing)
+    }
+
+    /// The term's label, blue when its value comes from the settings.
+    private func stackedLabel(_ term: SettingsTestFormulaTerm, isResult: Bool) -> Text {
+        Text(term.label)
             .font(.footnote)
-            .foregroundStyle(highlighted ? Color.accentColor : Color.secondary)
-        let value = Text(term.value)
+            .foregroundStyle(!isResult && term.fromSettings ? Color.accentColor : Color.secondary)
+    }
+
+    /// "212 mg/dL )": the value, its unit and the brackets that close after it, joined so they never break apart.
+    private func stackedValue(_ term: SettingsTestFormulaTerm, isResult: Bool, trailing: String) -> Text {
+        let highlighted = !isResult && term.fromSettings
+        var text = Text(term.value)
             .font(isResult ? .system(.headline, weight: .bold) : .headline)
             .foregroundStyle(highlighted ? Color.accentColor : Color.primary)
-        var text = label + Text(verbatim: " ") + value
         if !term.unit.isEmpty {
             // No-break spaces, and a word joiner after each slash, as `SettingsTestFormat.keepTogether` joins them.
             let unit = term.unit

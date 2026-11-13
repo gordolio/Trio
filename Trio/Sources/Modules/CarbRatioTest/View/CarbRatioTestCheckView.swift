@@ -8,8 +8,9 @@ extension CarbRatioTest {
         @Bindable var state: StateModel
 
         var body: some View {
+            let page = state.shownCheckPage
             Group {
-                switch state.shownCheckPage {
+                switch page {
                 case .checks: ChecksPage(state: state)
                 case .tablets: TabletsPage(state: state)
                 case .length: LengthPage(state: state)
@@ -17,8 +18,10 @@ extension CarbRatioTest {
                 case .ready: ReadyPage(state: state)
                 }
             }
+            // On screen now, so Begin knows its question was asked. Inside the page's identity, so each page tells it.
+            .onAppear { state.checkPageAppeared(page) }
             // A page of its own, scrolled to its top.
-            .id(state.shownCheckPage)
+            .id(page)
         }
     }
 
