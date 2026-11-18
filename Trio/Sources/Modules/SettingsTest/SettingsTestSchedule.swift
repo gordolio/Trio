@@ -102,6 +102,18 @@ enum SettingsTestSchedule {
         return entries(profile)
     }
 
+    /// A carb ratio schedule as entries in grams per unit that each run to the next start, the last to midnight, with a
+    /// ratio in exchanges turned into grams as Trio's own lookup does it (`CarbRatioTest.Provider.entries(in:)`).
+    static func entries(_ ratios: CarbRatios) -> [SettingsTestScheduleEntry] {
+        CarbRatioTest.Provider.entries(in: ratios)
+    }
+
+    /// The saved carb ratio schedule as entries in grams per unit, empty when there is none.
+    static func carbRatioEntries(from storage: FileStorage) -> [SettingsTestScheduleEntry] {
+        guard let ratios = storage.retrieve(OpenAPS.Settings.carbRatios, as: CarbRatios.self) else { return [] }
+        return entries(ratios)
+    }
+
     /// The entries that overlap the window at all.
     static func covered(
         by window: SettingsTestTimeWindow,
@@ -137,6 +149,36 @@ enum SettingsTestSchedule {
             guard let covered = latest.coveredEntries else { return .noSteadyTest }
             return isUnchanged(covered, in: current)
                 ? .ready(lastSteady: latest.completedAt)
+                : .changedSince(latest.completedAt)
+        case .decrease,
+             .increase:
+            return .lastWasNot(latest.direction, latest.completedAt)
+        }
+    }
+
+    /// What the newest ISF test says about starting a carb ratio test, as `basalGate` says it of the newest basal test
+    /// for the ISF test. A warning only (round 7 Q4), never a block.
+    enum ISFGate: Equatable {
+        /// The last ISF test looked accurate and the ISF schedule it covered is unchanged.
+        case ready(lastAccurate: Date)
+        /// There is no ISF test whose schedule we know.
+        case noAccurateTest
+        /// The last ISF test looked accurate, but an ISF it covered has been edited since.
+        case changedSince(Date)
+        /// The last ISF test said to raise or lower the ISF.
+        case lastWasNot(SettingsTestDirection, Date)
+    }
+
+    /// Whether a carb ratio test can build on the last ISF test. `history` is newest first, as the service returns it,
+    /// and the newest ISF test decides, as the newest basal test does for `basalGate`.
+    static func isfGate(history: [SettingsTestRecord], current: [SettingsTestScheduleEntry]) -> ISFGate {
+        guard let latest = history.first(where: { $0.kind == .isf }) else { return .noAccurateTest }
+        switch latest.direction {
+        case .keep:
+            // Saved before schedules were kept, so there is nothing to compare the current schedule with.
+            guard let covered = latest.coveredEntries else { return .noAccurateTest }
+            return isUnchanged(covered, in: current)
+                ? .ready(lastAccurate: latest.completedAt)
                 : .changedSince(latest.completedAt)
         case .decrease,
              .increase:

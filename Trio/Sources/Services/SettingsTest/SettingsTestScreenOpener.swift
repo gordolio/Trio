@@ -42,13 +42,12 @@ enum SettingsTestHooks {
 }
 
 extension SettingsTestKind {
-    /// The screen a tap on the kind's notification opens, or nil while it has none (the carb ratio test's is being
-    /// rebuilt).
+    /// The screen a tap on the kind's notification opens, or nil while it has none.
     var testScreen: Screen? {
         switch self {
         case .basal: return .basalTest
         case .isf: return .isfTest
-        case .carbRatio: return nil
+        case .carbRatio: return .carbRatioTest
         }
     }
 }
