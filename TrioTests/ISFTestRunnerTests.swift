@@ -289,6 +289,20 @@ private final class Seen<Value> {
         #expect(rig.notifier.withdrawn.isEmpty)
     }
 
+    @Test(
+        "Begin saves the insulin on board choice the screen sent, and none when it sent none"
+    ) func beginSavesOnlyTheChoiceSent() async {
+        // 210 mg/dL on target 100 and ISF 50: a 2.20 U dose, whose line is 0.11 U. 0.5 U on board is a choice.
+        for (sent, saved) in [(ISFTestIOBHandling?.some(.count), ISFTestIOBHandling?.some(.count)), (nil, nil)] {
+            let rig = makeRig(test: nil, session: nil, mode: .closed, data: isfData())
+            #expect(await rig.runner.begin(ISFTestBegin(glucose: 210, iob: Decimal(string: "0.5"), iobChoice: sent)) == nil)
+            #expect(rig.runner.state.test?.iobHandling == saved)
+            #expect(rig.storage.retrieve(Self.statePath, as: ISFTestState.self)?.iobHandling == saved)
+            await rig.runner.discard()
+            cleanUp(rig.storage)
+        }
+    }
+
     @Test("A new Begin withdraws the last test's ended notice") func beginWithdrawsTheEndedNotice() async throws {
         // A result left on screen, not cleared with Done.
         var result = waitingTest(bolusAgo: 5 * hour)

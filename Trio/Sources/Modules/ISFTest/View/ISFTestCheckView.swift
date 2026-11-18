@@ -1,87 +1,25 @@
 import SwiftUI
 
 extension ISFTest {
-    /// Before Begin: the app facts that must hold, folded into one line once they pass, then the readings that only
-    /// inform, one line each, with their details one tap away, and, when insulin on board is over the test's line, how
-    /// the test should handle it.
+    /// Before Begin, one question per page (`CheckPage`), each about a screen long: the checks; how to handle insulin on
+    /// board, only when it is over the test's line; and a summary with Begin. The step bar shows Check on every page.
+    /// Next and Begin are off while a check blocks, with its sentence.
     struct CheckView: View {
         @Bindable var state: StateModel
 
-        /// Whether the passed checks are shown one by one.
-        @State private var showsPassedChecks = false
-
         var body: some View {
-            SettingsTestScreen(paintsBackground: false) {
-                SettingsTestHeader(
-                    icon: "drop.fill",
-                    title: String(localized: "Check Your ISF"),
-                    subtitle: String(
-                        localized: "You give a correction bolus and wait 4 hours. The test checks how far glucose falls for each unit, against your ISF."
-                    )
-                )
-
-                SettingsTestStepsButton(
-                    title: String(localized: "How the ISF test goes"),
-                    items: Self.steps(aim: state.formatWithUnits(Config.docsStartAim))
-                )
-
-                SettingsTestCard(title: String(localized: "Ready to start?")) {
-                    // A check that fails stays in view on its own; the ones that pass fold into one line.
-                    ForEach(state.failingChecks) { check in
-                        checkRow(for: check)
-                    }
-                    if !state.passingChecks.isEmpty {
-                        passedChecksRow
-                        if showsPassedChecks {
-                            ForEach(state.passingChecks) { check in
-                                checkRow(for: check)
-                            }
-                        }
-                    }
+            let page = state.shownCheckPage
+            Group {
+                switch page {
+                case .checks: ChecksPage(state: state)
+                case .iob: IOBPage(state: state)
+                case .ready: ReadyPage(state: state)
                 }
-
-                SettingsTestCard(title: String(localized: "Good to know (doesn't block the start)")) {
-                    ForEach(state.informingChecks) { check in
-                        informingRow(for: check)
-                    }
-                }
-
-                if case let .choice(line) = state.iobDecision, let dose = state.expectedDose {
-                    iobChoiceCard(line: line, dose: dose)
-                }
-
-                SettingsTestCard(title: String(localized: "While Basal Testing is on")) {
-                    bullet(Text("Trio won't correct highs, give SMBs, or adjust for sensitivity."))
-                    bullet(Text("If Trio suspends insulin for a low, the test ends: treat the low as usual."))
-                    bullet(Text("Your usual dosing mode returns when the test ends."))
-                }
-            } footer: {
-                // Why Start can't be tapped yet, where the eye goes to tap it.
-                if let blocker = state.startBlocker {
-                    Label {
-                        Text(blocker)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
-                    }
-                    .font(.footnote)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Button("Begin Test") { state.requestStart() }
-                    .buttonStyle(.testPrimary)
-                    .disabled(!state.readyToStart)
-                    // On the button it confirms, as the other steps' dialogs are.
-                    .alert("Begin the ISF test?", isPresented: $state.showStartConfirmation) {
-                        Button("Cancel", role: .cancel) {}
-                        Button("Begin") { state.confirmStart() }
-                    } message: {
-                        Text(
-                            "Trio switches to Basal Testing now, so SMBs stop, and the test starts after a short settling step. Trio returns to \(state.currentMode.displayName) when the test ends."
-                        )
-                    }
             }
+            // On screen now, so Begin knows its question was asked. Inside the page's identity, so each page tells it.
+            .onAppear { state.checkPageAppeared(page) }
+            // A page of its own, scrolled to its top.
+            .id(page)
         }
 
         // MARK: - Steps
@@ -94,7 +32,9 @@ extension ISFTest {
             return [
                 .init(
                     step: .check,
-                    detail: Text("The checks on this screen. Begin turns on once each one passes.")
+                    detail: Text(
+                        "The checks, then a page for insulin on board when it's over the test's line. Next turns on once each check passes."
+                    )
                 ),
                 .init(
                     step: .settle,
@@ -124,14 +64,169 @@ extension ISFTest {
                 )
             ]
         }
+    }
 
-        // MARK: - Insulin on board
+    /// Next, under every page but the last, and Back, under every page but the first.
+    private struct NextFooter: View {
+        let state: StateModel
+        var showsBack = true
 
-        /// Why insulin on board over the line matters, with the line in blue because it comes from the user's settings,
-        /// and the two ways to handle it, Wait for It first and picked.
-        private func iobChoiceCard(line: Decimal, dose: Decimal) -> some View {
+        var body: some View {
+            SettingsTestPageFooter(
+                blocker: state.startBlocker,
+                back: showsBack ? { state.previousCheckPage() } : nil
+            ) {
+                Button("Next") { state.nextCheckPage() }
+                    .buttonStyle(.testPrimary)
+                    .disabled(!state.canGoOn)
+            }
+        }
+    }
+
+    // MARK: - 1. Checks
+
+    /// The app facts that must hold, folded into one line once they pass, then the readings that only inform, one line
+    /// each, with their details one tap away.
+    private struct ChecksPage: View {
+        let state: StateModel
+
+        /// Whether the passed checks are shown one by one.
+        @State private var showsPassedChecks = false
+
+        @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+        var body: some View {
+            SettingsTestScreen(paintsBackground: false) {
+                SettingsTestHeader(
+                    icon: "drop.fill",
+                    title: String(localized: "Check Your ISF"),
+                    subtitle: String(
+                        localized: "You give a correction bolus and wait 4 hours. The test checks how far glucose falls for each unit, against your ISF."
+                    )
+                )
+
+                SettingsTestStepsButton(
+                    title: String(localized: "How the ISF test goes"),
+                    items: CheckView.steps(aim: state.formatWithUnits(Config.docsStartAim))
+                )
+
+                SettingsTestCard(title: String(localized: "Ready to start?")) {
+                    // A check that fails stays in view on its own; the ones that pass fold into one line.
+                    ForEach(state.failingChecks) { check in
+                        checkRow(for: check)
+                    }
+                    if !state.passingChecks.isEmpty {
+                        passedChecksRow
+                        if showsPassedChecks {
+                            ForEach(state.passingChecks) { check in
+                                checkRow(for: check)
+                            }
+                        }
+                    }
+                }
+
+                SettingsTestCard(title: String(localized: "Good to know (doesn't block the start)")) {
+                    ForEach(state.informingChecks) { check in
+                        informingRow(for: check)
+                    }
+                }
+
+                SettingsTestPageBlocker(blocker: state.startBlocker)
+            } footer: {
+                NextFooter(state: state, showsBack: false)
+            }
+        }
+
+        private func checkRow(for check: StateModel.Check) -> some View {
+            SettingsTestCheckRow(title: check.title, detail: check.detail, state: check.state, info: check.info)
+        }
+
+        /// The reading on one line, and under it the short line the user needs before Begin, if the row has one.
+        private func informingRow(for check: StateModel.Check) -> some View {
+            VStack(alignment: .leading, spacing: 2) {
+                SettingsTestValueRow(title: check.title, value: check.value ?? "", info: check.info, state: check.state)
+                if let detail = check.detail {
+                    Text(detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+
+        private var passedChecksRow: some View {
+            let summary = SettingsTestFormat.passedChecksSummary(
+                passing: state.passingChecks.count,
+                total: state.blockingChecks.count
+            )
+            let icon = Image(systemName: SettingsTestCheckState.passed.icon)
+                .font(.title3)
+                .foregroundStyle(SettingsTestCheckState.passed.color)
+            let text = Text(summary)
+                .font(.subheadline.weight(.semibold))
+            let chevron = Image(systemName: showsPassedChecks ? "chevron.up" : "chevron.down")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            return Button {
+                withAnimation { showsPassedChecks.toggle() }
+            } label: {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        // The tick and the chevron on a line above the summary, so it has the card's width: between them,
+                        // "checks" broke mid-word at AX5 Bold on a small phone.
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                icon
+                                Spacer(minLength: 0)
+                                chevron
+                            }
+                            text
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    } else {
+                        HStack(alignment: .firstTextBaseline, spacing: 12) {
+                            icon
+                            text
+                            Spacer(minLength: 0)
+                            chevron
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(Text(showsPassedChecks ? "Hides the checks" : "Shows the checks"))
+        }
+    }
+
+    // MARK: - 2. Insulin on board
+
+    /// Only when insulin on board is over the test's line: why it matters, with the line in blue because it comes from
+    /// the user's settings, and the two ways to handle it, Wait for It first and picked.
+    private struct IOBPage: View {
+        @Bindable var state: StateModel
+
+        var body: some View {
+            SettingsTestScreen(paintsBackground: false) {
+                SettingsTestPageHeading(
+                    title: String(localized: "Insulin on board"),
+                    position: state.checkPagePosition(.iob)
+                )
+
+                if case let .choice(line) = state.iobDecision, let dose = state.expectedDose {
+                    choiceCard(line: line, dose: dose)
+                }
+
+                SettingsTestPageBlocker(blocker: state.startBlocker)
+            } footer: {
+                NextFooter(state: state)
+            }
+        }
+
+        private func choiceCard(line: Decimal, dose: Decimal) -> some View {
             let lineText = Text(verbatim: state.lineText(line)).foregroundStyle(Color.accentColor)
-            // The card shows only for a choice, which needs insulin on board read.
+            // The page shows only for a choice, which needs insulin on board read.
             let current = state.currentIOB ?? 0
             let iob = SettingsTestFormat.keepTogether(state.formatSignedUnits(current), unit: "U")
             let doseText = SettingsTestFormat.keepTogether(state.formatUnits(dose), unit: "U")
@@ -170,50 +265,53 @@ extension ISFTest {
                 ) { state.iobChoice = .count }
             }
         }
+    }
 
-        // MARK: - Pieces
+    // MARK: - 3. Ready
 
-        private func checkRow(for check: StateModel.Check) -> some View {
-            SettingsTestCheckRow(title: check.title, detail: check.detail, state: check.state, info: check.info)
-        }
+    /// What the test does first, its dose and how insulin on board is handled, the rules while Basal Testing is on, and
+    /// Begin.
+    private struct ReadyPage: View {
+        @Bindable var state: StateModel
 
-        /// The reading on one line, and under it the short line the user needs before Start, if the row has one.
-        private func informingRow(for check: StateModel.Check) -> some View {
-            VStack(alignment: .leading, spacing: 2) {
-                SettingsTestValueRow(title: check.title, value: check.value ?? "", info: check.info, state: check.state)
-                if let detail = check.detail {
-                    Text(detail)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+        var body: some View {
+            SettingsTestScreen(paintsBackground: false) {
+                SettingsTestPageHeading(
+                    title: String(localized: "Ready to begin"),
+                    position: state.checkPagePosition(.ready)
+                )
+
+                if !state.readySummary.isEmpty {
+                    SettingsTestCard {
+                        ForEach(state.readySummary, id: \.title) { row in
+                            SettingsTestValueRow(title: row.title, value: row.value)
+                        }
+                    }
+                }
+
+                SettingsTestCard(title: String(localized: "While Basal Testing is on")) {
+                    bullet(Text("Trio won't correct highs, give SMBs, or adjust for sensitivity."))
+                    bullet(Text("If Trio suspends insulin for a low, the test ends: treat the low as usual."))
+                    bullet(Text("Your usual dosing mode returns when the test ends."))
+                }
+
+                SettingsTestPageBlocker(blocker: state.startBlocker)
+            } footer: {
+                SettingsTestPageFooter(blocker: state.startBlocker, back: { state.previousCheckPage() }) {
+                    Button("Begin Test") { state.requestStart() }
+                        .buttonStyle(.testPrimary)
+                        .disabled(!state.readyToStart)
+                        // On the button it confirms, as the other steps' dialogs are.
+                        .alert("Begin the ISF test?", isPresented: $state.showStartConfirmation) {
+                            Button("Cancel", role: .cancel) {}
+                            Button("Begin") { state.confirmStart() }
+                        } message: {
+                            Text(
+                                "Trio switches to Basal Testing now, so SMBs stop, and the test starts after a short settling step. Trio returns to \(state.currentMode.displayName) when the test ends."
+                            )
+                        }
                 }
             }
-        }
-
-        private var passedChecksRow: some View {
-            let summary = SettingsTestFormat.passedChecksSummary(
-                passing: state.passingChecks.count,
-                total: state.blockingChecks.count
-            )
-            return Button {
-                withAnimation { showsPassedChecks.toggle() }
-            } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Image(systemName: SettingsTestCheckState.passed.icon)
-                        .font(.title3)
-                        .foregroundStyle(SettingsTestCheckState.passed.color)
-                    Text(summary)
-                        .font(.subheadline.weight(.semibold))
-                    Spacer(minLength: 0)
-                    Image(systemName: showsPassedChecks ? "chevron.up" : "chevron.down")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint(Text(showsPassedChecks ? "Hides the checks" : "Shows the checks"))
         }
 
         /// The dot is text in the row's own font, so it sits on the first line at every text size.
