@@ -65,7 +65,7 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Camera is used to take photos of food for AI-assisted carb estimation.</string>
+	<string>Camera is used to take photos of food for AI-assisted carb estimation and to scan the code on your Dexcom sensor packaging.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Photo library access is used to select food photos for AI-assisted carb estimation.</string>
 	<key>OpenRouterAPIKey</key>
