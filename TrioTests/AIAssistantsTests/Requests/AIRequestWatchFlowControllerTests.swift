@@ -42,11 +42,10 @@ private final class FlowHarness {
         sent = []
     }
 
-    /// Upstream's Confirm with `bolus` on its screen: the bolus send reads the screen's Double, and passes upstream's
+    /// Upstream's Confirm with `bolus` on its screen: the bolus send passes the screen's Double along with upstream's
     /// own `Decimal(bolusAmount)`.
     func confirm(bolus: Double) -> Bool {
-        controller.screenBolus = { bolus }
-        return controller.interceptBolus(Decimal(bolus))
+        controller.interceptBolus(Decimal(bolus), shownBolus: bolus)
     }
 
     var opens: [String] { sent.compactMap { $0[AIRequestIdentifiers.keyOpen] as? String } }
