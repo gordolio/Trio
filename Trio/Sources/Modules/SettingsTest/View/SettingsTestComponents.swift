@@ -6,11 +6,27 @@ import SwiftUI
 
 // MARK: - Screen
 
-/// A test screen with scrolling content and a pinned action area, on Trio's background unless the screen it sits in
-/// paints that already.
+/// How the kit lays itself out at a text size. Pure, so the switches can be tested.
+enum SettingsTestLayout {
+    /// Whether a screen's footer is pinned under its scrolling content. At accessibility sizes it ends the content
+    /// instead: pinned, its buttons and lines took most of a small phone's screen and left the content a sliver.
+    static func pinsFooter(at size: DynamicTypeSize) -> Bool {
+        !size.isAccessibilitySize
+    }
+
+    /// Whether a check row puts its state icon and info button on a line above its title. At accessibility sizes, beside
+    /// them, the title had a column a few letters wide and broke mid-word.
+    static func stacksCheckRow(at size: DynamicTypeSize) -> Bool {
+        size.isAccessibilitySize
+    }
+}
+
+/// A test screen with scrolling content and an action area: pinned under the content, or, at accessibility sizes, at
+/// its end (`SettingsTestLayout.pinsFooter`). On Trio's background unless the screen it sits in paints that already.
 struct SettingsTestScreen<Content: View, Footer: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppState.self) private var appState
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private let paintsBackground: Bool
     private let content: Content
@@ -24,10 +40,23 @@ struct SettingsTestScreen<Content: View, Footer: View>: View {
         self.footer = footer()
     }
 
+    private var hasFooter: Bool {
+        Footer.self != EmptyView.self
+    }
+
     var body: some View {
+        let pinned = SettingsTestLayout.pinsFooter(at: dynamicTypeSize)
         ScrollView {
             VStack(spacing: 16) {
                 content
+                if hasFooter, !pinned {
+                    // The same buttons, at the end of the content, one scroll away like the rest of it.
+                    VStack(spacing: 10) {
+                        footer
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
@@ -40,7 +69,7 @@ struct SettingsTestScreen<Content: View, Footer: View>: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if Footer.self != EmptyView.self {
+            if hasFooter, pinned {
                 VStack(spacing: 10) {
                     footer
                 }
@@ -377,7 +406,9 @@ enum SettingsTestCheckState {
     }
 }
 
-/// A check that passes or fails: its state icon, a title and, when it says more than the title, a detail.
+/// A check that passes or fails: its state icon, a title and, when it says more than the title, a detail. At
+/// accessibility sizes the icon and the info button share a line above the title, so the title and the detail have the
+/// card's width (`SettingsTestLayout.stacksCheckRow`), as the passed checks' line does.
 struct SettingsTestCheckRow: View {
     let title: String
     let detail: String?
@@ -385,23 +416,50 @@ struct SettingsTestCheckRow: View {
     /// When set, the row shows a blue info button and tapping it opens a sheet with the explanation.
     var info: SettingsTestInfo?
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        SettingsTestInfoButton(info: info) {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: state.icon)
-                    .font(.title3)
-                    .foregroundStyle(state.color)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                    if let detail {
-                        Text(detail)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+        if SettingsTestLayout.stacksCheckRow(at: dynamicTypeSize) {
+            SettingsTestInfoButton(info: info, trailingIcon: false) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        stateIcon
+                        Spacer(minLength: 0)
+                        if info != nil {
+                            SettingsTestInfoIcon()
+                        }
                     }
+                    texts
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            SettingsTestInfoButton(info: info) {
+                HStack(alignment: .top, spacing: 12) {
+                    stateIcon
+                    texts
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+    }
+
+    private var stateIcon: some View {
+        Image(systemName: state.icon)
+            .font(.title3)
+            .foregroundStyle(state.color)
+    }
+
+    private var texts: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+            if let detail {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -457,6 +515,8 @@ struct SettingsTestValueRow: View {
 /// (the Treatments "Recommendation" pattern). The whole row stays tappable, for a bigger target.
 private struct SettingsTestInfoButton<RowContent: View>: View {
     let info: SettingsTestInfo?
+    /// False when the row draws `SettingsTestInfoIcon` itself, where its layout needs it elsewhere.
+    var trailingIcon = true
     @ViewBuilder let label: () -> RowContent
 
     @State private var isShowingInfo = false
@@ -468,10 +528,9 @@ private struct SettingsTestInfoButton<RowContent: View>: View {
             } label: {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     label()
-                    Image(systemName: "info.circle")
-                        .font(.body)
-                        .foregroundStyle(Color.blue)
-                        .accessibilityHidden(true)
+                    if trailingIcon {
+                        SettingsTestInfoIcon()
+                    }
                 }
                 .contentShape(Rectangle())
             }
@@ -484,6 +543,16 @@ private struct SettingsTestInfoButton<RowContent: View>: View {
             label()
                 .accessibilityElement(children: .combine)
         }
+    }
+}
+
+/// The info button's visible part: upstream's blue `info.circle`. The whole row is the button.
+private struct SettingsTestInfoIcon: View {
+    var body: some View {
+        Image(systemName: "info.circle")
+            .font(.body)
+            .foregroundStyle(Color.blue)
+            .accessibilityHidden(true)
     }
 }
 
@@ -743,8 +812,6 @@ struct SettingsTestGlucoseChart: View {
     /// The times to shade the band over, e.g. where a test's expected end applies. Nil shades it across the whole chart.
     var bandTimes: ClosedRange<Date>?
 
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
     var body: some View {
         Chart {
             if let band, let bandTimes {
@@ -792,11 +859,18 @@ struct SettingsTestGlucoseChart: View {
                 RuleMark(y: .value("Target", target.valueForChart(units)))
                     .foregroundStyle(Color.secondary)
                     .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-                    .annotation(position: .top, alignment: .leading) {
+                    .annotation(
+                        position: .top,
+                        alignment: .leading,
+                        // Kept inside the plot, at its whole width, rather than cut to "Tar…".
+                        overflowResolution: .init(x: .fit(to: .chart), y: .disabled)
+                    ) {
                         // On the card's own colour, so the gridlines behind it don't run through the word.
                         Text("Target")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
                             .padding(.trailing, 3)
                             .background(Color.chart)
                     }
@@ -813,17 +887,22 @@ struct SettingsTestGlucoseChart: View {
         }
         .chartYScale(domain: yDomain)
         .chartXAxis {
-            // Hours only, as upstream's forecast chart labels them, and fewer of them at accessibility sizes, so the
-            // labels don't run into each other. The caption under the chart gives the exact times.
-            AxisMarks(values: .stride(by: .hour, count: dynamicTypeSize.isAccessibilitySize ? 2 : 1)) { _ in
+            // Hours only, as upstream's forecast chart labels them. The caption under the chart gives the exact times.
+            AxisMarks(values: .stride(by: .hour)) { _ in
                 AxisGridLine()
                 AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .narrow)), anchor: .top)
             }
         }
-        .fewerYAxisMarks(dynamicTypeSize.isAccessibilitySize)
+        // The chart's own labels stop growing at this size, as charts commonly do, so its hourly and automatic marks
+        // keep fitting: past it, its 160 pt crowded the labels, cut the target's to "Tar…" and the last hour's to "…".
+        // The caption under the chart, at the reader's size, gives the exact times.
+        .dynamicTypeSize(...Self.largestLabelSize)
         .frame(height: 160)
         .accessibilityLabel(Text("Glucose over the test"))
     }
+
+    /// The largest text size the chart's axis and target labels are drawn at.
+    static let largestLabelSize: DynamicTypeSize = .xLarge
 
     private var yDomain: ClosedRange<Double> {
         let range = Self.yRange(
@@ -845,24 +924,6 @@ struct SettingsTestGlucoseChart: View {
             high = max(high, target + max(10, (target - low) / 5))
         }
         return low ... max(low + 10, min(400, high))
-    }
-}
-
-private extension View {
-    /// At accessibility sizes the value labels of the y axis are tall, and the chart's 160 pt holds only a few of them
-    /// before they touch, so it asks for 3 marks (grid line and value each) instead of the automatic ones. At other sizes
-    /// the chart's own automatic marks stay as they are.
-    @ViewBuilder func fewerYAxisMarks(_ fewer: Bool) -> some View {
-        if fewer {
-            chartYAxis {
-                AxisMarks(values: .automatic(desiredCount: 3)) { _ in
-                    AxisGridLine()
-                    AxisValueLabel()
-                }
-            }
-        } else {
-            self
-        }
     }
 }
 

@@ -131,10 +131,8 @@ final class ISFTestRunner: SettingsTestRunner, ISFTestRunning {
         let expected = ISFTestEvaluator.expectedDose(startPath: path, glucose: begin.glucose, target: target, isf: isf)
         test.expectedDose = expected
         test.iobLine = expected.map { ISFTestEvaluator.iobLine(expectedDose: $0) }
-        test.iobHandling = ISFTestEvaluator.iobHandling(
-            for: ISFTestEvaluator.iobDecision(iob: begin.iob, expectedDose: expected),
-            chosen: begin.iobChoice
-        )
+        let decision = ISFTestEvaluator.iobDecision(iob: begin.iob, expectedDose: expected)
+        test.iobHandling = begin.iobChoice.flatMap { ISFTestEvaluator.iobHandling(for: decision, chosen: $0) }
         test.plannedPhase = ISFTestEvaluator.startPhase(glucose: begin.glucose, target: target)
         // On the way through tablets, the Raise step counts them with the carb ratio: without one it can't, and the test
         // could only wait out the time for the dose.

@@ -2,6 +2,7 @@ import Combine
 import CoreData
 import Foundation
 import LoopKit
+import SwiftUI
 import Swinject
 import Testing
 
@@ -3730,6 +3731,48 @@ private final class FakeCalibrationModeService: CalibrationModeService {
         #expect(SettingsTestFormat.passedChecksSummary(passing: 5, total: 5) == String(localized: "All 5 checks pass"))
         #expect(SettingsTestFormat.passedChecksSummary(passing: 4, total: 5) == String(localized: "4 other checks pass"))
         #expect(SettingsTestFormat.passedChecksSummary(passing: 1, total: 5) == String(localized: "1 other check passes"))
+    }
+
+    @Test("A page that starts to apply before the one shown, and hasn't been shown, comes first") func pageNotSeenComesFirst() {
+        let order = ["checks", "length", "iob", "ready"]
+        let seen: Set = ["checks", "length", "ready"]
+        // Insulin on board comes to apply while Ready shows: its page comes first.
+        #expect(SettingsTestPageFlow.shown("ready", in: order, order: order, seen: seen) == "iob")
+        // Once shown, Ready shows again.
+        #expect(SettingsTestPageFlow.shown("ready", in: order, order: order, seen: seen.union(["iob"])) == "ready")
+        // A page after the one shown waits for Next.
+        #expect(SettingsTestPageFlow.shown("length", in: order, order: order, seen: ["checks", "length"]) == "length")
+        // A page that stops applying still hands over to the one before it.
+        #expect(SettingsTestPageFlow.shown("iob", in: ["checks", "length", "ready"], order: order, seen: seen) == "length")
+    }
+
+    @Test("A page heading is read with where it sits: the question, then the position") func pageHeadingLabel() {
+        #expect(SettingsTestPageHeading.spokenLabel(title: "Insulin on board", position: "2 of 3") == "Insulin on board, 2 of 3")
+        #expect(SettingsTestPageHeading.spokenLabel(title: "Ready to begin", position: "") == "Ready to begin")
+    }
+
+    @Test(
+        "A screen's footer is pinned at the standard text sizes, and ends its content at accessibility sizes"
+    ) func footerPlacement() {
+        for size in DynamicTypeSize.allCases {
+            #expect(SettingsTestLayout.pinsFooter(at: size) == !size.isAccessibilitySize, "\(size)")
+        }
+        #expect(SettingsTestLayout.pinsFooter(at: .large))
+        #expect(SettingsTestLayout.pinsFooter(at: .xxxLarge))
+        #expect(!SettingsTestLayout.pinsFooter(at: .accessibility1))
+        #expect(!SettingsTestLayout.pinsFooter(at: .accessibility5))
+    }
+
+    @Test("A check row puts its icon and info button above the title at accessibility sizes only") func checkRowStacks() {
+        for size in DynamicTypeSize.allCases {
+            #expect(SettingsTestLayout.stacksCheckRow(at: size) == size.isAccessibilitySize, "\(size)")
+        }
+    }
+
+    @Test("The chart's labels grow with the text up to xLarge, so default text draws them as before") func chartLabelCap() {
+        #expect(SettingsTestGlucoseChart.largestLabelSize == .xLarge)
+        #expect(SettingsTestGlucoseChart.largestLabelSize > .large)
+        #expect(SettingsTestGlucoseChart.largestLabelSize < .xxxLarge)
     }
 
     @Test("The chart's range pads the readings, and leaves room above a target line for its label") func chartRange() {

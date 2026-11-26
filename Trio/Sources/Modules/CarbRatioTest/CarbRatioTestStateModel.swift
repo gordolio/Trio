@@ -116,6 +116,11 @@ extension CarbRatioTest {
         var iobChoice: ISFTestIOBHandling = .wait
         /// The Check step's page, as the user moved to it (`showsCheckPage` is the one shown).
         var checkPage: CheckPage = .checks
+        /// The Check step's pages that have come up on screen since the checks did (`checkPageAppeared`). Screen state.
+        private(set) var seenCheckPages: Set<CheckPage> = [.checks]
+        /// While this screen's own Begin runs: a test the runner publishes and then takes back, as a Begin that fails
+        /// does, isn't a test cleared elsewhere, so the pages stay where they are (`apply`). Main actor only.
+        @ObservationIgnored private var beginInFlight = false
 
         /// Where settling is, from its last check. Nil when the test isn't settling, or before the first check.
         private(set) var settling: ISFTestSettling?
@@ -861,9 +866,11 @@ extension CarbRatioTest {
         }
 
         /// The page shown: the one the user moved to while it applies, otherwise the one before it that does
-        /// (`SettingsTestPageFlow.shown`), so the insulin on board page that stops applying hands over to How long.
+        /// (`SettingsTestPageFlow.shown`), so the insulin on board page that stops applying hands over to How long. A page
+        /// before it that starts to apply and hasn't been shown comes first: insulin on board going over the line while
+        /// Ready shows brings up its page, so Begin can't go without the choice.
         var shownCheckPage: CheckPage {
-            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases)
+            SettingsTestPageFlow.shown(checkPage, in: checkPages, order: CheckPage.allCases, seen: seenCheckPages)
         }
 
         /// "2 of 5", for the page's heading.
@@ -921,6 +928,35 @@ extension CarbRatioTest {
         func previousCheckPage() {
             guard let previous = SettingsTestPageFlow.page(before: shownCheckPage, in: checkPages) else { return }
             checkPage = previous
+        }
+
+        /// A page came up on screen (the Check step calls it as each page appears): it counts as shown from now on, and
+        /// it is the page the user is on, so one brought up behind Ready stays until Next. Any other page closes a Begin
+        /// confirmation left open, which then doesn't come back by itself with Ready.
+        func checkPageAppeared(_ page: CheckPage) {
+            seenCheckPages.insert(page)
+            if checkPage != page {
+                checkPage = page
+            }
+            if page != .ready {
+                showStartConfirmation = false
+            }
+        }
+
+        /// Whether Begin may go: Ready shows and, when insulin on board is over the line, its page has come up this pass,
+        /// so its question was asked.
+        var pagesAllowBegin: Bool {
+            guard shownCheckPage == .ready else { return false }
+            return !checkPages.contains(.iob) || seenCheckPages.contains(.iob)
+        }
+
+        /// Cancel, Done, or a test cleared elsewhere: the next start begins on the checks, with no page shown yet, on the
+        /// docs' way.
+        private func startOver() {
+            iobChoice = .wait
+            checkPage = .checks
+            seenCheckPages = [.checks]
+            showStartConfirmation = false
         }
 
         // MARK: - Dose
@@ -1440,6 +1476,11 @@ extension CarbRatioTest {
         /// Shows what the runner publishes: the test, settling's last check, and insulin on board for a counted dose. The
         /// only place these change.
         func apply(_ runnerState: CarbRatioTestRunnerState) {
+            // Gone, however it went (Cancel or Done here or elsewhere): the next start begins on the checks, on the docs'
+            // way. Not a test this screen's own Begin published and took back, which failed: its pages stay.
+            if test != nil, runnerState.test == nil, !beginInFlight {
+                startOver()
+            }
             test = runnerState.test
             settling = runnerState.settling?.decision
             settlingBoluses = runnerState.settling?.boluses ?? []
@@ -1553,7 +1594,7 @@ extension CarbRatioTest {
         }
 
         func requestStart() {
-            guard readyToStart else { return }
+            guard readyToStart, pagesAllowBegin else { return }
             guard doseGlucose != nil else {
                 errorMessage = noRecentGlucoseMessage
                 return
@@ -1565,10 +1606,11 @@ extension CarbRatioTest {
             showStartConfirmation = true
         }
 
-        /// What Begin starts the test with, from what the Check screen shows. Nil without a recent glucose or tablets. The
+        /// What Begin starts the test with, from what the Check screen shows. Nil without a recent glucose or tablets, and
+        /// away from Ready or before the insulin on board question was asked when it applies (`pagesAllowBegin`). The
         /// insulin on board choice goes only when its page showed (`checkPages`): a pick kept from an earlier pass isn't one.
         var beginRequest: CarbRatioTestBegin? {
-            guard let glucose = doseGlucose, let count = tabletCount else { return nil }
+            guard pagesAllowBegin, let glucose = doseGlucose, let count = tabletCount else { return nil }
             return CarbRatioTestBegin(
                 brand: selectedBrand,
                 count: count,
@@ -1580,19 +1622,24 @@ extension CarbRatioTest {
         }
 
         /// Begin: the runner saves the test, starts its session and switches to Basal Testing. Only when every check
-        /// passes, Basal Testing being off among them, and with a glucose to start from: none is made up.
+        /// passes, Basal Testing being off among them, from Ready with the insulin on board question asked when it
+        /// applies (`pagesAllowBegin`), so a confirmation left open while another page came up does nothing, and with a
+        /// glucose to start from: none is made up.
         @MainActor func confirmStart() {
             showStartConfirmation = false
-            guard readyToStart else { return }
+            guard readyToStart, pagesAllowBegin else { return }
             // The reading may have grown too old while the confirmation was up.
             guard let begin = beginRequest else {
                 errorMessage = noRecentGlucoseMessage
                 return
             }
+            beginInFlight = true
             Task { @MainActor in
                 if let error = await runner?.begin(begin) {
                     errorMessage = error.message
                 }
+                // After what the runner published during Begin, which reaches `apply` through the main queue.
+                DispatchQueue.main.async { [weak self] in self?.beginInFlight = false }
             }
         }
 
@@ -1744,16 +1791,14 @@ extension CarbRatioTest {
         @MainActor func discard() {
             guard !isEnding else { return }
             runner?.discard()
-            iobChoice = .wait
-            checkPage = .checks
+            startOver()
             Task { await refresh() }
         }
 
         /// Done: clears a finished result so the user can start over, on the docs' way.
         @MainActor func acknowledgeResult() {
             runner?.acknowledgeResult()
-            iobChoice = .wait
-            checkPage = .checks
+            startOver()
             Task { await refresh() }
         }
     }

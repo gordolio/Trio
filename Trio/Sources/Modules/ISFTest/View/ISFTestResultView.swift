@@ -55,8 +55,15 @@ extension ISFTest {
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
-                            Button("Open Insulin Sensitivities") { state.showModal(for: .isfEditor) }
-                                .buttonStyle(.testSecondary)
+                            Button { state.showModal(for: .isfEditor) } label: {
+                                // At AX5 with Bold on a small phone "Sensitivities" is wider than the button and broke
+                                // as "Sensitivi- / ties": the label shrinks a little first, so the word stays whole.
+                                Text("Open Insulin Sensitivities")
+                                    .multilineTextAlignment(.center)
+                                    .lineLimit(3)
+                                    .minimumScaleFactor(0.6)
+                            }
+                            .buttonStyle(.testSecondary)
                         }
                     case .reevaluateDynamicSettings:
                         // With Logarithmic Dynamic ISF the profile ISF all but cancels out, so the docs' line for it, which
