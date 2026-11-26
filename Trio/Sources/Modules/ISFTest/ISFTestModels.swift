@@ -628,7 +628,8 @@ enum ISFTestEvaluator {
             // it brought back as changed.
             if let serviceEnd, let sessionID, serviceEnd.sessionID == sessionID, !isAfter(serviceEnd.date, limit) {
                 switch serviceEnd.cause {
-                case .noBolus: return .bolusNotSeen
+                case .mealUnpaired,
+                     .noBolus: return .bolusNotSeen
                 // With its own words; the basal rules would read it as basal stopped.
                 case .pumpInterrupted: return .pumpInterrupted(at: serviceEnd.date)
                 case .basalStopped,
@@ -680,7 +681,8 @@ enum ISFTestEvaluator {
                 case .carbsUnreadable: return .carbsUnreadable(at: serviceEnd.date)
                 case .basalStopped: return .unexplainedSuspend(at: serviceEnd.date)
                 case .extraBolus: return .extraBolus(at: serviceEnd.date)
-                case .noBolus: return outOfTime
+                case .mealUnpaired,
+                     .noBolus: return outOfTime
                 case .modeChanged: return serviceEnd.modeRestored == true ? .modeChangedRestored : .modeChanged
                 case .pumpInterrupted: return .pumpInterrupted(at: serviceEnd.date)
                 }

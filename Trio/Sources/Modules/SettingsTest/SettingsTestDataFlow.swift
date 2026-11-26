@@ -14,5 +14,10 @@ extension SettingsTest {
         func isfEntries() -> [SettingsTestScheduleEntry] {
             SettingsTestSchedule.isfEntries(from: storage)
         }
+
+        /// The carb ratio schedule in grams per unit, empty when there is none saved.
+        func carbRatioEntries() -> [SettingsTestScheduleEntry] {
+            SettingsTestSchedule.carbRatioEntries(from: storage)
+        }
     }
 }

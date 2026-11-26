@@ -58,6 +58,18 @@ extension SettingsTest {
                     }
                     .listRowBackground(Color.chart)
                 }
+
+                if !state.carbRatioPeriods.isEmpty {
+                    Section(
+                        header: Text("Carb ratio time periods"),
+                        footer: carbRatioPeriodsFooter
+                    ) {
+                        ForEach(state.carbRatioPeriods, id: \.entry.startMinutes) { period in
+                            periodRow(for: period, kind: .carbRatio)
+                        }
+                    }
+                    .listRowBackground(Color.chart)
+                }
             }
             .scrollContentBackground(.hidden)
             .background(appState.trioBackgroundColor(for: colorScheme))
@@ -78,7 +90,7 @@ extension SettingsTest {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(
-                    "The carb ratio test is being rebuilt, so this one can't be finished. Trio turns off its Calibration Mode override and clears the test. Its result isn't kept."
+                    "This test is from the old carb ratio wizard and can't be finished. End Test turns off its Calibration Mode override and clears the test. Its result isn't kept."
                 )
             }
         }
@@ -116,9 +128,9 @@ extension SettingsTest {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.top, 2)
-                    // A warning only: the row still opens the test. The ISF Check screen's orange triangle, so it isn't
-                    // missed among the row's grey lines.
-                    if kind == .isf, !locked, let note = state.isfGateNote {
+                    // A warning only: the row still opens the test. The Check screens' orange triangle, so it isn't missed
+                    // among the row's grey lines.
+                    if !locked, let note = gateNote(for: kind) {
                         HStack(alignment: .firstTextBaseline, spacing: 4) {
                             Image(systemName: SettingsTestCheckState.warning.icon)
                                 .foregroundStyle(SettingsTestCheckState.warning.color)
@@ -134,7 +146,17 @@ extension SettingsTest {
             .padding(.vertical, 4)
         }
 
-        /// The old carb ratio wizard left a test under way. The row never opens the wizard, which is being rebuilt; it
+        /// The warning under a row: the sensitivity row's from the newest basal test, the carb ratio row's from the newest
+        /// ISF test. Not under the old carb ratio test's row, which offers to end that test.
+        private func gateNote(for kind: SettingsTestKind) -> String? {
+            switch kind {
+            case .isf: return state.isfGateNote
+            case .carbRatio: return state.carbRatioInProgress ? nil : state.carbRatioGateNote
+            case .basal: return nil
+            }
+        }
+
+        /// The old carb ratio wizard left a test under way. The row never opens the wizard, which is being retired; it
         /// offers to end the test, which turns the test's SMB-off override off. Shown whatever else is running, because
         /// ending it only puts things back.
         private var carbRatioInProgressRow: some View {
@@ -158,6 +180,10 @@ extension SettingsTest {
         }
 
         private func lastTestedText(for kind: SettingsTestKind) -> String {
+            // The old wizard's test, which its row offers to end.
+            if kind == .carbRatio, state.carbRatioInProgress {
+                return String(localized: "A carb ratio test from before is still running.")
+            }
             switch kind.availability {
             case .comingSoon: return String(localized: "Coming soon")
             case .beingRebuilt:
@@ -202,11 +228,28 @@ extension SettingsTest {
             }
         }
 
+        // MARK: - Carb ratio time periods
+
+        /// Two lines of the docs, word for word, and what the blue ratios are.
+        private var carbRatioPeriodsFooter: some View {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(verbatim: "\(CarbRatioTest.Docs.oneMealAtATime). \(CarbRatioTest.Docs.waitBetweenChanges).")
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Image(systemName: "gearshape")
+                        .accessibilityHidden(true)
+                    Text("Blue values come from your settings")
+                }
+            }
+        }
+
         private func periodRow(for period: SettingsTestPeriod, kind: SettingsTestKind) -> some View {
             let span = SettingsTestSchedule.spanText(of: period.entry)
-            let value = kind == .isf
-                ? state.formatISF(period.entry.value)
-                : "\(period.entry.value.formatted(.number.precision(.fractionLength(2)))) U/h"
+            let value: String
+            switch kind {
+            case .isf: value = state.formatISF(period.entry.value)
+            case .carbRatio: value = state.formatCarbRatio(period.entry.value)
+            case .basal: value = "\(period.entry.value.formatted(.number.precision(.fractionLength(2)))) U/h"
+            }
             return VStack(alignment: .leading, spacing: 3) {
                 // The value is the user's own setting, so it is blue.
                 (Text(verbatim: "\(span) · ") + Text(verbatim: value).foregroundStyle(Color.accentColor))
